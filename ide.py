@@ -41,7 +41,7 @@ from xe_lang.helper import TT
 from runtime import run, RuntimeContext
 from ide_themes import THEMES
 
-# Fallback palette if not importable from xe_lang.vm
+
 PALETTE = [
     "#000000",
     "#0000AA",
@@ -63,7 +63,6 @@ PALETTE = [
 
 
 def ansi_to_html(text: str) -> str:
-    """Converts basic ANSI color logs to HTML formatting for the text display."""
     ansi_colors = {
         "30": "#000000",
         "31": "#ff3333",
@@ -359,8 +358,6 @@ class XPP26SyntaxHighlighter(QSyntaxHighlighter):
 
 
 class VMGraphicsWidget(QWidget):
-    """Custom display canvas component to replace the old Assembly text panel."""
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.width_px = 240
@@ -376,7 +373,6 @@ class VMGraphicsWidget(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def update_frame(self, front_buffer: list):
-        """Copies matrix numbers safely into visible pixel graphics."""
         for y in range(self.height_px):
             for x in range(self.width_px):
                 color_hex = PALETTE[front_buffer[y][x] % 16]
@@ -392,7 +388,6 @@ class VMGraphicsWidget(QWidget):
         )
         painter.drawPixmap(0, 0, scaled_pixmap)
 
-    # Passive hardware interaction redirections
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.active_vm:
             self.active_vm.mouse_x = max(
@@ -427,8 +422,6 @@ class VMGraphicsWidget(QWidget):
 
 
 class VMWorkerThread(QThread):
-    """Executes the pipeline inside an isolated background thread context."""
-
     execution_finished = pyqtSignal(object, object, str)
     frame_ready = pyqtSignal(list)
     output_ready = pyqtSignal(str)
@@ -441,11 +434,9 @@ class VMWorkerThread(QThread):
 
     def run(self):
         try:
-            # Create output handler callback that routes to signal
             def output_handler(text: str):
                 self.output_ready.emit(text)
 
-            # Set the output handler on the runtime context
             self.context.output_handler = output_handler
 
             result, error, asm = run(self.filename, self.code, self.context)
@@ -490,7 +481,6 @@ class X26IDE(QMainWindow):
         self.current_theme = "Default Dark"
         self.worker: Optional[VMWorkerThread] = None
 
-        # Periodical GUI screen refreshes while code is executing
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.poll_vm_buffer)
 
@@ -498,7 +488,6 @@ class X26IDE(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # Toolbar
         toolbar_layout = QHBoxLayout()
         for text, slot in [
             ("New", self.new_file),
@@ -524,10 +513,8 @@ class X26IDE(QMainWindow):
         toolbar_layout.addWidget(self.run_button)
         main_layout.addLayout(toolbar_layout)
 
-        # Workspaces Splitter Layout
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Left: Editor
         editor_container = QWidget()
         editor_layout = QVBoxLayout(editor_container)
         editor_layout.setContentsMargins(0, 0, 0, 0)
@@ -545,7 +532,6 @@ class X26IDE(QMainWindow):
         )
         main_splitter.addWidget(editor_container)
 
-        # Right nested panels (Top output log console, Bottom direct screen)
         right_panel_splitter = QSplitter(Qt.Orientation.Vertical)
 
         output_container = QWidget()
@@ -557,7 +543,6 @@ class X26IDE(QMainWindow):
         output_layout.addWidget(self.output)
         right_panel_splitter.addWidget(output_container)
 
-        # BAKED GRAPHICS DISPLAY PANEL
         graphics_container = QWidget()
 
         graphics_layout = QVBoxLayout(graphics_container)
@@ -690,7 +675,6 @@ class X26IDE(QMainWindow):
         )
 
     def run_code(self):
-        """Asynchronously triggers compilation and updates UI frames via cross-thread signaling."""
         code = self.editor.toPlainText()
         if not code.strip():
             return
@@ -708,24 +692,21 @@ class X26IDE(QMainWindow):
         self.worker.output_ready.connect(self.append_output)
         self.worker.execution_finished.connect(self.handle_execution_finished)
 
-        # Start background update cycle hooks
         self.graphics_view.active_vm = None
         self.worker.start()
-        self.refresh_timer.start(33)  # ~30 FPS poll state insurance fallback
+        self.refresh_timer.start(33)
 
     def poll_vm_buffer(self):
-        """Monitors and syncs active window bindings dynamically during processing loops."""
         if hasattr(self.runtime_context, "vm") and self.runtime_context.vm:
             if not self.graphics_view.active_vm:
                 self.graphics_view.active_vm = self.runtime_context.vm
-                # Redirect standard system rendering right through to the UI view component
+                
                 self.runtime_context.vm.render_front_buffer = (
                     lambda: self.graphics_view.update_frame(
                         self.runtime_context.vm.front_buffer
                     )
                 )
 
-            # Direct backup component trigger
             if hasattr(self.runtime_context.vm, "front_buffer"):
                 self.graphics_view.update_frame(self.runtime_context.vm.front_buffer)
 
