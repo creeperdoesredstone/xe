@@ -1,6 +1,7 @@
 from xe_lang.helper import TT, Result, AssemblyError
 from xe_lang.nodes import *
 from xe_lang.rules import BINARY_OPCODE_MAP
+from math import ceil
 
 from pathlib import Path
 import struct
@@ -10,11 +11,40 @@ Instruction = tuple
 TRUE = 0xFFFFFFFF
 FALSE = 0
 
-for_labels: int = 0
-while_labels: int = 0
-repeat_labels: int = 0
-if_labels: int = 0
-switch_labels: int = 0
+for_labels = 0
+while_labels = 0
+repeat_labels = 0
+if_labels = 0
+switch_labels = 0
+string_labels = 0
+array_labels = 0
+
+nodes_to_lookup: list[Node] = []
+
+
+def init_labels():
+	global for_labels, while_labels, if_labels, switch_labels, repeat_labels, string_labels, array_labels
+	for_labels = 0
+	while_labels = 0
+	repeat_labels = 0
+	if_labels = 0
+	switch_labels = 0
+	string_labels = 0
+
+
+def generate_lookup_data():
+	global nodes_to_lookup
+	instructions = []
+
+	for node in nodes_to_lookup:
+		instructions.append((None, None, node.label))
+
+		if isinstance(node, StringLiteral):
+			for char in node.value:
+				instructions.append((None, None, ord(char)))
+			instructions.append((None, None, 0))
+
+	return instructions
 
 
 def float_to_u32(value: float) -> int:
@@ -40,19 +70,25 @@ def format_instructions(instructions: list[Instruction]) -> str:
 
 
 def compile_ast(ast: Node, fn: str) -> Result:
+	init_labels()
+
 	res = Result()
 	name = fn.split("\\")[-1].removesuffix(".xe")
+	nodes_to_lookup.clear()
 
 	instructions = [(None, None, f":SECTION_TEXT_{name}")]
 
 	prgm_instructions = res.register(emit(ast))
-
 	if res.error:
 		return res
+
+	data_lookup = generate_lookup_data()
 
 	instructions.extend(prgm_instructions)
 	instructions.append((None, None, "HALT"))
 	instructions.append((None, None, f":SECTION_DATA_{name}"))
+
+	instructions.extend(data_lookup)
 
 	fn = Path(ast.start_pos.fn).stem
 
@@ -126,6 +162,81 @@ def emit_FloatLiteral(node: FloatLiteral) -> Result:
 	)
 
 
+def emit_StringLiteral(node: StringLiteral) -> Result:
+	global nodes_to_lookup, string_labels
+	instructions = [
+		# get description vector pointer
+		(node.start_pos, node.end_pos, "PUSH", 3),
+		(node.start_pos, node.end_pos, "SYS", 21),
+		(
+			node.start_pos,
+			node.end_pos,
+			"DUP",
+		),
+		(node.start_pos, node.end_pos, "PUSH", 16 * ceil((len(node.value) + 1) / 16)),
+		(node.start_pos, node.end_pos, "SYS", 21),
+		(
+			node.start_pos,
+			node.end_pos,
+			"STREIND",  # &str[0]
+		),
+		(
+			node.start_pos,
+			node.end_pos,
+			"INCI",
+		),
+		(
+			node.start_pos,
+			node.end_pos,
+			"DUP",
+		),
+		(node.start_pos, node.end_pos, "PUSH", len(node.value) + 1),
+		(
+			node.start_pos,
+			node.end_pos,
+			"STREIND",  # str.length
+		),
+		(
+			node.start_pos,
+			node.end_pos,
+			"INCI",
+		),
+		(
+			node.start_pos,
+			node.end_pos,
+			"DUP",
+		),
+		(node.start_pos, node.end_pos, "PUSH", 16 * ceil((len(node.value) + 1) / 16)),
+		(
+			node.start_pos,
+			node.end_pos,
+			"STREIND",  # str.capacity
+		),
+		(
+			node.start_pos,
+			node.end_pos,
+			"DECI",
+		),
+		(
+			node.start_pos,
+			node.end_pos,
+			"DECI",
+		),
+		(
+			node.start_pos,
+			node.end_pos,
+			"LOADIND",
+		),
+		(node.start_pos, node.end_pos, "PUSH", f"STR_LIT_{string_labels}"),
+		(node.start_pos, node.end_pos, "LOOKUP", len(node.value) + 1),
+	]
+	node.label = f"STR_LIT_{string_labels}"
+	string_labels += 1
+
+	nodes_to_lookup.append(node)
+	return Result().success(instructions)
+
+
 def emit_BoolLiteral(node: BoolLiteral) -> Result:
 	return Result().success(
 		[
@@ -180,7 +291,6 @@ def emit_UnaryOperation(node: UnaryOperation) -> Result:
 			pass
 
 		case TT.SUB:
-			# FIX: Checked base and verified it's a primitive scalar
 			is_float = node.type.base == "float" and node.type.pointer_layers == 0
 			instructions.append(
 				(
@@ -278,8 +388,9 @@ def emit_BinaryOperation(node: BinaryOperation) -> Result:
 		)
 
 	if len(opcode) == 2:
-		if (node.left.type.base == "float" and node.left.type.pointer_layers == 0) or \
-		   (node.right.type.base == "float" and node.right.type.pointer_layers == 0):
+		if (node.left.type.base == "float" and node.left.type.pointer_layers == 0) or (
+			node.right.type.base == "float" and node.right.type.pointer_layers == 0
+		):
 			opcode = f"F{opcode}"
 		else:
 			opcode = f"I{opcode}"
@@ -305,21 +416,22 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 	instructions = []
 
 	if node.operator._type == TT.ASGN:
+		if node.type.is_array and isinstance(node.value, ArrayInitializer):
+			value_ins = res.register(emit_ArrayInitializer(node.value, node.address))
+			instructions.extend(value_ins)
+			return res.success(instructions)
 		value_ins = res.register(emit(node.value))
 		if res.error:
 			return res
 		instructions.extend(value_ins)
-		
-		# FIX: Adhering to the Type structure properties
-		if node.type.base == "float" and node.type.pointer_layers == 0 and \
-		   node.value.type.base == "int" and node.value.type.pointer_layers == 0:
-			instructions.append(
-				(
-					node.start_pos,
-					node.end_pos,
-					"I2F"
-				)
-			)
+
+		if (
+			node.type.base == "float"
+			and node.type.pointer_layers == 0
+			and node.value.type.base == "int"
+			and node.value.type.pointer_layers == 0
+		):
+			instructions.append((node.start_pos, node.end_pos, "I2F"))
 
 		instructions.append(
 			(
@@ -331,11 +443,13 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 		)
 
 		return res.success(instructions)
-	
-	# FIX: Adhering to the Type structure properties
-	if node.type.base == "float" and node.type.pointer_layers == 0 and \
-	   node.value.type.base == "int" and node.value.type.pointer_layers == 0:
-		# Note: This logic follows your original draft sequence for casting before compound ops
+
+	if (
+		node.type.base == "float"
+		and node.type.pointer_layers == 0
+		and node.value.type.base == "int"
+		and node.value.type.pointer_layers == 0
+	):
 		pass
 
 	compound_map = {
@@ -357,9 +471,10 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 				node.end_pos,
 			)
 		)
-		
-	# FIX: Safe extraction of type properties
-	opcode += "F" if (node.type.base == "float" and node.type.pointer_layers == 0) else "I"
+
+	opcode += (
+		"F" if (node.type.base == "float" and node.type.pointer_layers == 0) else "I"
+	)
 
 	instructions.append(
 		(
@@ -375,16 +490,13 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 		return res
 	instructions.extend(value_ins)
 
-	# FIX: Cast integer literal if assignment destination expression is float
-	if node.type.base == "float" and node.type.pointer_layers == 0 and \
-	   node.value.type.base == "int" and node.value.type.pointer_layers == 0:
-		instructions.append(
-			(
-				node.start_pos,
-				node.end_pos,
-				"I2F"
-			)
-		)
+	if (
+		node.type.base == "float"
+		and node.type.pointer_layers == 0
+		and node.value.type.base == "int"
+		and node.value.type.pointer_layers == 0
+	):
+		instructions.append((node.start_pos, node.end_pos, "I2F"))
 
 	instructions.append(
 		(
@@ -410,7 +522,6 @@ def emit_PointerAssign(node: PointerAssign) -> Result:
 	res = Result()
 	instructions = []
 
-	# FIX: Target is a Dereference node (*expr), so target.value is the pointer expression evaluation
 	address_instructions = res.register(emit(node.target.value))
 	if res.error:
 		return res
@@ -423,16 +534,13 @@ def emit_PointerAssign(node: PointerAssign) -> Result:
 			return res
 		instructions.extend(value_instructions)
 
-		# FIX: Implicit conversion logic compliance
-		if node.type.base == "float" and node.type.pointer_layers == 0 and \
-		   node.value.type.base == "int" and node.value.type.pointer_layers == 0:
-			instructions.append(
-				(
-					node.start_pos,
-					node.end_pos,
-					"I2F"
-				)
-			)
+		if (
+			node.type.base == "float"
+			and node.type.pointer_layers == 0
+			and node.value.type.base == "int"
+			and node.value.type.pointer_layers == 0
+		):
+			instructions.append((node.start_pos, node.end_pos, "I2F"))
 
 		instructions.append(
 			(
@@ -461,9 +569,10 @@ def emit_PointerAssign(node: PointerAssign) -> Result:
 				node.end_pos,
 			)
 		)
-		
-	# FIX: Safe resolution of numeric types
-	opcode += "F" if (node.type.base == "float" and node.type.pointer_layers == 0) else "I"
+
+	opcode += (
+		"F" if (node.type.base == "float" and node.type.pointer_layers == 0) else "I"
+	)
 
 	instructions.extend(address_instructions)
 	current_val_instructions = res.register(emit(node.target))
@@ -476,15 +585,13 @@ def emit_PointerAssign(node: PointerAssign) -> Result:
 		return res
 	instructions.extend(value_instructions)
 
-	if node.type.base == "float" and node.type.pointer_layers == 0 and \
-	   node.value.type.base == "int" and node.value.type.pointer_layers == 0:
-		instructions.append(
-			(
-				node.start_pos,
-				node.end_pos,
-				"I2F"
-			)
-		)
+	if (
+		node.type.base == "float"
+		and node.type.pointer_layers == 0
+		and node.value.type.base == "int"
+		and node.value.type.pointer_layers == 0
+	):
+		instructions.append((node.start_pos, node.end_pos, "I2F"))
 
 	instructions.append(
 		(
@@ -560,9 +667,7 @@ def emit_WhileLoop(node: WhileLoop) -> Result:
 
 	instructions = []
 
-	instructions.append(
-		(node.start_pos, node.start_pos, f":beginwhile_{while_labels}")
-	)
+	instructions.append((node.start_pos, node.start_pos, f":beginwhile_{while_labels}"))
 
 	instructions.extend(res.register(emit(node.condition_expr)))
 	if res.error:
@@ -623,7 +728,11 @@ def emit_RepeatLoop(node: RepeatLoop) -> Result:
 	)
 
 	instructions.append(
-		(node.condition_expr.end_pos, node.condition_expr.end_pos, f":endrepeat_{repeat_labels}")
+		(
+			node.condition_expr.end_pos,
+			node.condition_expr.end_pos,
+			f":endrepeat_{repeat_labels}",
+		)
 	)
 
 	repeat_labels += 1
@@ -639,31 +748,21 @@ def emit_IfConditional(node: IfConditional) -> Result:
 
 	for i, (condition, body) in enumerate(node.cases):
 		next_label = (
-			f"branch_{label}_{i}"
-			if i != len(node.cases) - 1
-			else f"else_{label}"
+			f"branch_{label}_{i}" if i != len(node.cases) - 1 else f"else_{label}"
 		)
 
 		instructions.extend(res.register(emit(condition)))
-		instructions.append(
-			(condition.end_pos, condition.end_pos, "BRZ", next_label)
-		)
+		instructions.append((condition.end_pos, condition.end_pos, "BRZ", next_label))
 
 		instructions.extend(res.register(emit(body)))
-		instructions.append(
-			(body.end_pos, body.end_pos, "JUMP", f"endif_{label}")
-		)
+		instructions.append((body.end_pos, body.end_pos, "JUMP", f"endif_{label}"))
 
-		instructions.append(
-			(condition.end_pos, condition.end_pos, f":{next_label}")
-		)
+		instructions.append((condition.end_pos, condition.end_pos, f":{next_label}"))
 
 	if node.else_case:
 		instructions.extend(res.register(emit(node.else_case)))
 
-	instructions.append(
-		(node.end_pos, node.end_pos, f":endif_{label}")
-	)
+	instructions.append((node.end_pos, node.end_pos, f":endif_{label}"))
 
 	if_labels += 1
 	return res.success(instructions)
@@ -678,7 +777,7 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 	res = Result()
 	instructions = []
 
-	# evaluate switch expression once
+
 	instructions.extend(res.register(emit(node.match_expr)))
 	if res.error:
 		return res
@@ -688,14 +787,9 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 		fail_label = (
 			f"case_{label}_{i + 1}"
 			if i < len(node.cases) - 1
-			else (
-				f"default_{label}"
-				if node.default_case
-				else f"endswitch_{label}"
-			)
+			else (f"default_{label}" if node.default_case else f"endswitch_{label}")
 		)
 
-		# entry label (except first case, which falls through)
 		if i != 0:
 			instructions.append(
 				(
@@ -705,7 +799,6 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 				)
 			)
 
-		# duplicate switch value
 		instructions.append(
 			(
 				case_expr.start_pos,
@@ -714,24 +807,23 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 			)
 		)
 
-		# emit literal
 		instructions.extend(res.register(emit(case_expr)))
 		if res.error:
 			return res
 
-		# compare
 		instructions.append(
 			(
 				case_expr.end_pos,
 				case_expr.end_pos,
-				"FEQ"
-				if node.match_expr.type.base == "float"
-				and node.match_expr.type.pointer_layers == 0
-				else "IEQ",
+				(
+					"FEQ"
+					if node.match_expr.type.base == "float"
+					and node.match_expr.type.pointer_layers == 0
+					else "IEQ"
+				),
 			)
 		)
 
-		# if comparison failed
 		instructions.append(
 			(
 				case_expr.end_pos,
@@ -750,7 +842,6 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 			)
 		)
 
-		# emit case body
 		instructions.extend(res.register(emit(body)))
 		if res.error:
 			return res
@@ -788,7 +879,6 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 			return res
 
 	else:
-		# no case matched
 		instructions.append(
 			(
 				node.end_pos,
@@ -812,9 +902,7 @@ def emit_FunctionDefinition(node: FunctionDefinition) -> Result:
 	res = Result()
 	instructions = []
 
-	instructions.append(
-		(node.start_pos, node.start_pos, f":func_{node.name}")
-	)
+	instructions.append((node.start_pos, node.start_pos, f":func_{node.name}"))
 
 	instructions.append((node.start_pos, node.start_pos, "PUSHFP"))
 	instructions.append((node.start_pos, node.start_pos, "SETFP"))
@@ -828,15 +916,17 @@ def emit_FunctionDefinition(node: FunctionDefinition) -> Result:
 		return res
 	instructions.extend(body_instructions)
 
-	instructions.append(
-		(node.end_pos, node.end_pos, f":cleanup_{node.name}")
-	)
+	instructions.append((node.end_pos, node.end_pos, f":cleanup_{node.name}"))
 
 	for _ in range(locals_count):
 		instructions.append((node.end_pos, node.end_pos, "POP"))
 
-	is_proc = getattr(node, "is_proc", False) or getattr(node, "return_type", None) is None
-	params_count = len(getattr(node, "parameters", [])) or len(getattr(node, "args", []))
+	is_proc = (
+		getattr(node, "is_proc", False) or getattr(node, "return_type", None) is None
+	)
+	params_count = len(getattr(node, "parameters", [])) or len(
+		getattr(node, "args", [])
+	)
 
 	if is_proc:
 		instructions.append((node.end_pos, node.end_pos, "POPFP"))
@@ -852,6 +942,7 @@ def emit_FunctionDefinition(node: FunctionDefinition) -> Result:
 
 	return res.success(instructions)
 
+
 def emit_OutputStatement(node: OutputStatement) -> Result:
 	res = Result()
 	instructions = []
@@ -860,38 +951,59 @@ def emit_OutputStatement(node: OutputStatement) -> Result:
 		expr_instructions = res.register(emit(expr))
 		if res.error:
 			return res
-		
+
 		if expr.type.pointer_layers > 0:
-			...
+			instructions += (
+				[
+					(expr.end_pos, expr.end_pos, "PUSH", 10),
+					(expr.end_pos, expr.end_pos, "SYS", 21),  # malloc
+					(expr.end_pos, expr.end_pos, "DUP"),
+					(expr.end_pos, expr.end_pos, "DUP"),
+				]
+				+ expr_instructions
+				+ [
+					(expr.end_pos, expr.end_pos, "SYS", 8),  # int2hex
+					(expr.end_pos, expr.end_pos, "SYS", 1),  # outchars
+					(expr.end_pos, expr.end_pos, "SYS", 22),  # freeblock
+				]
+			)
 		else:
 			match expr.type.base:
 				case "float":
-					instructions += [
-						(expr.end_pos, expr.end_pos, "PUSH", 16),
-						(expr.end_pos, expr.end_pos, "SYS", 21), # malloc
-						(expr.end_pos, expr.end_pos, "DUP"),
-						(expr.end_pos, expr.end_pos, "DUP"),
-					] + expr_instructions + [
-						(expr.end_pos, expr.end_pos, "SYS", 6),  # float2chars
-						(expr.end_pos, expr.end_pos, "SYS", 1),  # outchars
-						(expr.end_pos, expr.end_pos, "SYS", 22), # freeblock
-					]
+					instructions += (
+						[
+							(expr.end_pos, expr.end_pos, "PUSH", 16),
+							(expr.end_pos, expr.end_pos, "SYS", 21),  # malloc
+							(expr.end_pos, expr.end_pos, "DUP"),
+							(expr.end_pos, expr.end_pos, "DUP"),
+						]
+						+ expr_instructions
+						+ [
+							(expr.end_pos, expr.end_pos, "SYS", 6),  # float2chars
+							(expr.end_pos, expr.end_pos, "SYS", 1),  # outchars
+							(expr.end_pos, expr.end_pos, "SYS", 22),  # freeblock
+						]
+					)
 				case "char":
 					instructions += expr_instructions + [
-						(expr.end_pos, expr.end_pos, "SYS", 9)   # putchar
+						(expr.end_pos, expr.end_pos, "SYS", 9)  # putchar
 					]
 				case _:
-					instructions += [
-						(expr.end_pos, expr.end_pos, "PUSH", 16),
-						(expr.end_pos, expr.end_pos, "SYS", 21), # malloc
-						(expr.end_pos, expr.end_pos, "DUP"),
-						(expr.end_pos, expr.end_pos, "DUP"),
-					] + expr_instructions + [
-						(expr.end_pos, expr.end_pos, "SYS", 5),  # int2chars
-						(expr.end_pos, expr.end_pos, "SYS", 1),  # outchars
-						(expr.end_pos, expr.end_pos, "SYS", 22), # freeblock
-					]
-	
+					instructions += (
+						[
+							(expr.end_pos, expr.end_pos, "PUSH", 16),
+							(expr.end_pos, expr.end_pos, "SYS", 21),  # malloc
+							(expr.end_pos, expr.end_pos, "DUP"),
+							(expr.end_pos, expr.end_pos, "DUP"),
+						]
+						+ expr_instructions
+						+ [
+							(expr.end_pos, expr.end_pos, "SYS", 5),  # int2chars
+							(expr.end_pos, expr.end_pos, "SYS", 1),  # outchars
+							(expr.end_pos, expr.end_pos, "SYS", 22),  # freeblock
+						]
+					)
+
 	return res.success(instructions)
 
 
@@ -901,39 +1013,42 @@ def emit_TypeCast(node: TypeCast) -> Result:
 	if res.error:
 		return res
 
-	if node.type.base == "float" and node.type.pointer_layers == 0 and \
-	   node.value.type.base == "int" and node.value.type.pointer_layers == 0:
-		instructions.append(
-			(
-				node.start_pos,
-				node.end_pos,
-				"I2F"
-			)
-		)
-	
-	if node.type.base == "int" and node.type.pointer_layers == 0 and \
-	   node.value.type.base == "float" and node.value.type.pointer_layers == 0:
-		instructions.append(
-			(
-				node.start_pos,
-				node.end_pos,
-				"F2I"
-			)
-		)
-	
+	if (
+		node.type.base == "float"
+		and node.type.pointer_layers == 0
+		and node.value.type.base == "int"
+		and node.value.type.pointer_layers == 0
+	):
+		instructions.append((node.start_pos, node.end_pos, "I2F"))
+
+	if (
+		node.type.base == "int"
+		and node.type.pointer_layers == 0
+		and node.value.type.base == "float"
+		and node.value.type.pointer_layers == 0
+	):
+		instructions.append((node.start_pos, node.end_pos, "F2I"))
+
 	return res.success(instructions)
 
 
 def emit_ArrayDeclaration(node: ArrayDeclaration) -> Result:
-	"""Arrays are just pointers - no code generation needed"""
-	return Result().success([])
+	return Result().success(
+		[
+			(node.start_pos, node.end_pos, "PUSH", node.size.value),
+			(node.start_pos, node.end_pos, "SYS", 21),
+			(node.start_pos, node.end_pos, "STORE", node.address)
+		]
+	)
 
 
-def emit_ArrayInitializer(node: ArrayInitializer) -> Result:
+def emit_ArrayInitializer(node: ArrayInitializer, init_address: int = -1) -> Result:
 	res = Result()
 	instructions = []
 
-	# Emit each element
+	if init_address > -1:
+		instructions.append((node.start_pos, node.start_pos, "LOAD", init_address))
+
 	element_instructions = []
 	for elem in node.elements:
 		elem_inst = res.register(emit(elem))
@@ -941,10 +1056,18 @@ def emit_ArrayInitializer(node: ArrayInitializer) -> Result:
 			return res
 		element_instructions.append(elem_inst)
 
-	# Combine all element instructions
 	for inst_list in element_instructions:
+		if init_address > -1:
+			instructions.append((elem.end_pos, elem.end_pos, "DUP"))
+
 		instructions.extend(inst_list)
 
+		if init_address > -1:
+			instructions.append((elem.end_pos, elem.end_pos, "STREIND"))
+			instructions.append((elem.end_pos, elem.end_pos, "INCI"))
+
+	if init_address > -1:
+		instructions.append((node.end_pos, node.end_pos, "POP"))
 	return res.success(instructions)
 
 
@@ -952,19 +1075,16 @@ def emit_ArrayIndex(node: ArrayIndex) -> Result:
 	res = Result()
 	instructions = []
 
-	# Load array pointer
 	array_inst = res.register(emit(node.array))
 	if res.error:
 		return res
 	instructions.extend(array_inst)
 
-	# Load index
 	index_inst = res.register(emit(node.index))
 	if res.error:
 		return res
 	instructions.extend(index_inst)
 
-	# Add pointer + index
 	instructions.append(
 		(
 			node.start_pos,
@@ -973,7 +1093,6 @@ def emit_ArrayIndex(node: ArrayIndex) -> Result:
 		)
 	)
 
-	# Dereference to get value
 	instructions.append(
 		(
 			node.start_pos,
@@ -990,7 +1109,6 @@ def emit_ArrayAssign(node: ArrayAssign) -> Result:
 	instructions = []
 
 	if node.operator._type == TT.ASGN:
-		# Emit: address = array + index
 		array_inst = res.register(emit(node.array))
 		if res.error:
 			return res
@@ -1009,22 +1127,18 @@ def emit_ArrayAssign(node: ArrayAssign) -> Result:
 			)
 		)
 
-		# Value to store
 		value_inst = res.register(emit(node.value))
 		if res.error:
 			return res
 		instructions.extend(value_inst)
 
-		# Implicit int-to-float cast if needed
-		if node.type.base == "float" and node.type.pointer_layers == 0 and \
-		   node.value.type.base == "int" and node.value.type.pointer_layers == 0:
-			instructions.append(
-				(
-					node.start_pos,
-					node.end_pos,
-					"I2F"
-				)
-			)
+		if (
+			node.type.base == "float"
+			and node.type.pointer_layers == 0
+			and node.value.type.base == "int"
+			and node.value.type.pointer_layers == 0
+		):
+			instructions.append((node.start_pos, node.end_pos, "I2F"))
 
 		instructions.append(
 			(
@@ -1036,7 +1150,6 @@ def emit_ArrayAssign(node: ArrayAssign) -> Result:
 
 		return res.success(instructions)
 
-	# Compound assignment (+=, -=, etc.)
 	compound_map = {
 		TT.ADD_ASGN: "ADD",
 		TT.SUB_ASGN: "SUB",
@@ -1056,10 +1169,10 @@ def emit_ArrayAssign(node: ArrayAssign) -> Result:
 			)
 		)
 
-	# Suffix with I or F based on element type
-	opcode += "F" if (node.type.base == "float" and node.type.pointer_layers == 0) else "I"
+	opcode += (
+		"F" if (node.type.base == "float" and node.type.pointer_layers == 0) else "I"
+	)
 
-	# Load current value
 	array_inst = res.register(emit(node.array))
 	if res.error:
 		return res
@@ -1086,24 +1199,19 @@ def emit_ArrayAssign(node: ArrayAssign) -> Result:
 		)
 	)
 
-	# Load value to add/subtract/etc
 	value_inst = res.register(emit(node.value))
 	if res.error:
 		return res
 	instructions.extend(value_inst)
 
-	# Cast if needed
-	if node.type.base == "float" and node.type.pointer_layers == 0 and \
-	   node.value.type.base == "int" and node.value.type.pointer_layers == 0:
-		instructions.append(
-			(
-				node.start_pos,
-				node.end_pos,
-				"I2F"
-			)
-		)
+	if (
+		node.type.base == "float"
+		and node.type.pointer_layers == 0
+		and node.value.type.base == "int"
+		and node.value.type.pointer_layers == 0
+	):
+		instructions.append((node.start_pos, node.end_pos, "I2F"))
 
-	# Perform operation
 	instructions.append(
 		(
 			node.start_pos,
@@ -1112,17 +1220,12 @@ def emit_ArrayAssign(node: ArrayAssign) -> Result:
 		)
 	)
 
-	# Store back
-	# Reload address (array + index again)
 	array_inst2 = res.register(emit(node.array))
 	if res.error:
 		return res
-	
-	# Build STREIND by duplicating earlier pattern
-	# We need: address on stack, then value
-	# Currently: value is on top, need address below it
+
 	instructions.append((node.start_pos, node.end_pos, "SWAP"))
-	
+
 	array_inst2 = res.register(emit(node.array))
 	if res.error:
 		return res
