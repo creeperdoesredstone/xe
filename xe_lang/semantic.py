@@ -5,9 +5,10 @@ from xe_lang.rules import BINARY_RULES, UNARY_RULES
 
 
 class Type:
-	def __init__(self, base: str, pointer_layers: int = 0):
-		self.base = base
-		self.pointer_layers = pointer_layers
+	def __init__(self, base: str, pointer_layers: int = 0, is_array: bool = False):
+		self.base: str = base
+		self.pointer_layers: int = pointer_layers
+		self.is_array: bool = is_array
 
 	def __eq__(self, other):
 		return (
@@ -25,12 +26,18 @@ class Type:
 
 class Symbol:
 	def __init__(
-		self, name: str, type_: Type, address: int, is_local: bool = False
+		self,
+		name: str,
+		type_: Type,
+		address: int,
+		is_local: bool = False,
+		arr_length: int = 0,
 	) -> None:
 		self.name: str = name
 		self.type: Type = type_
 		self.address: int = address
 		self.is_local: bool = is_local
+		self.arr_length: int = arr_length
 
 
 class SubroutineSymbol:
@@ -117,10 +124,16 @@ class SemanticAnalyzer:
 		node.type = Type("float")
 		return Result().success(Type("float"))
 
+	def visit_StringLiteral(self, node: StringLiteral) -> Result:
+		node.address = self.next_address
+		self.next_address += 3
+		node.type = Type("string")
+		return Result().success(Type("string"))
+
 	def visit_BoolLiteral(self, node: BoolLiteral) -> Result:
 		node.type = Type("bool")
 		return Result().success(Type("bool"))
-	
+
 	def visit_CharLiteral(self, node: CharLiteral) -> Result:
 		node.type = Type("char")
 		return Result().success(Type("char"))
@@ -860,7 +873,7 @@ class SemanticAnalyzer:
 
 	def visit_ProcedureCall(self, node: ProcedureCall) -> Result:
 		return self._analyze_call(node, expect_proc=True)
-	
+
 	def visit_OutputStatement(self, node: OutputStatement) -> Result:
 		res = Result()
 
@@ -870,7 +883,7 @@ class SemanticAnalyzer:
 				return res
 
 		return res.success(None)
-	
+
 	def visit_InputStatement(self, node: InputStatement) -> Result:
 		res = Result()
 
@@ -893,7 +906,7 @@ class SemanticAnalyzer:
 				return res
 
 		return res.success(None)
-	
+
 	def visit_TypeCast(self, node: TypeCast) -> Result:
 		res = Result()
 
@@ -921,15 +934,17 @@ class SemanticAnalyzer:
 				)
 			)
 
-		if expr_type.base == "int" and target_type.base == "float":
-			node.type = target_type
-			return res.success(target_type)
+		type_map = (
+			("int", "float"),
+			("float", "int"),
+			("int", "char"),
+			("char", "int"),
+		)
 
-		if expr_type.base == "float" and target_type.base == "int":
-			node.type = target_type
-			return res.success(target_type)
-
-		if expr_type.base == target_type.base:
+		if (
+			expr_type.base,
+			target_type.base,
+		) in type_map or expr_type.base == target_type.base:
 			node.type = target_type
 			return res.success(target_type)
 
@@ -962,7 +977,6 @@ class SemanticAnalyzer:
 				)
 			)
 
-		# Analyze the size expression (must be int literal or constant)
 		size_type = res.register(self.analyze(node.size))
 		if res.error:
 			return res
@@ -976,16 +990,11 @@ class SemanticAnalyzer:
 				)
 			)
 
-		# Array type is a pointer to the element type
-		symbol_type = Type(node.element_type, node.pointer_layers + 1)
+		symbol_type = Type(node.element_type, node.pointer_layers + 1, True)
 
 		if self.current_function is None:
 			address = self.next_address
-			# Skip address for pointer + array elements + terminator
-			if isinstance(node.size, IntLiteral):
-				self.next_address += 1 + node.size.value + 1
-			else:
-				self.next_address += 1  # Conservative: just the pointer
+			self.next_address += 1
 			is_local = False
 		else:
 			address = self.current_function.next_local_offset
@@ -994,24 +1003,33 @@ class SemanticAnalyzer:
 
 		node.address = address
 		self.scope.symbols[node.name] = Symbol(
-			node.name,
-			symbol_type,
-			address,
-			is_local,
+			node.name, symbol_type, address, is_local, node.size.value
 		)
 
 		return res.success(None)
 
-	def visit_ArrayInitializer(self, node: ArrayInitializer) -> Result:
+	def visit_ArrayInitializer(self, node):
 		res = Result()
-		
+
+		element_type = None
+
 		for elem in node.elements:
-			elem_type = res.register(self.analyze(elem))
+			t = res.register(self.analyze(elem))
 			if res.error:
 				return res
-		
-		node.type = Type("array")
-		return res.success(Type("array"))
+
+			if element_type is None:
+				element_type = t
+			elif t != element_type:
+				return res.failure(
+					SemanticError("Array elements must have the same type")
+				)
+
+		node.type = Type(
+			element_type.base, element_type.pointer_layers + 1, is_array=True
+		)
+
+		return res.success(node.type)
 
 	def visit_ArrayIndex(self, node: ArrayIndex) -> Result:
 		res = Result()
@@ -1115,7 +1133,10 @@ class SemanticAnalyzer:
 		}
 
 		if node.operator._type in compound_ops:
-			if element_type.pointer_layers != 0 or element_type.base not in ("int", "float"):
+			if element_type.pointer_layers != 0 or element_type.base not in (
+				"int",
+				"float",
+			):
 				return res.fail(
 					SemanticError(
 						f"Operator '{node.operator._type.name}' requires numeric operands.",
@@ -1124,7 +1145,10 @@ class SemanticAnalyzer:
 					)
 				)
 
-			if value_type.pointer_layers != 0 or value_type.base not in ("int", "float"):
+			if value_type.pointer_layers != 0 or value_type.base not in (
+				"int",
+				"float",
+			):
 				return res.fail(
 					SemanticError(
 						f"Operator '{node.operator._type.name}' requires numeric operands.",
