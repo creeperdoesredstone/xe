@@ -219,7 +219,7 @@ def parse(tokens: list[Token]) -> Result:
 		res: Result = Result()
 
 		advance()  # consume 'array'
-		
+
 		if current_tok._type != TT.IDENT:
 			return res.fail(
 				InvalidSyntaxError(
@@ -260,7 +260,7 @@ def parse(tokens: list[Token]) -> Result:
 				pointer_layers += 2
 			advance()
 
-		if current_tok._type != TT.LSQ:  # [
+		if current_tok._type != TT.LSQ:
 			return res.fail(
 				InvalidSyntaxError(
 					f"Expected '[' for array size, but found '{current_tok.value or current_tok._type.name}'.",
@@ -270,11 +270,11 @@ def parse(tokens: list[Token]) -> Result:
 			)
 		advance()
 
-		size_expr = res.register(expr())
+		size_expr = res.register(literal())
 		if res.error:
 			return res
 
-		if current_tok._type != TT.RSQ:  # ]
+		if current_tok._type != TT.RSQ:
 			return res.fail(
 				InvalidSyntaxError(
 					f"Expected ']' after array size, but found '{current_tok.value or current_tok._type.name}'.",
@@ -800,7 +800,7 @@ def parse(tokens: list[Token]) -> Result:
 			)
 
 		end_pos = current_tok.end_pos.copy()
-		advance()  # consume final }
+		advance()
 
 		return res.success(
 			SwitchStatement(
@@ -827,16 +827,18 @@ def parse(tokens: list[Token]) -> Result:
 			value: Node = res.register(logical_or())
 			if res.error:
 				return res
-			
+
 			values.append(value)
 			end_pos: Position = current_tok.end_pos.copy()
 
 		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
-			return res.fail(InvalidSyntaxError(
-				f"Expected EOL or '<<', found {current_tok.value or current_tok._type.name} instead.",
-				current_tok.start_pos,
-				current_tok.end_pos
-			))
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected EOL or '<<', found {current_tok.value or current_tok._type.name} instead.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
 
 		return res.success(OutputStatement(start_pos, end_pos, values))
 
@@ -845,13 +847,15 @@ def parse(tokens: list[Token]) -> Result:
 		res = Result()
 
 		advance()  # consume 'in'
-		
+
 		if not lookahead_for_token(Token(TT.ISTREAM, None, None, None)):
-			return res.fail(InvalidSyntaxError(
-				f"Expected '>>' after 'in', found {current_tok.value or current_tok._type.name} instead.",
-				current_tok.start_pos,
-				current_tok.end_pos
-			))
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected '>>' after 'in', found {current_tok.value or current_tok._type.name} instead.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
 
 		while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
 			advance()
@@ -859,25 +863,31 @@ def parse(tokens: list[Token]) -> Result:
 
 		var: Node = res.register(expr())
 		if not isinstance(var, (Identifier, UnaryOperation)):
-			return res.fail(InvalidSyntaxError(
-				f"Expected a variable or dereference after 'in', found {type(var).__name__} instead.",
-				current_tok.start_pos,
-				current_tok.end_pos
-			))
-		
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected a variable or dereference after 'in', found {type(var).__name__} instead.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+
 		if isinstance(var, UnaryOperation) and var.op._type != TT.MUL:
-			return res.fail(InvalidSyntaxError(
-				f"Expected a variable or dereference after 'in', found {type(var).__name__} instead.",
-				current_tok.start_pos,
-				current_tok.end_pos
-			))
-		
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected a variable or dereference after 'in', found {type(var).__name__} instead.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+
 		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
-			return res.fail(InvalidSyntaxError(
-				f"Expected EOL, found {current_tok.value or current_tok._type.name} instead.",
-				current_tok.start_pos,
-				current_tok.end_pos
-			))
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected EOL, found {current_tok.value or current_tok._type.name} instead.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
 
 		return res.success(InputStatement(start_pos, var.end_pos.copy(), var))
 
@@ -900,7 +910,6 @@ def parse(tokens: list[Token]) -> Result:
 		name = current_tok.value
 		advance()
 
-		# (
 		if current_tok._type != TT.LPR:
 			return res.fail(
 				InvalidSyntaxError(
@@ -978,7 +987,6 @@ def parse(tokens: list[Token]) -> Result:
 
 				break
 
-		# )
 		if current_tok._type != TT.RPR:
 			return res.fail(
 				InvalidSyntaxError(
@@ -1002,7 +1010,7 @@ def parse(tokens: list[Token]) -> Result:
 		body = res.register(program(TT.RBR))
 		if res.error:
 			return res
-		
+
 		if current_tok._type != TT.RBR:
 			return res.fail(
 				InvalidSyntaxError(
@@ -1043,7 +1051,6 @@ def parse(tokens: list[Token]) -> Result:
 		name = current_tok.value
 		advance()
 
-		# (
 		if current_tok._type != TT.LPR:
 			return res.fail(
 				InvalidSyntaxError(
@@ -1121,7 +1128,6 @@ def parse(tokens: list[Token]) -> Result:
 
 				break
 
-		# )
 		if current_tok._type != TT.RPR:
 			return res.fail(
 				InvalidSyntaxError(
@@ -1150,7 +1156,6 @@ def parse(tokens: list[Token]) -> Result:
 			pointer_layers += 1 if current_tok._type == TT.MUL else 2
 			advance()
 
-		# {
 		if current_tok._type != TT.LBR:
 			return res.fail(
 				InvalidSyntaxError(
@@ -1215,7 +1220,7 @@ def parse(tokens: list[Token]) -> Result:
 
 		end_pos = value.end_pos.copy()
 		return res.success(ReturnStatement(start_pos, end_pos, value))
-	
+
 	def struct_definition() -> Result: ...
 
 	def class_definition() -> Result: ...
@@ -1226,7 +1231,7 @@ def parse(tokens: list[Token]) -> Result:
 		start_pos = current_tok.start_pos.copy()
 		res = Result()
 
-		advance()  # consume 'call'
+		advance()  #  consume 'call'
 
 		if current_tok._type != TT.IDENT:
 			return res.fail(
@@ -1263,7 +1268,7 @@ def parse(tokens: list[Token]) -> Result:
 					continue
 
 				break
-		
+
 		if current_tok._type != TT.RPR:
 			return res.fail(
 				InvalidSyntaxError(
@@ -1272,7 +1277,7 @@ def parse(tokens: list[Token]) -> Result:
 					current_tok.end_pos,
 				)
 			)
-		
+
 		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
 			return res.fail(
 				InvalidSyntaxError(
@@ -1324,7 +1329,7 @@ def parse(tokens: list[Token]) -> Result:
 				return res.success(
 					PointerAssign(lhs.start_pos, rhs.end_pos, lhs, rhs, op_tok)
 				)
-			
+
 			# array indexing/assignment
 			elif isinstance(lhs, ArrayIndex):
 				if current_tok._type in supported_assignment_ops:
@@ -1334,7 +1339,9 @@ def parse(tokens: list[Token]) -> Result:
 					if res.error:
 						return res
 					return res.success(
-						ArrayAssign(lhs.start_pos, rhs.end_pos, lhs.array, lhs.index, rhs, op)
+						ArrayAssign(
+							lhs.start_pos, rhs.end_pos, lhs.array, lhs.index, rhs, op
+						)
 					)
 
 			# invalid lhs (5 = value or (x + 1) = value)
@@ -1422,8 +1429,7 @@ def parse(tokens: list[Token]) -> Result:
 		if tok._type == TT.IDENT:
 			iden_name: str = tok.value
 			result = Identifier(tok.start_pos, tok.end_pos, iden_name)
-			
-			# Check for array indexing
+
 			while current_tok._type == TT.LSQ:
 				advance()
 				index = res.register(expr())
@@ -1438,8 +1444,10 @@ def parse(tokens: list[Token]) -> Result:
 						)
 					)
 				advance()
-				result = ArrayIndex(result.start_pos, current_tok.end_pos, result, index)
-			
+				result = ArrayIndex(
+					result.start_pos, current_tok.end_pos, result, index
+				)
+
 			return res.success(result)
 		if tok._type == TT.LPR:
 			if current_tok._type == TT.TYPE:
@@ -1459,7 +1467,7 @@ def parse(tokens: list[Token]) -> Result:
 				)
 			advance()
 			return res.success(value)
-		if tok._type == TT.LSQ:  # [
+		if tok._type == TT.LSQ:
 			elements: list[Node] = []
 			if current_tok._type != TT.RSQ:
 				while True:
@@ -1481,6 +1489,19 @@ def parse(tokens: list[Token]) -> Result:
 			end_pos = current_tok.end_pos.copy()
 			advance()
 			return res.success(ArrayInitializer(tok.start_pos, end_pos, elements))
+		if tok._type == TT.LBR:
+			block_content: Program = res.register(program(TT.RBR))
+			if res.error:
+				return res
+
+			if current_tok._type != TT.RBR:
+				return res.fail(
+					InvalidSyntaxError(
+						f"Expected '}}' to terminate a block, found {current_tok.value or current_tok._type} instead.",
+						current_tok.start_pos,
+						current_tok.end_pos,
+					)
+				)
 
 		return res.fail(
 			InvalidSyntaxError(
@@ -1489,7 +1510,7 @@ def parse(tokens: list[Token]) -> Result:
 				tok.end_pos,
 			)
 		)
-	
+
 	def type_cast(start_pos: Position) -> Result:
 		res = Result()
 		type_to_cast: str = current_tok.value
@@ -1501,18 +1522,22 @@ def parse(tokens: list[Token]) -> Result:
 			advance()
 
 		if current_tok._type != TT.RPR:
-			return res.fail(InvalidSyntaxError(
-				f"Expected ')' after type, found {current_tok.value or current_tok.type} instead.",
-				current_tok.start_pos,
-				current_tok.end_pos
-			))
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected ')' after type, found {current_tok.value or current_tok.type} instead.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
 		advance()
 
 		value = res.register(literal())
 		if res.error:
 			return res
-		
-		return res.success(TypeCast(start_pos, value.end_pos, value, type_to_cast, pointer_layers))
+
+		return res.success(
+			TypeCast(start_pos, value.end_pos, value, type_to_cast, pointer_layers)
+		)
 
 	# parse
 	res = program()
