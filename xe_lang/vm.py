@@ -688,7 +688,7 @@ class VM:
 					if res.error:
 						return res
 
-					if src < 0 or src + ins_arg > len(self.pram):
+					if src < 0 or src + ins_arg > len(self.program_memory):
 						return res.fail(VMError(
 							"Program memory out of bounds",
 							pos.copy(),
