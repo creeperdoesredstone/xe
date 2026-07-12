@@ -48,20 +48,21 @@ class VM:
 		if len(program) < 4:
 			raise ValueError("Executable too small")
 
-		magic, version, text_size, data_size = program[:4]
+		self.magic, self.version, self.text_size, self.data_size = program[:4]
 
-		if magic != MAGIC:
+		if self.magic != MAGIC:
 			raise ValueError("Invalid executable")
 
-		if version != VERSION:
-			raise ValueError(f"Unsupported executable version {version}")
+		if self.version != VERSION:
+			raise ValueError(f"Unsupported executable version {self.version}")
 
-		expected = 4 + text_size + data_size
+		expected = 4 + self.text_size + self.data_size
 		if len(program) != expected:
 			raise ValueError("Corrupt executable")
 
-		self.instructions = program[4:4 + text_size]
-		self.program_memory = program[4 + text_size:]
+		self.program = program[4:]
+		self.instructions = program[4:4 + self.text_size]
+		self.program_memory = program[4 + self.text_size:]
 		self.stack: list = []
 		self.call_stack: list = []
 		self.ip: int = 0
@@ -73,9 +74,6 @@ class VM:
 
 		self.fp: int = 0
 		self.sp: int = 0
-		self.offset: int = 0
-		self.actual_offset: int = 0
-		self.enable_offset: bool = False
 		self.cr: int = 0
 		self.im: int = TRUE
 
@@ -239,11 +237,6 @@ class VM:
 		self.ip = 0
 		self.heap_pointer = 0x2000
 
-		self.offset = 0
-		self.actual_offset = 0
-
-		self.enable_offset = True
-
 		self.free_list = [
 			(0x2000, 0xE000)
 		]
@@ -312,13 +305,13 @@ class VM:
 		if ins_type == 1:  # Other Stack Instructions
 			match ins_mod:
 				case 0:  # LOAD
-					self.stack.append(self.data_memory[ins_arg + self.offset])
+					self.stack.append(self.data_memory[ins_arg])
 				case 1:  # STORE
 					value = res.register(self.pop())
 					if res.error:
 						return res
 
-					self.data_memory[ins_arg + self.offset] = value
+					self.data_memory[ins_arg] = value
 				case 2:  # POP
 					res.register(self.pop())
 					if res.error:
@@ -361,14 +354,14 @@ class VM:
 					addr = res.register(self.pop())
 					if res.error:
 						return res
-					self.stack.append(self.data_memory[addr + self.offset])
+					self.stack.append(self.data_memory[addr])
 				case 8:  # STOREIND
 					value = res.register(self.pop())
 					addr = res.register(self.pop())
 
 					if res.error:
 						return res
-					self.data_memory[addr + self.offset] = value
+					self.data_memory[addr] = value
 				case 9:  # PUSHFP
 					self.stack.append(self.fp)
 				case 10:  # POPFP
@@ -382,12 +375,12 @@ class VM:
 					addr = ins_arg
 					if res.error:
 						return res
-					self.fp = self.data_memory[addr + self.offset]
+					self.fp = self.data_memory[addr]
 				case 13:  # STOREFP
 					addr = ins_arg
 					if res.error:
 						return res
-					self.data_memory[addr + self.offset] = self.fp
+					self.data_memory[addr] = self.fp
 
 		if ins_type == 2:  # Conversion
 			res.register(self.check_stack(1))
@@ -682,8 +675,11 @@ class VM:
 		if ins_type == 8:  # Other
 			match ins_mod:
 				case 0: # LOOKUP
+					src = res.register(self.pop()) - self.text_size
 					dst = res.register(self.pop())
-					src = res.register(self.pop())
+
+					print(f"LOOKUP src={src} dst={dst} size={ins_arg}")
+					print(self.program_memory[src:src+ins_arg])
 
 					if res.error:
 						return res
@@ -694,18 +690,27 @@ class VM:
 							pos.copy(),
 							pos.copy()
 						))
+					
+					if dst < 0 or dst + ins_arg > len(self.data_memory):
+						return res.fail(
+							VMError(
+								"Data memory out of bounds",
+								pos.copy(),
+								pos.copy(),
+							)
+						)
 
 					for i in range(ins_arg):
-						self.data_memory[dst + i + self.offset] = self.program_memory[src + i]
+						self.data_memory[dst + i] = self.program_memory[src + i]
 				case 1:      # WRITE
-					dst = res.register(self.pop())
 					src = res.register(self.pop())
+					dst = res.register(self.pop())
 
 					if res.error:
 						return res
 
 					for i in range(ins_arg):
-						self.program_memory[dst + i] = self.data_memory[src + i + self.offset]
+						self.program_memory[dst + i] = self.data_memory[src + i]
 
 		self.sp = len(self.stack)
 		return res.success(True)
