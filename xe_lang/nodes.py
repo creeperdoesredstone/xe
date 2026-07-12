@@ -1,4 +1,4 @@
-from xe_lang.helper import Token, Position
+from xe_lang.helper import Token, Position, ANSI
 
 
 class Node:
@@ -7,16 +7,72 @@ class Node:
 		self.end_pos: Position = end_pos
 		self.type: str = "none"
 
+	def prettyprint(self, indent: int = 0, label: str = "") -> str:
+		"""
+		Recursively walks the AST node attributes and builds a human-readable,
+		indented tree structure with clean alignment.
+		"""
+		prefix = "  " * indent
+		node_name = f"{ANSI.BOLD}{ANSI.BLUE}{self.__class__.__name__}{ANSI.END}"
+		label_prefix = f"{ANSI.CYAN}{label}: {ANSI.END}" if label else ""
+
+		lines = [f"{prefix}{label_prefix}{node_name}"]
+
+		for key, value in self.__dict__.items():
+			if key in (
+				"start_pos",
+				"end_pos",
+				"left_type",
+				"right_type",
+				"arg_types",
+				"is_local",
+				"address",
+			):
+				continue
+
+			child_indent = indent + 1
+			child_prefix = "  " * child_indent
+
+			if isinstance(value, Node):
+				lines.append(value.prettyprint(child_indent, label=key))
+
+			elif isinstance(value, list):
+				if not value:
+					lines.append(f"{child_prefix}{ANSI.YELLOW}{key}{ANSI.END}: []")
+				else:
+					lines.append(f"{child_prefix}{ANSI.YELLOW}{key}{ANSI.END}: [")
+					for i, item in enumerate(value):
+						if isinstance(item, Node):
+							lines.append(
+								item.prettyprint(child_indent + 1, label=f"[{i}]")
+							)
+						elif isinstance(item, tuple):
+							lines.append(
+								f"{child_prefix}  {ANSI.MAGENTA}Case [{i}]{ANSI.END}:"
+							)
+							for part in item:
+								if isinstance(part, Node):
+									lines.append(part.prettyprint(child_indent + 2))
+						else:
+							lines.append(f"{child_prefix}    {item}")
+					lines.append(f"{child_prefix}]")
+
+			elif isinstance(value, tuple):
+				lines.append(f"{child_prefix}{ANSI.YELLOW}{key}{ANSI.END}: {value}")
+
+			elif value is not None:
+				val_str = f"{ANSI.GREEN}{repr(value)}{ANSI.END}"
+				lines.append(f"{child_prefix}{ANSI.YELLOW}{key}{ANSI.END}: {val_str}")
+
+		return "\n".join(lines)
+
+	def __str__(self) -> str:
+		return self.prettyprint()
+
 
 class Program(Node):
-	def __init__(
-		self,
-		start_pos: Position,
-		end_pos: Position,
-		statements: list[Node],
-	):
+	def __init__(self, start_pos: Position, end_pos: Position, statements: list[Node]):
 		super().__init__(start_pos, end_pos)
-
 		self.statements = statements
 
 	def __repr__(self):
@@ -80,7 +136,6 @@ class Identifier(Node):
 		self.type: str = "none"
 		self.address: int = -1
 		self.pointer_layers: int = 0
-
 		self.is_local: bool = False
 
 	def __repr__(self):
@@ -95,7 +150,6 @@ class BinaryOperation(Node):
 		self.left: Node = left
 		self.op: Token = op
 		self.right: Node = right
-
 		self.type = None
 		self.left_type: str = left.type
 		self.right_type: str = right.type
@@ -135,22 +189,6 @@ class VariableDeclaration(Node):
 		return f"DECLARE ({self.name}: {self.type})"
 
 
-class ArrayDeclaration(Node):
-	def __init__(
-		self,
-		start_pos: Position,
-		end_pos: Position,
-		name: str,
-		type: str,
-	):
-		super().__init__(start_pos, end_pos)
-		self.name: str = name
-		self.type: str = type
-
-	def __repr__(self):
-		return f"DECLARE_ARR ({self.name}: {self.type})"
-
-
 class VariableAssign(Node):
 	def __init__(
 		self, start_pos: Position, end_pos: Position, name: str, value: Node, op: Token
@@ -160,7 +198,6 @@ class VariableAssign(Node):
 		self.operator: Token = op
 		self.value: Node = value
 		self.address: int = -1
-
 		self.is_local: bool = False
 
 	def __repr__(self):
@@ -204,11 +241,7 @@ class ForLoop(Node):
 
 class WhileLoop(Node):
 	def __init__(
-		self,
-		start_pos: Position,
-		end_pos: Position,
-		condition: Node,
-		body: Program,
+		self, start_pos: Position, end_pos: Position, condition: Node, body: Program
 	):
 		super().__init__(start_pos, end_pos)
 		self.condition_expr: Node = condition
@@ -217,11 +250,7 @@ class WhileLoop(Node):
 
 class RepeatLoop(Node):
 	def __init__(
-		self,
-		start_pos: Position,
-		end_pos: Position,
-		condition: Node,
-		body: Program,
+		self, start_pos: Position, end_pos: Position, condition: Node, body: Program
 	):
 		super().__init__(start_pos, end_pos)
 		self.condition_expr: Node = condition
@@ -321,16 +350,11 @@ class ProcedureDefinition(Node):
 
 class FunctionCall(Node):
 	def __init__(
-		self,
-		start_pos: Position,
-		end_pos: Position,
-		name: str,
-		arguments: list[Node],
+		self, start_pos: Position, end_pos: Position, name: str, arguments: list[Node]
 	):
 		super().__init__(start_pos, end_pos)
 		self.name: str = name
 		self.arguments: list[Node] = arguments
-
 		self.arg_types: list = []
 
 	def __repr__(self):
@@ -339,11 +363,7 @@ class FunctionCall(Node):
 
 class ProcedureCall(Node):
 	def __init__(
-		self,
-		start_pos: Position,
-		end_pos: Position,
-		name: str,
-		arguments: list[Node],
+		self, start_pos: Position, end_pos: Position, name: str, arguments: list[Node]
 	):
 		super().__init__(start_pos, end_pos)
 		self.name: str = name
@@ -358,7 +378,6 @@ class ReturnStatement(Node):
 	def __init__(self, start_pos: Position, end_pos: Position, value: Node | None):
 		super().__init__(start_pos, end_pos)
 		self.value: Node | None = value
-
 		self.func_name: str | None = None
 		self.is_proc: bool = False
 		self.param_count: int = 0
@@ -377,13 +396,16 @@ class StructDefinition(Node):
 		self.fields: list[tuple[str, str]] = fields
 
 
-class ClassDefinition(Node): ...
+class ClassDefinition(Node):
+	pass
 
 
-class NewPointer(Node): ...
+class NewPointer(Node):
+	pass
 
 
-class FreePointer(Node): ...
+class FreePointer(Node):
+	pass
 
 
 class TypeCast(Node):
@@ -414,7 +436,7 @@ class ArrayDeclaration(Node):
 		super().__init__(start_pos, end_pos)
 		self.name: str = name
 		self.element_type: str = element_type
-		self.size: Node = size  # Expression for array size
+		self.size: Node = size
 		self.pointer_layers: int = pointer_layers
 		self.address: int = -1
 
@@ -423,12 +445,7 @@ class ArrayDeclaration(Node):
 
 
 class ArrayInitializer(Node):
-	def __init__(
-		self,
-		start_pos: Position,
-		end_pos: Position,
-		elements: list[Node],
-	):
+	def __init__(self, start_pos: Position, end_pos: Position, elements: list[Node]):
 		super().__init__(start_pos, end_pos)
 		self.elements: list[Node] = elements
 
@@ -438,11 +455,7 @@ class ArrayInitializer(Node):
 
 class ArrayIndex(Node):
 	def __init__(
-		self,
-		start_pos: Position,
-		end_pos: Position,
-		array: Node,
-		index: Node,
+		self, start_pos: Position, end_pos: Position, array: Node, index: Node
 	):
 		super().__init__(start_pos, end_pos)
 		self.array: Node = array
