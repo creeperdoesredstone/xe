@@ -4,6 +4,7 @@ import time
 import math
 import threading
 from xe_lang.helper import Result, VMError, Position
+from xe_lang.assembler import INSTRUCTION_MAP
 
 TRUE = 0xFFFFFFFF
 FALSE = 0
@@ -47,16 +48,22 @@ class VM:
 		self.call_stack: list = []
 		self.ip: int = 0
 		self.memory: list = [0] * 65536
+		self.free_list: list = [
+			(0x2000, 0xE000)
+		]
+		self.allocations: dict[int, int] = {}
 
 		self.fp: int = 0
 		self.sp: int = 0
 		self.offset: int = 0
 		self.actual_offset: int = 0
 		self.enable_offset: bool = False
+		self.cr: int = 0
+		self.im: int = TRUE
 
 		self.labels = {}
 		self.start_time = time.time()
-		self.output_handler = output_handler # for ide
+		self.output_handler = output_handler  # for ide
 
 		self.width = 240
 		self.height = 180
@@ -78,24 +85,9 @@ class VM:
 		self.img = None
 		self.canvas_image_id = None
 		self.display_img = None
-		self.heap_pointer = 32768
-
-	def process_labels(self):
-		self.labels = {}
-		processed_instructions = []
-		line = 0
-		for inst in self.instructions:
-			opcode = inst[2]
-			if opcode[0] == ":":
-				self.labels[opcode] = line
-			else:
-				line += 1
-				processed_instructions.append(inst)
-
-		return processed_instructions
+		self.heap_pointer = 0x2000
 
 	def init_graphics_window(self):
-		"""Creates the GUI display canvas lazily only when requested by a syscall."""
 		if self.root is not None:
 			return
 
@@ -198,7 +190,6 @@ class VM:
 			self.back_buffer[y][x] = color_idx % 16
 
 	def _output(self, text: str):
-		"""Output text to handler if available (IDE), otherwise to stdout."""
 		if self.output_handler:
 			self.output_handler(text)
 		else:
@@ -222,8 +213,16 @@ class VM:
 
 	def run(self) -> Result:
 		res = Result()
-		self.instructions = self.process_labels()
 		self.stack.clear()
+		self.cr = 0
+		self.im = TRUE
+		self.fp = 0
+		self.heap_pointer = 0x2000
+
+		self.free_list = [
+			(0x2000, 0xE000)
+		]
+		self.allocations = {}
 
 		while self.ip < len(self.instructions):
 			self.sp = len(self.stack)
@@ -258,602 +257,400 @@ class VM:
 
 		return res.success(self.stack)
 
-	def pop(self, start_pos: Position, end_pos: Position) -> Result:
+	def pop(self) -> Result:
 		res = Result()
+		pos = Position(0, 0, 0, "<bin>", "")
 		if not self.stack:
-			return res.fail(VMError("Stack underflow", start_pos, end_pos))
+			return res.fail(VMError("Stack underflow", pos.copy(), pos.copy()))
 		val = self.stack.pop()
 		self.sp = len(self.stack)
 		return res.success(val)
 
-	def execute(self, instruction: tuple) -> Result:
+	def check_stack(self, n: int) -> Result:
+		pos = Position(0, 0, 0, "<bin>", "")
+		if len(self.stack) < n:
+			return Result().fail(VMError("Stack underflow", pos.copy(), pos.copy()))
+		return Result().success(None)
+
+	def execute(self, instruction: int) -> Result:
 		res = Result()
+		pos = Position(0, 0, 0, "<bin>", "")
 
-		start_pos = instruction[0]
-		end_pos = instruction[1]
-		op = instruction[2]
-		args = instruction[3:]
+		ins_type = instruction >> 32
+		ins_mod = (instruction >> 16) & 0xFFFF
+		ins_arg = instruction & 0xFFFF
+		ins_arg2 = instruction & 0xFFFFFFFF
 
-		# resolve an immediate argument if it references a label
-		def get_arg(index: int = 0):
-			if index < len(args):
-				target = args[index]
-				if f":{target}" in self.labels:
-					return self.labels[f":{target}"]
-				return target
-			return None
+		if ins_type == 0:  # PUSH
+			self.stack.append(ins_arg2)
 
-		match op:
-			case "PUSH":
-				self.stack.append(get_arg(0))
-			case "POP":
-				res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-			case "DUP":
-				if not self.stack:
-					return res.fail(VMError("Stack underflow", start_pos, end_pos))
-				self.stack.append(self.stack[-1])
-			case "SWAP":
-				if len(self.stack) < 2:
-					return res.fail(VMError("Stack underflow", start_pos, end_pos))
-				self.stack[-1], self.stack[-2] = self.stack[-2], self.stack[-1]
-			case "OVER":
-				if len(self.stack) < 2:
-					return res.fail(VMError("Stack underflow", start_pos, end_pos))
-				self.stack.append(self.stack[-2])
-			case "ROT":
-				if len(self.stack) < 3:
-					return res.fail(VMError("Stack underflow", start_pos, end_pos))
-				c, b, a = self.stack.pop(), self.stack.pop(), self.stack.pop()
-				self.stack.extend([c, a, b])
+		if ins_type == 1:  # Other Stack Instructions
+			match ins_mod:
+				case 0:  # LOAD
+					self.stack.append(self.memory[ins_arg + self.offset])
+				case 1:  # STORE
+					value = res.register(self.pop())
+					if res.error:
+						return res
 
-			case "PUSHFP":
-				self.stack.append(self.fp)
-			case "POPFP":
-				val = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				self.fp = val
-			case "SETFP":
-				self.fp = self.sp
-			case "LOADSP":
-				offset = self.fp + (self.sp - get_arg(0))
-				self.stack.append(self.memory[offset])
-			case "STORESP":
-				val = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				offset = self.fp + (self.sp - get_arg(0))
-				self.memory[offset] = val
+					self.memory[ins_arg + self.offset] = value
+				case 2:  # POP
+					res.register(self.pop())
+					if res.error:
+						return res
+				case 3:  # DUP
+					res.register(self.check_stack(1))
+					if res.error:
+						return res
 
-			case "I2F":
-				value = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				self.stack.append(float_to_u32(float(value)))
-			case "F2I":
-				value = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				self.stack.append(int(u32_to_float(value)))
-			case "BOOL":
-				value = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				self.stack.append(TRUE if value != 0 else FALSE)
+					self.stack.append(self.stack[-1])
+				case 4:  # SWAP
+					res.register(self.check_stack(2))
+					if res.error:
+						return res
 
-			case "ADDI" | "SUBI" | "MULI" | "DIVI" | "MODI" | "POWI":
-				b = res.register(self.pop(start_pos, end_pos))
-				a = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				if op == "ADDI":
-					result = a + b
-				elif op == "SUBI":
-					result = a - b
-				elif op == "MULI":
-					result = a * b
-				elif op == "DIVI":
-					if b == 0:
-						return res.fail(VMError("Division by 0", start_pos, end_pos))
-					result = a // b
-				elif op == "MODI":
-					if b == 0:
-						return res.fail(VMError("Division by 0", start_pos, end_pos))
-					result = a % b
-				elif op == "POWI":
-					result = a**b
-				self.stack.append(to_u32(result))
+					b = res.register(self.pop())
+					a = res.register(self.pop())
 
-			case "ADDF" | "SUBF" | "MULF" | "DIVF" | "MODF" | "POWF":
-				b_bits = res.register(self.pop(start_pos, end_pos))
-				a_bits = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				a, b = u32_to_float(a_bits), u32_to_float(b_bits)
-				if op == "ADDF":
-					result = a + b
-				elif op == "SUBF":
-					result = a - b
-				elif op == "MULF":
-					result = a * b
-				elif op == "DIVF":
-					if b == 0:
-						return res.fail(VMError("Division by 0", start_pos, end_pos))
-					result = a / b
-				elif op == "MODF":
-					if b == 0:
-						return res.fail(VMError("Division by 0", start_pos, end_pos))
-					result = a % b
-				elif op == "POWF":
-					result = a**b
-				self.stack.append(float_to_u32(result))
+					self.stack.append(b)
+					self.stack.append(a)
+				case 5:  # OVER
+					res.register(self.check_stack(2))
+					if res.error:
+						return res
 
-			case "IEQ" | "INE" | "ILT" | "ILE" | "IGT" | "IGE":
-				b = res.register(self.pop(start_pos, end_pos))
-				a = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				if op[1:] == "EQ":
-					ok = a == b
-				elif op[1:] == "NE":
-					ok = a != b
-				elif op[1:] == "LT":
-					ok = a < b
-				elif op[1:] == "LE":
-					ok = a <= b
-				elif op[1:] == "GT":
-					ok = a > b
-				elif op[1:] == "GE":
-					ok = a >= b
-				self.stack.append(TRUE if ok else FALSE)
+					self.stack.append(self.stack[-2])
+				case 6:  # ROT
+					res.register(self.check_stack(3))
+					if res.error:
+						return res
 
-			case "FEQ" | "FNE" | "FLT" | "FLE" | "FGT" | "FGE":
-				b = res.register(self.pop(start_pos, end_pos))
-				a = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				a, b = u32_to_float(a), u32_to_float(b)
-				if op == "FEQ":
-					ok = a == b
-				elif op == "FNE":
-					ok = a != b
-				elif op == "FLT":
-					ok = a < b
-				elif op == "FLE":
-					ok = a <= b
-				elif op == "FGT":
-					ok = a > b
-				elif op == "FGE":
-					ok = a >= b
-				self.stack.append(TRUE if ok else FALSE)
+					c = res.register(self.pop())
+					b = res.register(self.pop())
+					a = res.register(self.pop())
 
-			case "AND":
-				b = res.register(self.pop(start_pos, end_pos))
-				a = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				self.stack.append(a & b)
-			case "OR":
-				b = res.register(self.pop(start_pos, end_pos))
-				a = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				self.stack.append(a | b)
-			case "XOR":
-				b = res.register(self.pop(start_pos, end_pos))
-				a = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				self.stack.append(a ^ b)
-			case "NOT":
-				a = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				self.stack.append((~a) & TRUE)
+					self.stack.append(c)
+					self.stack.append(a)
+					self.stack.append(b)
+				case 7:  # LOADIND
+					addr = res.register(self.pop())
+					if res.error:
+						return res
+					self.stack.append(self.memory[addr + self.offset])
+				case 8:  # STOREIND
+					value = res.register(self.pop())
+					addr = res.register(self.pop())
 
-			case "INCI" | "DECI" | "INCF" | "DECF":
-				a = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				if op == "INCI":
-					self.stack.append(to_u32(a + 1))
-				elif op == "DECI":
-					self.stack.append(to_u32(a - 1))
-				elif op == "INCF":
-					self.stack.append(float_to_u32(u32_to_float(a) + 1.0))
-				elif op == "DECF":
-					self.stack.append(float_to_u32(u32_to_float(a) - 1.0))
-			case "NEGI":
-				value = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				self.stack.append(to_u32(-value))
-			case "NEGF":
-				bits = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				self.stack.append(float_to_u32(-u32_to_float(bits)))
+					if res.error:
+						return res
+					self.memory[addr + self.offset] = value
+				case 9:  # PUSHFP
+					self.stack.append(self.fp)
+				case 10:  # POPFP
+					fp = res.register(self.pop())
+					if res.error:
+						return res
+					self.fp = fp
+				case 11:  # SETFP
+					self.fp = self.sp
+				case 12:  # LOADFP
+					addr = ins_arg
+					if res.error:
+						return res
+					self.fp = self.memory[addr + self.offset]
+				case 13:  # STOREFP
+					addr = ins_arg
+					if res.error:
+						return res
+					self.memory[addr + self.offset] = self.fp
 
-			case "JUMP":
-				self.ip = get_arg(0) - 1
-			case "BRZ":
-				top = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				if top == 0:
-					self.ip = get_arg(0) - 1
-			case "BRNZ":
-				top = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				if top != 0:
-					self.ip = get_arg(0) - 1
-			case "CALL":
-				self.call_stack.append(self.ip + 1)
-				self.ip = get_arg(0) - 1
-			case "CALZ":
-				top = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				if top == 0:
-					self.call_stack.append(self.ip + 1)
-					self.ip = get_arg(0) - 1
-			case "CALN":
-				top = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				if top != 0:
-					self.call_stack.append(self.ip + 1)
-					self.ip = get_arg(0) - 1
-			case "RET":
-				if not self.call_stack:
-					return res.fail(VMError("Call stack underflow", start_pos, end_pos))
-				self.ip = self.call_stack.pop() - 1
-				pop_count = get_arg(0) if args else 0
-				for _ in range(pop_count):
-					res.register(self.pop(start_pos, end_pos))
-			case "RETZ":
-				top = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				if top == 0:
-					if not self.call_stack:
-						return res.fail(VMError("Call stack underflow", start_pos, end_pos))
-					self.ip = self.call_stack.pop() - 1
-					pop_count = get_arg(0) if args else 0
-					for _ in range(pop_count):
-						res.register(self.pop(start_pos, end_pos))
-			case "RETN":
-				top = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				if top != 0:
-					if not self.call_stack:
-						return res.fail(VMError("Call stack underflow", start_pos, end_pos))
-					self.ip = self.call_stack.pop() - 1
-					pop_count = get_arg(0) if args else 0
-					for _ in range(pop_count):
-						res.register(self.pop(start_pos, end_pos))
-
-			case "HALT":
-				return res.success(False)
-
-			case "STORE":
-				value = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				self.memory[get_arg(0) + self.offset] = value
-			case "LOAD":
-				self.stack.append(self.memory[get_arg(0) + self.offset])
-			case "LOADIND":
-				address = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				self.stack.append(self.memory[address + self.offset])
-			case "STREIND":
-				b = res.register(self.pop(start_pos, end_pos))
-				a = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				self.memory[a + self.offset] = b
-
-			case "OFFSET":
-				self.actual_offset = get_arg(0)
-				self.offset = self.actual_offset if self.enable_offset else 0
-			case "PUSHOFF":
-				self.stack.append(self.offset)
-			case "POPOFF":
-				value = res.register(self.pop(start_pos, end_pos))
-				if res.error:
-					return res
-				self.actual_offset = value
-				self.offset = self.actual_offset if self.enable_offset else 0
-			case "ENABOFF":
-				self.enable_offset = True
-				self.offset = self.actual_offset
-			case "DISABOFF":
-				self.enable_offset = False
-				self.offset = 0
-
-			case "SYS":
-				sys_code = get_arg(0)
-
-				if 40 <= sys_code <= 65:
-					self.init_graphics_window()
-
-				if sys_code == 1: # OUTPUT_CHARS
-					addr = res.register(self.pop(start_pos, end_pos))
-					if res.error:
-						return res
-					self._output(self.read_mem_string(addr))
-				elif sys_code == 2: # READ_CHARS
-					addr = res.register(self.pop(start_pos, end_pos))
-					if res.error:
-						return res
-					self.write_mem_string(addr, input())
-				elif sys_code == 3: # CHARS2INT
-					addr = res.register(self.pop(start_pos, end_pos))
-					if res.error:
-						return res
-					self.stack.append(int(self.read_mem_string(addr)))
-				elif sys_code == 4: # CHARS2FLOAT
-					addr = res.register(self.pop(start_pos, end_pos))
-					if res.error:
-						return res
-					self.stack.append(float_to_u32(float(self.read_mem_string(addr))))
-				elif sys_code == 5: # INT2CHARS
-					val = res.register(self.pop(start_pos, end_pos))
-					addr = res.register(self.pop(start_pos, end_pos))
-					if res.error:
-						return res
-					self.write_mem_string(addr, str(val))
-				elif sys_code == 6: # FLOAT2CHARS
-					val = res.register(self.pop(start_pos, end_pos))
-					addr = res.register(self.pop(start_pos, end_pos))
-					if res.error:
-						return res
-					self.write_mem_string(addr, str(round(u32_to_float(val), 6)))
-				elif sys_code == 7: # BOOL2CHARS
-					val = res.register(self.pop(start_pos, end_pos))
-					addr = res.register(self.pop(start_pos, end_pos))
-					if res.error:
-						return res
-					self.write_mem_string(addr, "true" if val == TRUE else "false")
-				elif sys_code == 8: # INT2HEX
-					val = res.register(self.pop(start_pos, end_pos))
-					addr = res.register(self.pop(start_pos, end_pos))
-					if res.error:
-						return res
-					self.write_mem_string(addr, f"0x{val:04X}")
-				elif sys_code == 9: # PUT_CHAR
-					val = res.register(self.pop(start_pos, end_pos))
-					if res.error:
-						return res
-					self._output(chr(val & 0xFF))
-
-				elif sys_code == 10: # STR_CONCAT
-					dest, str2, str1 = (
-						res.register(self.pop(start_pos, end_pos)),
-						res.register(self.pop(start_pos, end_pos)),
-						res.register(self.pop(start_pos, end_pos)),
-					)
-					if res.error:
-						return res
-					self.write_mem_string(
-						dest, self.read_mem_string(str1) + self.read_mem_string(str2)
-					)
-				elif sys_code == 11:
-					str2, str1 = res.register(self.pop(start_pos, end_pos)), res.register(
-						self.pop(start_pos, end_pos)
-					)
-					if res.error:
-						return res
-					self.stack.append(
-						TRUE
-						if self.read_mem_string(str1) == self.read_mem_string(str2)
-						else FALSE
-					)
-				elif sys_code == 12:
-					str2, str1 = res.register(self.pop(start_pos, end_pos)), res.register(
-						self.pop(start_pos, end_pos)
-					)
-					if res.error:
-						return res
-					self.write_mem_string(str2, self.read_mem_string(str1))
-				elif sys_code == 20:
-					self.stack.append(int((time.time() - self.start_time) * 1000))
-				elif sys_code == 21:
-					size = res.register(self.pop(start_pos, end_pos))
-					if res.error:
-						return res
-					if self.heap_pointer + size >= 65536:
-						return res.fail(VMError("HeapOverflow", start_pos, end_pos))
-					self.stack.append(self.heap_pointer)
-					self.heap_pointer += size
-				elif sys_code == 22:
-					res.register(self.pop(start_pos, end_pos))
-					if res.error:
-						return res
-				elif sys_code == 30:
-					return res.success(False)
-
-				elif sys_code == 40:  # GFX_CLEAR
-					c = res.register(self.pop(start_pos, end_pos))
-					if res.error:
-						return res
-					self.back_buffer = [
-						[c % 16 for _ in range(self.width)] for _ in range(self.height)
-					]
-				elif sys_code == 41:  # GFX_PIXEL
-					c, y, x = (
-						res.register(self.pop(start_pos, end_pos)),
-						res.register(self.pop(start_pos, end_pos)),
-						res.register(self.pop(start_pos, end_pos)),
-					)
-					if res.error:
-						return res
-					self.write_pixel(x, y, c)
-				elif sys_code == 42:  # GFX_LINE
-					c, y2, x2, y1, x1 = [
-						res.register(self.pop(start_pos, end_pos)) for _ in range(5)
-					]
-					if res.error:
-						return res
-					dx, dy = abs(x2 - x1), abs(y2 - y1)
-					sx = 1 if x1 < x2 else -1
-					sy = 1 if y1 < y2 else -1
-					err = dx - dy
-					while True:
-						self.write_pixel(x1, y1, c)
-						if x1 == x2 and y1 == y2:
-							break
-						e2 = 2 * err
-						if e2 > -dy:
-							err -= dy
-							x1 += sx
-						if e2 < dx:
-							err += dx
-							y1 += sy
-				elif sys_code in (43, 44):  # DRAW/FILL RECT
-					c, h, w, y, x = [
-						res.register(self.pop(start_pos, end_pos)) for _ in range(5)
-					]
-					if res.error:
-						return res
-					for yi in range(y, y + h):
-						for xi in range(x, x + w):
-							if sys_code == 44 or (
-								yi == y or yi == y + h - 1 or xi == x or xi == x + w - 1
-							):
-								self.write_pixel(xi, yi, c)
-				elif sys_code in (45, 46):  # DRAW/FILL CIRCLE
-					c, r, yc, xc = [
-						res.register(self.pop(start_pos, end_pos)) for _ in range(4)
-					]
-					if res.error:
-						return res
-					for yi in range(yc - r, yc + r + 1):
-						for xi in range(xc - r, xc + r + 1):
-							if (xi - xc) ** 2 + (yi - yc) ** 2 <= r**2:
-								if (
-									sys_code == 46
-									or abs((xi - xc) ** 2 + (yi - yc) ** 2 - r**2) < r
-								):
-									self.write_pixel(xi, yi, c)
-				elif sys_code in (47, 48):  # DRAW/FILL TRIANGLE
-					c, y3, x3, y2, x2, y1, x1 = [
-						res.register(self.pop(start_pos, end_pos)) for _ in range(7)
-					]
-					if res.error:
-						return res
-					if sys_code == 48:
-						min_x, max_x = max(0, min(x1, x2, x3)), min(
-							self.width - 1, max(x1, x2, x3)
-						)
-						min_y, max_y = max(0, min(y1, y2, y3)), min(
-							self.height - 1, max(y1, y2, y3)
-						)
-						for y in range(min_y, max_y + 1):
-							for x in range(min_x, max_x + 1):
-								d1 = (x - x2) * (y1 - y2) - (x1 - x2) * (y - y2)
-								d2 = (x - x3) * (y2 - y3) - (x2 - x3) * (y - y3)
-								d3 = (x - x1) * (y3 - y1) - (x3 - x1) * (y - y1)
-								if (d1 >= 0 and d2 >= 0 and d3 >= 0) or (
-									d1 <= 0 and d2 <= 0 and d3 <= 0
-								):
-									self.write_pixel(x, y, c)
-					else:
-						for pA, pB in [
-							((x1, y1), (x2, y2)),
-							((x2, y2), (x3, y3)),
-							((x3, y3), (x1, y1)),
-						]:
-							self.execute((start_pos, end_pos, "PUSH", pA[0]))
-							self.execute((start_pos, end_pos, "PUSH", pA[1]))
-							self.execute((start_pos, end_pos, "PUSH", pB[0]))
-							self.execute((start_pos, end_pos, "PUSH", pB[1]))
-							self.execute((start_pos, end_pos, "PUSH", c))
-							self.execute((start_pos, end_pos, "SYS", 42))
-				elif sys_code == 49:  # GFX_IMAGE
-					addr, h, w, y, x = [
-						res.register(self.pop(start_pos, end_pos)) for _ in range(5)
-					]
-					if res.error:
-						return res
-					idx = 0
-					for yi in range(y, y + h):
-						for xi in range(x, x + w):
-							c = self.memory[addr + idx]
-							self.write_pixel(xi, yi, c)
-							idx += 1
-
-				elif sys_code == 50:  # DRAW_CHR
-					c, char_code, y, x = [
-						res.register(self.pop(start_pos, end_pos)) for _ in range(4)
-					]
-					if res.error:
-						return res
-					for yi in range(y, y + 7):
-						for xi in range(x, x + 5):
-							self.write_pixel(xi, yi, c)
-				elif sys_code == 51:  # DRAW_STR
-					c, addr, y, x = [
-						res.register(self.pop(start_pos, end_pos)) for _ in range(4)
-					]
-					if res.error:
-						return res
-					text = self.read_mem_string(addr)
-					for i, _ in enumerate(text):
-						self.write_pixel(x + (i * 6), y, c)
-				elif sys_code in (52, 53, 54, 55):  # Mock UI Components
-					c, h, w, y, x = [
-						res.register(self.pop(start_pos, end_pos)) for _ in range(5)
-					]
-					if res.error:
-						return res
-					for yi in range(y, y + h):
-						for xi in range(x, x + w):
-							self.write_pixel(xi, yi, c)
-
-				elif sys_code == 56:  # GFX_SET_CLIP
-					h, w, y, x = [
-						res.register(self.pop(start_pos, end_pos)) for _ in range(4)
-					]
-					if res.error:
-						return res
-					self.clip_rect = (x, y, x + w, y + h)
-				elif sys_code == 57:  # GFX_RESET_CLIP / GFX_REFRESH
-					self.clip_rect = (0, 0, self.width, self.height)
-					self.front_buffer = [row[:] for row in self.back_buffer]
-					self.render_front_buffer()
-
-				elif sys_code == 60:  # DVC_GETMOUSEX
-					self.stack.append(self.mouse_x)
-				elif sys_code == 61:  # DVC_GETMOUSEY
-					self.stack.append(self.mouse_y)
-				elif sys_code == 62:  # DVC_GETMOUSEBTN
-					self.stack.append(self.mouse_btn)
-				elif sys_code == 63:  # DVC_POLL_KEYBOARD
-					if self.key_queue:
-						evt, code, mod = self.key_queue.pop(0)
-						self.stack.extend([evt, code, mod])
-					else:
-						self.stack.extend([0, 0, 0])
-				elif sys_code == 64:  # DVC_KEY_IS_DOWN
-					code = res.register(self.pop(start_pos, end_pos))
-					if res.error:
-						return res
-					self.stack.append(TRUE if code in self.keys_down else FALSE)
-				elif sys_code == 65:  # DVC_GET_MODIFIERS
-					self.stack.append(self.modifiers)
-
-			case _ if op.startswith(":"):
+		if ins_type == 2:  # Conversion
+			res.register(self.check_stack(1))
+			if res.error:
+				return res
+			if ins_mod == 0 and ins_arg == 1:  # I2F
+				self.stack[-1] = float_to_u32(float(self.stack[-1]))
+			elif ins_mod == 0 and ins_arg == 2:  # F2I
+				self.stack[-1] = FALSE if self.stack[-1] == 0 else TRUE
+			elif ins_mod == 1 and ins_arg == 1:  # I2B
+				self.stack[-1] = int(u32_to_float(self.stack[-1]))
+			elif ins_mod == 1 and ins_arg == 2:  # F2B
+				self.stack[-1] = FALSE if u32_to_float(self.stack[-1]) == 0 else TRUE
+			elif ins_mod == 2 and ins_arg == 0:  # B2I
 				pass
-			case _:
-				return res.fail(VMError(f"Unknown instruction '{op}'", start_pos, end_pos))
+			elif ins_mod == 2 and ins_arg == 1:  # B2F
+				self.stack[-1] = float_to_u32(float(self.stack[-1]))
 
-		if res.error:
-			return res
+		if ins_type == 3:  # Math
+			is_float_op = ins_mod % 2 == 1
+			val = 0
+
+			if ins_mod < 2:
+				b = res.register(self.pop())
+				a = res.register(self.pop())
+				if res.error:
+					return res
+
+				if is_float_op:
+					b = u32_to_float(b)
+					a = u32_to_float(a)
+				val = 0
+
+				match ins_arg:
+					case 0:
+						val = a + b
+						self.cr = TRUE if not is_float_op and a + b > TRUE else FALSE
+					case 1:
+						val = a - b
+						self.cr = TRUE if not is_float_op and a < b else FALSE
+					case 2:
+						val = a * b
+						self.cr = TRUE if not is_float_op and a * b > TRUE else FALSE
+					case 3:
+						if b == 0:
+							return VMError("Division by 0", pos.copy(), pos.copy())
+						val = a / b if is_float_op else a // b
+					case 4:
+						if b == 0:
+							return VMError("Division by 0", pos.copy(), pos.copy())
+						val = a % b
+						self.cr = FALSE
+					case 5:
+						val = a**b
+						self.cr = TRUE if not is_float_op and a**b > TRUE else FALSE
+					case 6:
+						if not is_float_op:
+							val = a & b
+						else:
+							t = res.register(self.pop())
+							if res.error:
+								return res
+							t = u32_to_float(t)
+
+							val = a + (b - a) * t
+						self.cr = 0
+					case 7:
+						if not is_float_op:
+							val = a | b
+						self.cr = 0
+					case 8:
+						if not is_float_op:
+							val = a ^ b
+						self.cr = 0
+					case 0x11:
+						val = TRUE * int(a < b)
+						self.cr = 0
+					case 0x12:
+						val = TRUE * int(a == b)
+						self.cr = 0
+					case 0x13:
+						val = TRUE * int(a <= b)
+						self.cr = 0
+					case 0x14:
+						val = TRUE * int(a > b)
+						self.cr = 0
+					case 0x15:
+						val = TRUE * int(a != b)
+						self.cr = 0
+					case 0x16:
+						val = TRUE * int(a >= b)
+						self.cr = 0
+					case 0x17:
+						if not is_float_op:
+							val = self.cr
+			else:
+				a = res.register(self.pop())
+				if res.error:
+					return res
+
+				if is_float_op:
+					a = u32_to_float(a)
+
+				match ins_arg:
+					case 0:
+						val = a + 1
+					case 1:
+						val = a - 1
+					case 2:
+						val = -a
+					case 3:
+						if not is_float_op:
+							val = ~a
+					case 4:
+						if is_float_op:
+							val = math.sin(math.radians(a))
+					case 5:
+						if is_float_op:
+							val = math.cos(math.radians(a))
+					case 6:
+						if is_float_op:
+							val = math.tan(math.radians(a))
+					case 7:
+						if is_float_op:
+							val = math.asin(math.radians(a))
+					case 8:
+						if is_float_op:
+							val = math.acos(math.radians(a))
+					case 9:
+						if is_float_op:
+							val = math.atan(math.radians(a))
+					case 10:
+						val = math.sqrt(a)
+						if not is_float_op:
+							val = int(val)
+
+			if is_float_op:
+				val = float_to_u32(float(val))
+			self.stack.append(val)
+
+		if ins_type == 4:  # Branching
+			addr = ins_arg
+			if ins_mod % 3 != 0:
+				res.register(self.check_stack(1))
+				if res.error: return res
+
+			match ins_mod:
+				case 0:
+					self.ip = addr - 1
+				case 1:
+					if self.stack[-1] == 0:
+						self.ip = addr - 1
+				case 2:
+					if self.stack[-1] != 0:
+						self.ip = addr - 1
+				case 3:
+					self.call_stack.append(self.ip)
+					self.ip = addr - 1
+				case 4:
+					if self.stack[-1] == 0:
+						self.call_stack.append(self.ip)
+						self.ip = addr - 1
+				case 5:
+					if self.stack[-1] != 0:
+						self.call_stack.append(self.ip)
+						self.ip = addr - 1
+				case 6:
+					self.ip = self.call_stack[-1]
+					self.call_stack.pop()
+				case 7:
+					if self.stack[-1] == 0:
+						self.ip = self.call_stack[-1]
+						self.call_stack.pop()
+				case 8:
+					if self.stack[-1] != 0:
+						self.ip = self.call_stack[-1]
+						self.call_stack.pop()
+
+		if ins_type == 5:  # System instructions
+			match ins_mod:
+				case 0: return res.success(False)
+				case 1: return res.success(False)
+				case 2: self.stack.append(self.im)
+				case 3:
+					self.im = res.register(self.pop())
+					if res.error: return res
+				# no interrupt handling yet
+				case 7: # SYS
+					match ins_arg:
+						case 1:  # OUTPUT_CHARS
+							addr = res.register(self.pop())
+							if res.error: return res
+							self._output(self.read_mem_string(addr))
+						case 2:  # READ_CHARS
+							...
+						case 3:  # CHARS2INT
+							addr = res.register(self.pop())
+							if res.error: return res
+							string = self.read_mem_string(addr)
+							self.stack.append(int(string))
+						case 4:  # CHARS2FLOAT
+							addr = res.register(self.pop())
+							if res.error: return res
+							string = self.read_mem_string(addr)
+							self.stack.append(float(string))
+						case 5:  # INT2CHARS
+							value = res.register(self.pop())
+							addr = res.register(self.pop())
+							if res.error: return res
+
+							self.write_mem_string(addr, str(value))
+						case 6:  # FLOAT2CHARS
+							value = res.register(self.pop())
+							value = u32_to_float(value)
+							addr = res.register(self.pop())
+							if res.error: return res
+
+							self.write_mem_string(addr, str(value))
+						case 7:  # BOOL2CHARS
+							value = bool(res.register(self.pop()))
+							if res.error: return res
+
+							self.write_mem_string(addr, str(value).lower())
+						case 8:  # INT2HEX
+							value = res.register(self.pop())
+							addr = res.register(self.pop())
+							if res.error: return res
+
+							self.write_mem_string(addr, f"{value:08X}")
+						case 9:  # PUT_CHAR
+							value = res.register(self.pop())
+							if res.error: return res
+
+							self._output(chr(value))
+						case 21:  # MALLOC
+							words = res.register(self.pop())
+							if res.error:
+								return res
+
+							if words <= 0:
+								return res.fail(VMError("Invalid allocation size", pos.copy(), pos.copy()))
+
+							for i, (start, size) in enumerate(self.free_list):
+								if size >= words:
+									ptr = start
+
+									self.allocations[ptr] = words
+
+									if size == words:
+										self.free_list.pop(i)
+									else:
+										self.free_list[i] = (start + words, size - words)
+
+									self.stack.append(ptr)
+									break
+							else:
+								return res.fail(VMError("Out of memory", pos.copy(), pos.copy()))
+						case 22:  # FREE
+							ptr = res.register(self.pop())
+							if res.error:
+								return res
+
+							words = self.allocations.pop(ptr, None)
+							if words is None:
+								return res.fail(VMError("Invalid free", pos.copy(), pos.copy()))
+
+							i = 0
+							while i < len(self.free_list) and self.free_list[i][0] < ptr:
+								i += 1
+
+							self.free_list.insert(i, (ptr, words))
+
+							if i > 0:
+								prev_start, prev_size = self.free_list[i - 1]
+								curr_start, curr_size = self.free_list[i]
+
+								if prev_start + prev_size == curr_start:
+									self.free_list[i - 1] = (prev_start, prev_size + curr_size)
+									self.free_list.pop(i)
+									i -= 1
+
+							if i + 1 < len(self.free_list):
+								curr_start, curr_size = self.free_list[i]
+								next_start, next_size = self.free_list[i + 1]
+
+								if curr_start + curr_size == next_start:
+									self.free_list[i] = (curr_start, curr_size + next_size)
+									self.free_list.pop(i + 1)
+
+		self.sp = len(self.stack)
 		return res.success(True)
