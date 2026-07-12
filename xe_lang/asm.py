@@ -37,7 +37,7 @@ def generate_lookup_data():
 	instructions = []
 
 	for node in nodes_to_lookup:
-		instructions.append((None, None, node.label))
+		instructions.append((None, None, ":" + node.label))
 
 		if isinstance(node, StringLiteral):
 			for char in node.value:
@@ -168,11 +168,8 @@ def emit_StringLiteral(node: StringLiteral) -> Result:
 		# get description vector pointer
 		(node.start_pos, node.end_pos, "PUSH", 3),
 		(node.start_pos, node.end_pos, "SYS", 21),
-		(
-			node.start_pos,
-			node.end_pos,
-			"DUP",
-		),
+		(node.start_pos, node.end_pos, "DUP",),
+		(node.start_pos, node.end_pos, "DUP",),
 		(node.start_pos, node.end_pos, "PUSH", 16 * ceil((len(node.value) + 1) / 16)),
 		(node.start_pos, node.end_pos, "SYS", 21),
 		(
@@ -833,7 +830,6 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 			)
 		)
 
-		# comparison succeeded -> remove duplicated switch value
 		instructions.append(
 			(
 				case_expr.end_pos,
@@ -988,6 +984,14 @@ def emit_OutputStatement(node: OutputStatement) -> Result:
 					instructions += expr_instructions + [
 						(expr.end_pos, expr.end_pos, "SYS", 9)  # putchar
 					]
+				case "string":
+					instructions += (
+						expr_instructions
+						+ [
+							(expr.end_pos, expr.end_pos, "LOADIND"),
+							(expr.end_pos, expr.end_pos, "SYS", 1),  # outchars
+						]
+					)
 				case _:
 					instructions += (
 						[
