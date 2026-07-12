@@ -1332,17 +1332,11 @@ def parse(tokens: list[Token]) -> Result:
 
 			# array indexing/assignment
 			elif isinstance(lhs, ArrayIndex):
-				if current_tok._type in supported_assignment_ops:
-					op = current_tok
-					advance()
-					rhs = res.register(expr())
-					if res.error:
-						return res
-					return res.success(
-						ArrayAssign(
-							lhs.start_pos, rhs.end_pos, lhs.array, lhs.index, rhs, op
-						)
+				return res.success(
+					ArrayAssign(
+						lhs.start_pos, rhs.end_pos, lhs.array, lhs.index, rhs, op_tok
 					)
+				)
 
 			# invalid lhs (5 = value or (x + 1) = value)
 			else:
