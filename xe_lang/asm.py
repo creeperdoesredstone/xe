@@ -1195,6 +1195,14 @@ def emit_ArrayAssign(node: ArrayAssign) -> Result:
 		(
 			node.start_pos,
 			node.end_pos,
+			"DUP",
+		)
+	)
+
+	instructions.append(
+		(
+			node.start_pos,
+			node.end_pos,
 			"LOADIND",
 		)
 	)
@@ -1217,38 +1225,6 @@ def emit_ArrayAssign(node: ArrayAssign) -> Result:
 			node.start_pos,
 			node.end_pos,
 			opcode,
-		)
-	)
-
-	array_inst2 = res.register(emit(node.array))
-	if res.error:
-		return res
-
-	instructions.append((node.start_pos, node.end_pos, "SWAP"))
-
-	array_inst2 = res.register(emit(node.array))
-	if res.error:
-		return res
-	instructions.extend(array_inst2)
-
-	index_inst2 = res.register(emit(node.index))
-	if res.error:
-		return res
-	instructions.extend(index_inst2)
-
-	instructions.append(
-		(
-			node.start_pos,
-			node.end_pos,
-			"ADDI",
-		)
-	)
-
-	instructions.append(
-		(
-			node.start_pos,
-			node.end_pos,
-			"SWAP",
 		)
 	)
 
