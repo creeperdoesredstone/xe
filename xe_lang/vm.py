@@ -8,6 +8,8 @@ from xe_lang.assembler import INSTRUCTION_MAP
 
 TRUE = 0xFFFFFFFF
 FALSE = 0
+MAGIC = 0x58424E31  # "XBN1"
+VERSION = 1
 
 PALETTE = [
 	"#000000",
@@ -42,12 +44,28 @@ def to_u32(value: int) -> int:
 
 
 class VM:
-	def __init__(self, instructions: list[tuple], output_handler=None) -> None:
-		self.instructions: list[tuple] = instructions
+	def __init__(self, program: list[int], output_handler=None):
+		if len(program) < 4:
+			raise ValueError("Executable too small")
+
+		magic, version, text_size, data_size = program[:4]
+
+		if magic != MAGIC:
+			raise ValueError("Invalid executable")
+
+		if version != VERSION:
+			raise ValueError(f"Unsupported executable version {version}")
+
+		expected = 4 + text_size + data_size
+		if len(program) != expected:
+			raise ValueError("Corrupt executable")
+
+		self.instructions = program[4:4 + text_size]
+		self.program_memory = program[4 + text_size:]
 		self.stack: list = []
 		self.call_stack: list = []
 		self.ip: int = 0
-		self.memory: list = [0] * 65536
+		self.data_memory: list = [0] * 65536
 		self.free_list: list = [
 			(0x2000, 0xE000)
 		]
@@ -198,7 +216,7 @@ class VM:
 	def read_mem_string(self, address: int) -> str:
 		chars = []
 		while True:
-			val = self.memory[address]
+			val = self.data_memory[address]
 			if val == 0:
 				break
 			chars.append(chr(val & 0xFF))
@@ -207,17 +225,24 @@ class VM:
 
 	def write_mem_string(self, address: int, string: str):
 		for char in string:
-			self.memory[address] = ord(char)
+			self.data_memory[address] = ord(char)
 			address += 1
-		self.memory[address] = 0
+		self.data_memory[address] = 0
 
 	def run(self) -> Result:
 		res = Result()
 		self.stack.clear()
+		self.call_stack.clear()
 		self.cr = 0
 		self.im = TRUE
 		self.fp = 0
+		self.ip = 0
 		self.heap_pointer = 0x2000
+
+		self.offset = 0
+		self.actual_offset = 0
+
+		self.enable_offset = True
 
 		self.free_list = [
 			(0x2000, 0xE000)
@@ -279,21 +304,21 @@ class VM:
 		ins_type = instruction >> 32
 		ins_mod = (instruction >> 16) & 0xFFFF
 		ins_arg = instruction & 0xFFFF
-		ins_arg2 = instruction & 0xFFFFFFFF
+		ins_arg32 = (ins_mod << 16) | ins_arg
 
 		if ins_type == 0:  # PUSH
-			self.stack.append(ins_arg2)
+			self.stack.append(ins_arg32)
 
 		if ins_type == 1:  # Other Stack Instructions
 			match ins_mod:
 				case 0:  # LOAD
-					self.stack.append(self.memory[ins_arg + self.offset])
+					self.stack.append(self.data_memory[ins_arg + self.offset])
 				case 1:  # STORE
 					value = res.register(self.pop())
 					if res.error:
 						return res
 
-					self.memory[ins_arg + self.offset] = value
+					self.data_memory[ins_arg + self.offset] = value
 				case 2:  # POP
 					res.register(self.pop())
 					if res.error:
@@ -336,14 +361,14 @@ class VM:
 					addr = res.register(self.pop())
 					if res.error:
 						return res
-					self.stack.append(self.memory[addr + self.offset])
+					self.stack.append(self.data_memory[addr + self.offset])
 				case 8:  # STOREIND
 					value = res.register(self.pop())
 					addr = res.register(self.pop())
 
 					if res.error:
 						return res
-					self.memory[addr + self.offset] = value
+					self.data_memory[addr + self.offset] = value
 				case 9:  # PUSHFP
 					self.stack.append(self.fp)
 				case 10:  # POPFP
@@ -357,12 +382,12 @@ class VM:
 					addr = ins_arg
 					if res.error:
 						return res
-					self.fp = self.memory[addr + self.offset]
+					self.fp = self.data_memory[addr + self.offset]
 				case 13:  # STOREFP
 					addr = ins_arg
 					if res.error:
 						return res
-					self.memory[addr + self.offset] = self.fp
+					self.data_memory[addr + self.offset] = self.fp
 
 		if ins_type == 2:  # Conversion
 			res.register(self.check_stack(1))
@@ -370,9 +395,9 @@ class VM:
 				return res
 			if ins_mod == 0 and ins_arg == 1:  # I2F
 				self.stack[-1] = float_to_u32(float(self.stack[-1]))
-			elif ins_mod == 0 and ins_arg == 2:  # F2I
+			elif ins_mod == 0 and ins_arg == 2:  # I2B
 				self.stack[-1] = FALSE if self.stack[-1] == 0 else TRUE
-			elif ins_mod == 1 and ins_arg == 1:  # I2B
+			elif ins_mod == 1 and ins_arg == 0:  # F2I
 				self.stack[-1] = int(u32_to_float(self.stack[-1]))
 			elif ins_mod == 1 and ins_arg == 2:  # F2B
 				self.stack[-1] = FALSE if u32_to_float(self.stack[-1]) == 0 else TRUE
@@ -409,7 +434,7 @@ class VM:
 					case 3:
 						if b == 0:
 							return VMError("Division by 0", pos.copy(), pos.copy())
-						val = a / b if is_float_op else a // b
+						val = a / b if is_float_op else int(a / b)
 					case 4:
 						if b == 0:
 							return VMError("Division by 0", pos.copy(), pos.copy())
@@ -501,43 +526,44 @@ class VM:
 
 			if is_float_op:
 				val = float_to_u32(float(val))
-			self.stack.append(val)
+			self.stack.append(val & TRUE)
 
 		if ins_type == 4:  # Branching
 			addr = ins_arg
 			if ins_mod % 3 != 0:
 				res.register(self.check_stack(1))
 				if res.error: return res
+				value = res.register(self.pop())
 
 			match ins_mod:
-				case 0:
+				case 0: # JUMP
 					self.ip = addr - 1
-				case 1:
-					if self.stack[-1] == 0:
+				case 1: # BRZ
+					if value == 0:
 						self.ip = addr - 1
-				case 2:
-					if self.stack[-1] != 0:
+				case 2: # BRNZ
+					if value != 0:
 						self.ip = addr - 1
-				case 3:
+				case 3: # CALL
 					self.call_stack.append(self.ip)
 					self.ip = addr - 1
-				case 4:
-					if self.stack[-1] == 0:
+				case 4: # CALZ
+					if value == 0:
 						self.call_stack.append(self.ip)
 						self.ip = addr - 1
-				case 5:
-					if self.stack[-1] != 0:
+				case 5: # CALN
+					if value != 0:
 						self.call_stack.append(self.ip)
 						self.ip = addr - 1
-				case 6:
+				case 6: # RET
 					self.ip = self.call_stack[-1]
 					self.call_stack.pop()
-				case 7:
-					if self.stack[-1] == 0:
+				case 7: # RETZ
+					if value == 0:
 						self.ip = self.call_stack[-1]
 						self.call_stack.pop()
-				case 8:
-					if self.stack[-1] != 0:
+				case 8: # RETN
+					if value != 0:
 						self.ip = self.call_stack[-1]
 						self.call_stack.pop()
 
@@ -567,7 +593,7 @@ class VM:
 							addr = res.register(self.pop())
 							if res.error: return res
 							string = self.read_mem_string(addr)
-							self.stack.append(float(string))
+							self.stack.append(float_to_u32(float(string)))
 						case 5:  # INT2CHARS
 							value = res.register(self.pop())
 							addr = res.register(self.pop())
@@ -583,6 +609,7 @@ class VM:
 							self.write_mem_string(addr, str(value))
 						case 7:  # BOOL2CHARS
 							value = bool(res.register(self.pop()))
+							addr = res.register(self.pop())
 							if res.error: return res
 
 							self.write_mem_string(addr, str(value).lower())
@@ -651,6 +678,34 @@ class VM:
 								if curr_start + curr_size == next_start:
 									self.free_list[i] = (curr_start, curr_size + next_size)
 									self.free_list.pop(i + 1)
+
+		if ins_type == 8:  # Other
+			match ins_mod:
+				case 0: # LOOKUP
+					dst = res.register(self.pop())
+					src = res.register(self.pop())
+
+					if res.error:
+						return res
+
+					if src < 0 or src + ins_arg > len(self.pram):
+						return res.fail(VMError(
+							"Program memory out of bounds",
+							pos.copy(),
+							pos.copy()
+						))
+
+					for i in range(ins_arg):
+						self.data_memory[dst + i + self.offset] = self.program_memory[src + i]
+				case 1:      # WRITE
+					dst = res.register(self.pop())
+					src = res.register(self.pop())
+
+					if res.error:
+						return res
+
+					for i in range(ins_arg):
+						self.program_memory[dst + i] = self.data_memory[src + i + self.offset]
 
 		self.sp = len(self.stack)
 		return res.success(True)
