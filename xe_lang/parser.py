@@ -200,7 +200,7 @@ def parse(tokens: list[Token]) -> Result:
 			end_pos = current_tok.end_pos.copy()
 			advance()
 
-		if current_tok._type not in [TT.EOF, TT.NEWLINE, TT.SEMICOL]:
+		if current_tok._type not in (TT.EOF, TT.NEWLINE, TT.SEMICOL, TT.RBR):
 			return res.fail(
 				InvalidSyntaxError(
 					f"Expected end of line (newline or ';') after variable declaration block, but found unexpected trailing token '{current_tok.value or current_tok._type.name}'.",
@@ -284,6 +284,15 @@ def parse(tokens: list[Token]) -> Result:
 			)
 		end_pos: Position = current_tok.end_pos.copy()
 		advance()
+
+		if current_tok._type not in (TT.EOF, TT.NEWLINE, TT.SEMICOL, TT.RBR):
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected end of line (newline or ';') after variable declaration block, but found unexpected trailing token '{current_tok.value or current_tok._type.name}'.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
 
 		return res.success(
 			ArrayDeclaration(
@@ -1221,11 +1230,293 @@ def parse(tokens: list[Token]) -> Result:
 		end_pos = value.end_pos.copy()
 		return res.success(ReturnStatement(start_pos, end_pos, value))
 
-	def struct_definition() -> Result: ...
+	def struct_definition() -> Result:
+		start_pos = current_tok.start_pos.copy()
+		res = Result()
 
-	def class_definition() -> Result: ...
+		advance()  # consume 'struct'
 
-	def new_expr() -> Result: ...
+		if current_tok._type != TT.IDENT:
+			return res.fail(
+				InvalidSyntaxError(
+					"Expected struct name.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+
+		name = current_tok.value
+		advance()
+
+		if current_tok._type != TT.LBR:
+			return res.fail(
+				InvalidSyntaxError(
+					"Expected '{' after struct name.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+
+		advance()
+
+		fields = []
+
+		while current_tok._type != TT.RBR:
+
+			if current_tok._type != TT.IDENT:
+				return res.fail(
+					InvalidSyntaxError(
+						"Expected field name.",
+						current_tok.start_pos,
+						current_tok.end_pos,
+					)
+				)
+
+			field_name: str = current_tok.value
+			field_start = current_tok.start_pos.copy()
+			advance()
+
+			if current_tok._type != TT.COL:
+				return res.fail(
+					InvalidSyntaxError(
+						"Expected ':' after field name.",
+						current_tok.start_pos,
+						current_tok.end_pos,
+					)
+				)
+
+			advance()
+
+			if current_tok._type != TT.TYPE:
+				return res.fail(InvalidSyntaxError(
+					f"Expected data type after ':', found {current_tok.value or current_tok._type} instead.",
+					current_tok.start_pos,
+					current_tok.end_pos
+				))
+			end_pos: Position = current_tok.end_pos.copy()
+			field_type: str = current_tok.value
+			field_pointer_layers: int = 0
+
+			advance()
+
+			while current_tok._type in (TT.MUL, TT.POW):
+				field_pointer_layers += 1 + int(current_tok._type == TT.POW)
+				end_pos = current_tok.end_pos.copy()
+				advance()
+
+			fields.append(
+				StructField(
+					field_start,
+					end_pos,
+					field_name,
+					field_type,
+					field_pointer_layers
+				)
+			)
+
+			if current_tok._type not in (TT.SEMICOL, TT.NEWLINE, TT.RBR):
+				return res.fail(InvalidSyntaxError(
+					f"Expected ';' or EOL after field, found {current_tok.value or current_tok._type} instead.",
+					current_tok.start_pos,
+					current_tok.end_pos
+				))
+			while current_tok._type in (TT.SEMICOL, TT.NEWLINE): advance()
+
+		end_pos = current_tok.end_pos.copy()
+		advance()
+
+		return res.success(
+			StructDefinition(
+				start_pos,
+				end_pos,
+				name,
+				fields,
+			)
+		)
+
+	def class_definition() -> Result:
+		start_pos = current_tok.start_pos.copy()
+		res = Result()
+
+		advance()  # consume 'class'
+
+		if current_tok._type != TT.IDENT:
+			return res.fail(
+				InvalidSyntaxError(
+					"Expected class name after 'class' keyword.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+
+		name = current_tok.value
+		advance()
+
+		# Optional inheritance pattern: class MyClass : ParentClass
+		parent_class = None
+		if current_tok._type == TT.COL:
+			advance()
+			if current_tok._type != TT.IDENT:
+				return res.fail(
+					InvalidSyntaxError(
+						"Expected base class identifier after ':'.",
+						current_tok.start_pos,
+						current_tok.end_pos,
+					)
+				)
+			parent_class = current_tok.value
+			advance()
+
+		if current_tok._type != TT.LBR:
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected '{{' to begin class body, but found '{current_tok.value or current_tok._type.name}'.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+		advance()
+
+		members: list[Node] = []
+
+		while current_tok._type != TT.RBR:
+			while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
+				advance()
+
+			if current_tok._type == TT.RBR:
+				break
+
+			if current_tok._type == TT.KEYWORD:
+				match current_tok.value:
+					case "var":
+						member = res.register(var_declaration())
+					case "array":
+						member = res.register(array_declaration())
+					case "proc":
+						member = res.register(procedure_definition())
+					case "fn":
+						member = res.register(function_definition())
+					case _:
+						return res.fail(
+							InvalidSyntaxError(
+								f"Unexpected keyword '{current_tok.value}' inside class declaration.",
+								current_tok.start_pos,
+								current_tok.end_pos,
+							)
+						)
+			else:
+				return res.fail(
+					InvalidSyntaxError(
+						f"Expected 'var', 'array', 'proc', 'fn', or '}}' inside class body, found '{current_tok.value or current_tok._type.name}'.",
+						current_tok.start_pos,
+						current_tok.end_pos,
+					)
+				)
+
+			if res.error:
+				return res
+			members.append(member)
+
+			while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
+				advance()
+
+		end_pos = current_tok.end_pos.copy()
+		advance()  # consume '}'
+
+		return res.success(
+			ClassDefinition(
+				start_pos,
+				end_pos,
+				name,
+				parent_class,
+				members,
+			)
+		)
+
+	def new_expr() -> Result:
+		start_pos = current_tok.start_pos.copy()
+		res = Result()
+
+		advance()  # consume 'new'
+
+		if current_tok._type != TT.TYPE:
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected a type name or class identifier after 'new', found '{current_tok.value or current_tok._type.name}'.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+
+		type_name: str = current_tok.value
+		advance()
+
+		pointer_layers: int = 0
+		while current_tok._type in (TT.MUL, TT.POW):
+			pointer_layers += 1 + int(current_tok._type == TT.POW)
+			advance()
+
+		if current_tok._type == TT.LSQ:
+			advance()
+			size_expr = res.register(expr())
+			if res.error:
+				return res
+
+			if current_tok._type != TT.RSQ:
+				return res.fail(
+					InvalidSyntaxError(
+						f"Expected ']' after allocation size, found '{current_tok.value or current_tok._type.name}'.",
+						current_tok.start_pos,
+						current_tok.end_pos,
+					)
+				)
+			end_pos = current_tok.end_pos.copy()
+			advance()
+			return res.success(NewArrayExpression(start_pos, end_pos, type_name, pointer_layers, size_expr))
+
+		if current_tok._type != TT.LPR:
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected '(' or '[' after instantiation type, found '{current_tok.value or current_tok._type.name}'.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+		advance()
+
+		args = []
+		if current_tok._type != TT.RPR:
+			while True:
+				arg = res.register(expr())
+				if res.error:
+					return res
+				args.append(arg)
+
+				if current_tok._type == TT.COM:
+					advance()
+					continue
+				break
+
+		if current_tok._type != TT.RPR:
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected ')' after instantiation arguments, found '{current_tok.value or current_tok._type.name}'.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+		
+		end_pos = current_tok.end_pos.copy()
+		advance()
+
+		return res.success(
+			NewObjectExpression(
+				start_pos,
+				end_pos,
+				type_name,
+				args,
+			)
+		)
 
 	def procedure_call() -> Result:
 		start_pos = current_tok.start_pos.copy()
@@ -1394,7 +1685,95 @@ def parse(tokens: list[Token]) -> Result:
 				return res
 
 			return res.success(UnaryOperation(op.start_pos, value.end_pos, op, value))
-		return literal()
+		return postfix()
+	
+	def postfix() -> Result:
+		res: Result = Result()
+		result: Node = res.register(literal())
+		if res.error: return res
+
+		while True:
+			if current_tok._type == TT.LSQ:  # array index
+				advance()
+				index = res.register(expr())
+				if res.error:
+					return res
+				if current_tok._type != TT.RSQ:
+					return res.fail(
+						InvalidSyntaxError(
+							f"Expected ']' after array index, but found '{current_tok.value or current_tok._type.name}'.",
+							current_tok.start_pos,
+							current_tok.end_pos,
+						)
+					)
+				result = ArrayIndex(
+					result.start_pos, current_tok.end_pos, result, index
+				)
+				advance()
+
+			elif current_tok._type == TT.LPR:  # function call
+				advance()
+				args = []
+
+				if current_tok._type != TT.RPR:
+					while True:
+						arg = res.register(expr())
+						if res.error:
+							return res
+
+						args.append(arg)
+
+						if current_tok._type == TT.COM:
+							advance()
+							continue
+
+						if current_tok._type != TT.RPR:
+							return res.fail(
+								InvalidSyntaxError(
+									"Expected ',' or ')' after function argument.",
+									current_tok.start_pos,
+									current_tok.end_pos,
+								)
+							)
+
+						break
+
+				result = FunctionCall(
+					result.start_pos, current_tok.end_pos.copy(), result, args
+				)
+				advance()
+
+			elif current_tok._type == TT.DOT:  # member expression
+				advance()
+
+				if current_tok._type != TT.IDENT:
+					return res.fail(
+						InvalidSyntaxError(
+							f"Expected member name after '.', found '{current_tok.value or current_tok._type.name}'.",
+							current_tok.start_pos,
+							current_tok.end_pos,
+						)
+					)
+
+				member = Identifier(
+					current_tok.start_pos,
+					current_tok.end_pos,
+					current_tok.value,
+				)
+
+				result = MemberAccess(
+					result.start_pos,
+					current_tok.end_pos.copy(),
+					result,
+					member,
+				)
+
+				advance()
+
+			else:
+				break
+		
+		return res.success(result)
 
 	def literal() -> Result:
 		res: Result = Result()
@@ -1412,37 +1791,23 @@ def parse(tokens: list[Token]) -> Result:
 
 		if tok._type == TT.INT:
 			return res.success(IntLiteral(tok.start_pos, tok.end_pos, tok.value))
+
 		if tok._type == TT.FLOAT:
 			return res.success(FloatLiteral(tok.start_pos, tok.end_pos, tok.value))
+
 		if tok._type == TT.STRING:
 			return res.success(StringLiteral(tok.start_pos, tok.end_pos, tok.value))
+
 		if tok._type == TT.BOOL:
 			return res.success(BoolLiteral(tok.start_pos, tok.end_pos, tok.value))
+
 		if tok._type == TT.CHAR:
 			return res.success(CharLiteral(tok.start_pos, tok.end_pos, tok.value))
+
 		if tok._type == TT.IDENT:
 			iden_name: str = tok.value
-			result = Identifier(tok.start_pos, tok.end_pos, iden_name)
+			return res.success(Identifier(tok.start_pos, tok.end_pos, iden_name))
 
-			while current_tok._type == TT.LSQ:
-				advance()
-				index = res.register(expr())
-				if res.error:
-					return res
-				if current_tok._type != TT.RSQ:
-					return res.fail(
-						InvalidSyntaxError(
-							f"Expected ']' after array index, but found '{current_tok.value or current_tok._type.name}'.",
-							current_tok.start_pos,
-							current_tok.end_pos,
-						)
-					)
-				advance()
-				result = ArrayIndex(
-					result.start_pos, current_tok.end_pos, result, index
-				)
-
-			return res.success(result)
 		if tok._type == TT.LPR:
 			if current_tok._type == TT.TYPE:
 				return type_cast(tok.start_pos)
@@ -1461,6 +1826,7 @@ def parse(tokens: list[Token]) -> Result:
 				)
 			advance()
 			return res.success(value)
+
 		if tok._type == TT.LSQ:
 			elements: list[Node] = []
 			if current_tok._type != TT.RSQ:
@@ -1483,6 +1849,7 @@ def parse(tokens: list[Token]) -> Result:
 			end_pos = current_tok.end_pos.copy()
 			advance()
 			return res.success(ArrayInitializer(tok.start_pos, end_pos, elements))
+
 		if tok._type == TT.LBR:
 			block_content: Program = res.register(program(TT.RBR))
 			if res.error:
@@ -1496,6 +1863,8 @@ def parse(tokens: list[Token]) -> Result:
 						current_tok.end_pos,
 					)
 				)
+
+			return res.success(block_content)
 
 		return res.fail(
 			InvalidSyntaxError(

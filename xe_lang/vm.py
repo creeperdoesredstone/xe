@@ -289,6 +289,28 @@ class VM:
 		if len(self.stack) < n:
 			return Result().fail(VMError("Stack underflow", pos.copy(), pos.copy()))
 		return Result().success(None)
+	
+	def malloc(self, words: int):
+		res = Result()
+		pos = Position(0, 0, 0, "<bin>", "")
+		if words <= 0:
+			return res.fail(VMError("Invalid allocation size", pos.copy(), pos.copy()))
+
+		for i, (start, size) in enumerate(self.free_list):
+			if size >= words:
+				ptr = start
+
+				self.allocations[ptr] = words
+
+				if size == words:
+					self.free_list.pop(i)
+				else:
+					self.free_list[i] = (start + words, size - words)
+
+				self.stack.append(ptr)
+				return res.success(True)
+		else:
+			return res.fail(VMError("Out of memory", pos.copy(), pos.copy()))
 
 	def execute(self, instruction: int) -> Result:
 		res = Result()
@@ -619,29 +641,45 @@ class VM:
 							if res.error: return res
 
 							self._output(chr(value))
+						case 10: # STR_CONCAT
+							str2_addr = res.register(self.pop())
+							str1_addr = res.register(self.pop())
+							if res.error:
+								return res
+							
+							str1 = self.read_mem_string(self.data_memory[str1_addr])
+							str2 = self.read_mem_string(self.data_memory[str2_addr])
+
+							result_str = str1 + str2
+							str_len = len(result_str)
+							
+							required_chars_len = str_len + 1
+							capacity = math.ceil(required_chars_len)
+
+							# allocate 3 words for string metadata: [ptr_to_chars, length, capacity]
+							res.register(self.malloc(3))
+							if res.error:
+								return res
+							metadata_ptr = res.register(self.pop())
+
+							res.register(self.malloc(capacity))
+							if res.error:
+								return res
+							chars_ptr = res.register(self.pop())
+
+							self.data_memory[metadata_ptr] = chars_ptr              # string.descriptionVec[0] = ptr_to_chars
+							self.data_memory[metadata_ptr + 1] = required_chars_len # string.descriptionVec[1] = len + 1
+							self.data_memory[metadata_ptr + 2] = capacity           # string.descriptionVec[2] = capacity
+
+							self.write_mem_string(chars_ptr, result_str)
+
+							self.stack.append(metadata_ptr)
 						case 21:  # MALLOC
 							words = res.register(self.pop())
 							if res.error:
 								return res
 
-							if words <= 0:
-								return res.fail(VMError("Invalid allocation size", pos.copy(), pos.copy()))
-
-							for i, (start, size) in enumerate(self.free_list):
-								if size >= words:
-									ptr = start
-
-									self.allocations[ptr] = words
-
-									if size == words:
-										self.free_list.pop(i)
-									else:
-										self.free_list[i] = (start + words, size - words)
-
-									self.stack.append(ptr)
-									break
-							else:
-								return res.fail(VMError("Out of memory", pos.copy(), pos.copy()))
+							return self.malloc(words)
 						case 22:  # FREE
 							ptr = res.register(self.pop())
 							if res.error:
@@ -679,9 +717,6 @@ class VM:
 				case 0: # LOOKUP
 					src = res.register(self.pop()) - self.text_size
 					dst = res.register(self.pop())
-
-					print(f"LOOKUP src={src} dst={dst} size={ins_arg}")
-					print(self.program_memory[src:src+ins_arg])
 
 					if res.error:
 						return res

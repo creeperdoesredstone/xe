@@ -21,6 +21,13 @@ array_labels = 0
 
 nodes_to_lookup: list[Node] = []
 
+# TODO:
+# - implement string concatenation via SYS 10
+# - implement structs
+# - implement classes (no OOP needed, basically structs with methods)
+# - implement graphics via syscalls (dw about implementation we'll do that in r1)
+# - fix & test subroutines (functions & procedures)
+
 
 def init_labels():
 	global for_labels, while_labels, if_labels, switch_labels, repeat_labels, string_labels, array_labels
@@ -384,19 +391,19 @@ def emit_BinaryOperation(node: BinaryOperation) -> Result:
 			)
 		)
 
-	if len(opcode) == 2:
+	if len(opcode[0]) == 2:
 		if (node.left.type.base == "float" and node.left.type.pointer_layers == 0) or (
 			node.right.type.base == "float" and node.right.type.pointer_layers == 0
 		):
-			opcode = f"F{opcode}"
-		else:
-			opcode = f"I{opcode}"
+			opcode[0] = f"F{opcode}"
+		elif len(opcode) == 1:
+			opcode[0] = f"I{opcode}"
 
 	instructions.append(
 		(
 			node.start_pos,
 			node.end_pos,
-			opcode,
+			*opcode,
 		)
 	)
 

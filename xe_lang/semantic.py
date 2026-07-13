@@ -80,6 +80,8 @@ class SemanticAnalyzer:
 		self.scope = None
 		self.next_address = 0x0000
 		self.functions = {}
+		self.structs = {}
+		self.classes = {}
 
 		self.current_function: SubroutineSymbol | None = None
 
@@ -1169,6 +1171,217 @@ class SemanticAnalyzer:
 				node.end_pos,
 			)
 		)
+
+	def visit_StructDefinition(self, node: StructDefinition) -> Result:
+		res = Result()
+		
+		struct_name = node.var.value
+		
+		if hasattr(self, 'structs') and struct_name in self.structs:
+			return res.fail(
+				SemanticError(
+					f"Struct '{struct_name}' already defined.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+			
+		if not hasattr(self, 'structs'):
+			self.structs = {}
+
+		field_dict = {}
+		for field in node.fields:
+			if field.field_type not in DATA_TYPES and field.field_type not in self.structs:
+				return res.fail(
+					SemanticError(
+						f"Unknown field type '{field.field_type}' in struct '{struct_name}'.",
+						field.start_pos,
+						field.end_pos,
+					)
+				)
+			
+			field_dict[field.field_name] = Type(field.field_type, field.field_pointer_layers)
+
+		self.structs[struct_name] = field_dict
+		return res.success(None)
+
+	def visit_MemberAccess(self, node: MemberAccess) -> Result:
+		res = Result()
+
+		parent_type: Type = res.register(self.analyze(node.parent))
+		if res.error:
+			return res
+
+		if parent_type.pointer_layers > 0:
+			return res.fail(
+				SemanticError(
+					f"Cannot access member of a pointer type '{parent_type}'. Dereference it first.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		if hasattr(self, 'structs') and parent_type.base in self.structs:
+			fields = self.structs[parent_type.base]
+			member_name = node.member.value
+			if member_name not in fields:
+				return res.fail(
+					SemanticError(
+						f"Struct '{parent_type.base}' has no field named '{member_name}'.",
+						node.member.start_pos,
+						node.member.end_pos,
+					)
+				)
+			
+			result_type = fields[member_name]
+			node.type = result_type
+			return res.success(result_type)
+
+		if hasattr(self, 'classes') and parent_type.base in self.classes:
+			member_name = node.member.value
+			current_class = parent_type.base
+			
+			while current_class is not None:
+				class_info = self.classes.get(current_class)
+				if class_info and member_name in class_info['members']:
+					result_type = class_info['members'][member_name]
+					node.type = result_type
+					return res.success(result_type)
+				current_class = class_info['parent'] if class_info else None
+
+			return res.fail(
+				SemanticError(
+					f"Class '{parent_type.base}' has no member named '{member_name}'.",
+					node.member.start_pos,
+					node.member.end_pos,
+				)
+			)
+
+		return res.fail(
+			SemanticError(
+				f"Type '{parent_type.base}' does not support member access.",
+				node.start_pos,
+				node.end_pos,
+			)
+		)
+
+	def visit_ClassDefinition(self, node: ClassDefinition) -> Result:
+		res = Result()
+		
+		if not hasattr(self, 'classes'):
+			self.classes = {}
+
+		if node.name in self.classes:
+			return res.fail(
+				SemanticError(
+					f"Class '{node.name}' already defined.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		if node.parent_class and node.parent_class not in self.classes:
+			return res.fail(
+				SemanticError(
+					f"Base class '{node.parent_class}' is undefined.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		class_members = {}
+		self.classes[node.name] = {
+			'parent': node.parent_class,
+			'members': class_members
+		}
+
+		self.push_scope()
+		
+		for member in node.members:
+			res.register(self.analyze(member))
+			if res.error:
+				self.pop_scope()
+				return res
+			
+			if isinstance(member, VariableDeclaration):
+				class_members[member.name] = Type(member.type, member.pointer_layers)
+			elif isinstance(member, ArrayDeclaration):
+				class_members[member.name] = Type(member.element_type, member.pointer_layers + 1, True)
+			elif isinstance(member, FunctionDefinition):
+				class_members[member.name] = Type(member.return_type, member.pointer_layers)
+			elif isinstance(member, ProcedureDefinition):
+				class_members[member.name] = Type("none")
+
+		self.pop_scope()
+		return res.success(None)
+
+	def visit_NewArrayExpression(self, node: NewArrayExpression) -> Result:
+		res = Result()
+
+		if node.type_name not in DATA_TYPES and (not hasattr(self, 'structs') or node.type_name not in self.structs) and (not hasattr(self, 'classes') or node.type_name not in self.classes):
+			return res.fail(
+				SemanticError(
+					f"Unknown base allocation type '{node.type_name}'.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		size_type = res.register(self.analyze(node.size_expr))
+		if res.error:
+			return res
+
+		if size_type != Type("int"):
+			return res.fail(
+				SemanticError(
+					f"Allocation bounds array size must be an integer, got '{size_type}'.",
+					node.size_expr.start_pos,
+					node.size_expr.end_pos,
+				)
+			)
+
+		allocated_type = Type(node.type_name, node.pointer_layers + 1)
+		node.type = allocated_type
+		return res.success(allocated_type)
+
+	def visit_NewObjectExpression(self, node: NewObjectExpression) -> Result:
+		res = Result()
+
+		if not hasattr(self, 'classes') or node.type_name not in self.classes:
+			return res.fail(
+				SemanticError(
+					f"Unknown type template or class target '{node.type_name}'.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		for arg in node.args:
+			res.register(self.analyze(arg))
+			if res.error:
+				return res
+
+		allocated_type = Type(node.type_name, 1)
+		node.type = allocated_type
+		return res.success(allocated_type)
+
+	def visit_FreePointer(self, node: FreePointer) -> Result:
+		res = Result()
+		
+		target_type = res.register(self.analyze(node.target))
+		if res.error:
+			return res
+
+		if target_type.pointer_layers == 0:
+			return res.fail(
+				SemanticError(
+					f"Cannot free non-pointer expression of type '{target_type}'.",
+					node.target.start_pos,
+					node.target.end_pos,
+				)
+			)
+
+		return res.success(None)
 
 
 def analyze(ast: Node) -> Result:

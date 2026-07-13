@@ -2,6 +2,14 @@ from xe_lang.nodes import *
 from xe_lang.helper import TT
 
 
+LITERALS = (
+    IntLiteral,
+    FloatLiteral,
+    BoolLiteral,
+    StringLiteral,
+)
+
+
 class Optimizer:
 	def optimize(self, node: Node) -> Node:
 		method = getattr(self, f"visit_{type(node).__name__}", None)
@@ -29,7 +37,7 @@ class Optimizer:
 		node.value = self.optimize(node.value)
 
 		# constant folding
-		if isinstance(node.value, (IntLiteral, FloatLiteral, BoolLiteral)):
+		if isinstance(node.value, LITERALS):
 			return self.fold_unary(node)
 
 		return node
@@ -68,8 +76,8 @@ class Optimizer:
 		right = node.right
 
 		# constant folding
-		if isinstance(left, (IntLiteral, FloatLiteral, BoolLiteral)) and isinstance(
-			right, (IntLiteral, FloatLiteral, BoolLiteral)
+		if isinstance(left, LITERALS) and isinstance(
+			right, LITERALS
 		):
 			return self.fold_binary(node)
 
@@ -83,6 +91,20 @@ class Optimizer:
 		a = left.value
 		b = right.value
 		op = node.op._type
+
+		# string operations
+
+		if isinstance(left, StringLiteral) and isinstance(right, StringLiteral):
+			if op == TT.ADD:
+				return StringLiteral(node.start_pos, node.end_pos, a + b)
+
+			if op == TT.EQ:
+				return BoolLiteral(node.start_pos, node.end_pos, a == b)
+
+			if op == TT.NE:
+				return BoolLiteral(node.start_pos, node.end_pos, a != b)
+
+			return node
 
 		is_float = (
 			isinstance(left, FloatLiteral)

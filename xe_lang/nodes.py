@@ -349,10 +349,14 @@ class ProcedureDefinition(Node):
 
 class FunctionCall(Node):
 	def __init__(
-		self, start_pos: Position, end_pos: Position, name: str, arguments: list[Node]
+		self,
+		start_pos: Position,
+		end_pos: Position,
+		caller: Node,
+		arguments: list[Node],
 	):
 		super().__init__(start_pos, end_pos)
-		self.name: str = name
+		self.caller: Node = caller
 		self.arguments: list[Node] = arguments
 		self.arg_types: list = []
 
@@ -399,8 +403,32 @@ class ClassDefinition(Node):
 	pass
 
 
-class NewPointer(Node):
-	pass
+class NewArrayExpression(Node):
+	def __init__(
+		self,
+		start_pos: Position,
+		end_pos: Position,
+		type_name: str,
+		pointer_layers: int,
+		size_expr: Node,
+	):
+		super().__init__(start_pos, end_pos)
+		self.type_name: str = type_name
+		self.pointer_layers: int = pointer_layers
+		self.size_expr: Node = size_expr
+
+
+class NewObjectExpression(Node):
+	def __init__(
+		self,
+		start_pos: Position,
+		end_pos: Position,
+		type_name: str,
+		args: list[Node]
+	):
+		super().__init__(start_pos, end_pos)
+		self.type_name: str = type_name
+		self.args: list[Node] = args
 
 
 class FreePointer(Node):
@@ -482,3 +510,27 @@ class ArrayAssign(Node):
 
 	def __repr__(self):
 		return f"ARR_ASSIGN({self.array}[{self.index}] {self.operator} {self.value})"
+
+
+class MemberAccess(Node):
+	def __init__(
+		self, start_pos: Position, end_pos: Position, parent: Node, member: Node
+	):
+		super().__init__(start_pos, end_pos)
+		self.parent: Node = parent
+		self.member: Node = member
+
+
+class StructField(Node):
+	def __init__(
+		self,
+		start_pos: Position,
+		end_pos: Position,
+		field_name: str,
+		field_type: str,
+		field_pointer_layers: int,
+	):
+		super().__init__(start_pos, end_pos)
+		self.field_name: str = field_name
+		self.field_type: str = field_type
+		self.field_pointer_layers: int = field_pointer_layers
