@@ -240,3 +240,8 @@ class Optimizer:
 	def visit_ProcedureDefinition(self, node: ProcedureDefinition):
 		node.body = self.optimize(node.body)
 		return node
+
+	def visit_ArrayInitializer(self, node: ArrayInitializer):
+		for i, elem in enumerate(node.elements):
+			node.elements[i] = self.optimize(elem)
+		return node

@@ -7,6 +7,7 @@ BINARY_RULES = {
 	(TT.ADD, "int", "float"): "float",
 	(TT.ADD, "float", "int"): "float",
 	(TT.ADD, "float", "float"): "float",
+    (TT.ADD, "string", "string"): "string",
 
 	(TT.SUB, "int", "int"): "int",
 	(TT.SUB, "int", "float"): "float",

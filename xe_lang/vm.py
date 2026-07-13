@@ -475,6 +475,8 @@ class VM:
 						self.cr = 0
 					case 0x17:
 						if not is_float_op:
+							self.stack.append(a)
+							self.stack.append(b)
 							val = self.cr
 			else:
 				a = res.register(self.pop())

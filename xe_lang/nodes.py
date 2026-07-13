@@ -8,10 +8,6 @@ class Node:
 		self.type: str = "none"
 
 	def prettyprint(self, indent: int = 0, label: str = "") -> str:
-		"""
-		Recursively walks the AST node attributes and builds a human-readable,
-		indented tree structure with clean alignment.
-		"""
 		prefix = "  " * indent
 		node_name = f"{ANSI.BOLD}{ANSI.BLUE}{self.__class__.__name__}{ANSI.END}"
 		label_prefix = f"{ANSI.CYAN}{label}: {ANSI.END}" if label else ""
@@ -28,6 +24,9 @@ class Node:
 				"is_local",
 				"address",
 			):
+				continue
+
+			if key == "type" and value == "none":
 				continue
 
 			child_indent = indent + 1

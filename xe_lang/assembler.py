@@ -431,6 +431,7 @@ def assemble(fn: str, ftxt: str) -> Result:
 		) as f:
 			f.write("\n".join(f"0x{word:09X}" for word in program))
 
+	print(labels)
 	return res.success(program)
 
 
