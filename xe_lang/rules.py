@@ -7,7 +7,7 @@ BINARY_RULES = {
 	(TT.ADD, "int", "float"): "float",
 	(TT.ADD, "float", "int"): "float",
 	(TT.ADD, "float", "float"): "float",
-    (TT.ADD, "string", "string"): "string",
+	(TT.ADD, "string", "string"): "string",
 
 	(TT.SUB, "int", "int"): "int",
 	(TT.SUB, "int", "float"): "float",
@@ -61,12 +61,14 @@ BINARY_RULES = {
 	(TT.EQ, "float", "int"): "bool",
 	(TT.EQ, "float", "float"): "bool",
 	(TT.EQ, "bool", "bool"): "bool",
+	(TT.EQ, "string", "string"): "bool",
 
 	(TT.NE, "int", "int"): "bool",
 	(TT.NE, "int", "float"): "bool",
 	(TT.NE, "float", "int"): "bool",
 	(TT.NE, "float", "float"): "bool",
 	(TT.NE, "bool", "bool"): "bool",
+	(TT.NE, "string", "string"): "bool",
 	
 	# Logical
 	(TT.ANDL, "bool", "bool"): "bool",
@@ -95,8 +97,8 @@ BINARY_OPCODE_MAP = {
 	# arithmetic
 	(TT.ADD, "int"):   ["ADDI"],
 	(TT.ADD, "float"): ["ADDF"],
-    (TT.ADD, "string"): ["SYS", 10],
-    
+	(TT.ADD, "string"): ["SYS", 10],
+	
 	(TT.SUB, "int"):   ["SUBI"],
 	(TT.SUB, "float"): ["SUBF"],
 	(TT.MUL, "int"):   ["MULI"],
@@ -107,17 +109,17 @@ BINARY_OPCODE_MAP = {
 	(TT.MOD, "float"): ["MODF"],
 	(TT.POW, "int"):   ["POWI"],
 	(TT.POW, "float"): ["POWF"],
-    
+	
 	# bitwise
 	(TT.AND, "int"): ["AND"],
 	(TT.OR, "int"):  ["OR"],
 	(TT.XOR, "int"): ["XOR"],
-    
+	
 	# logical
 	(TT.ANDL, "bool"): ["AND"],
 	(TT.ORL, "bool"):  ["OR"],
 	(TT.XORL, "bool"): ["XOR"],
-    
+	
 	# comparison
 	(TT.EQ, "bool"): ["EQ"],
 	(TT.NE, "bool"): ["NE"],

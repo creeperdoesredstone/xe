@@ -420,11 +420,7 @@ class NewArrayExpression(Node):
 
 class NewObjectExpression(Node):
 	def __init__(
-		self,
-		start_pos: Position,
-		end_pos: Position,
-		type_name: str,
-		args: list[Node]
+		self, start_pos: Position, end_pos: Position, type_name: str, args: list[Node]
 	):
 		super().__init__(start_pos, end_pos)
 		self.type_name: str = type_name
@@ -534,3 +530,10 @@ class StructField(Node):
 		self.field_name: str = field_name
 		self.field_type: str = field_type
 		self.field_pointer_layers: int = field_pointer_layers
+
+
+class StringOperation(BinaryOperation):
+	def __init__(
+		self, start_pos: Position, end_pos: Position, left: Node, op: Node, right: Node
+	):
+		super().__init__(start_pos, end_pos, left, op, right)

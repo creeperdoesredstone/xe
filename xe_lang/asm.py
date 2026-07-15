@@ -22,7 +22,6 @@ array_labels = 0
 nodes_to_lookup: list[Node] = []
 
 # TODO:
-# - implement string concatenation via SYS 10
 # - implement structs
 # - implement classes (no OOP needed, basically structs with methods)
 # - implement graphics via syscalls (dw about implementation we'll do that in r1)
@@ -62,16 +61,13 @@ def format_instructions(instructions: list[Instruction]) -> str:
 	lines = []
 
 	for instruction in instructions:
-		start = instruction[0]
 		opcode = instruction[2]
 		args = instruction[3:]
 
-		location = "" if start is None else f" ; {start.ln + 1}:{start.col + 1}"
-
 		if args:
-			lines.append(f"{opcode} {' '.join(map(str, args))}{location}")
+			lines.append(f"{opcode} {' '.join(map(str, args))}")
 		else:
-			lines.append(f"{opcode}{location}")
+			lines.append(f"{opcode}")
 
 	return "\n".join(lines)
 
@@ -358,6 +354,8 @@ def emit_BinaryOperation(node: BinaryOperation) -> Result:
 	right = res.register(emit(node.right))
 	if res.error:
 		return res
+	
+	print(node)
 
 	if node.type.base == "float" and node.type.pointer_layers == 0:
 		if node.left.type.base == "int" and node.left.type.pointer_layers == 0:
@@ -395,9 +393,9 @@ def emit_BinaryOperation(node: BinaryOperation) -> Result:
 		if (node.left.type.base == "float" and node.left.type.pointer_layers == 0) or (
 			node.right.type.base == "float" and node.right.type.pointer_layers == 0
 		):
-			opcode[0] = f"F{opcode}"
+			opcode[0] = f"F{opcode[0]}"
 		elif len(opcode) == 1:
-			opcode[0] = f"I{opcode}"
+			opcode[0] = f"I{opcode[0]}"
 
 	instructions.append(
 		(
@@ -456,6 +454,41 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 	):
 		pass
 
+	if (node.type.base == "string"):
+		# only concatenation is supported
+		instructions.append(
+			(
+				node.start_pos,
+				node.end_pos,
+				"LOAD",
+				node.address,
+			)
+		)
+
+		value_ins = res.register(emit(node.value))
+		if res.error:
+			return res
+		instructions.extend(value_ins)
+
+
+		instructions.append(
+			(
+				node.end_pos,
+				node.end_pos,
+				"SYS",
+				10,
+			)
+		)
+		instructions.append(
+			(
+				node.end_pos,
+				node.end_pos,
+				"STORE",
+				node.address,
+			)
+		)
+		return res.success(instructions)
+	
 	compound_map = {
 		TT.ADD_ASGN: "ADD",
 		TT.SUB_ASGN: "SUB",
@@ -1086,15 +1119,24 @@ def emit_ArrayIndex(node: ArrayIndex) -> Result:
 	res = Result()
 	instructions = []
 
+	index_inst = res.register(emit(node.index))
+	if res.error:
+		return res
+	instructions.extend(index_inst)
+
 	array_inst = res.register(emit(node.array))
 	if res.error:
 		return res
 	instructions.extend(array_inst)
 
-	index_inst = res.register(emit(node.index))
-	if res.error:
-		return res
-	instructions.extend(index_inst)
+	if node.type.base == "string":
+		instructions.append(
+			(
+				node.start_pos,
+				node.end_pos,
+				"LOADIND",
+			)
+		)
 
 	instructions.append(
 		(
@@ -1111,6 +1153,7 @@ def emit_ArrayIndex(node: ArrayIndex) -> Result:
 			"LOADIND",
 		)
 	)
+	node.type.base = "char"
 
 	return res.success(instructions)
 
@@ -1246,5 +1289,41 @@ def emit_ArrayAssign(node: ArrayAssign) -> Result:
 			"STREIND",
 		)
 	)
+
+	return res.success(instructions)
+
+
+def emit_StringOperation(node: StringOperation) -> Result:
+	res = Result()
+
+	left = res.register(emit(node.left))
+	if res.error:
+		return res
+
+	right = res.register(emit(node.right))
+	if res.error:
+		return res
+
+	instructions = left + right
+
+	arg = 10 if node.op._type == TT.ADD else 11
+
+	instructions.append(
+		(
+			node.start_pos,
+			node.end_pos,
+			"SYS",
+			arg
+		)
+	)
+
+	if node.op._type == TT.NE:
+		instructions.append(
+			(
+				node.end_pos,
+				node.end_pos,
+				"NOT",
+			)
+		)
 
 	return res.success(instructions)

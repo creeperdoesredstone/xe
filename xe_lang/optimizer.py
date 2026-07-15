@@ -267,3 +267,17 @@ class Optimizer:
 		for i, elem in enumerate(node.elements):
 			node.elements[i] = self.optimize(elem)
 		return node
+	
+	def visit_StringOperation(self, node: StringOperation):
+		node.left = self.optimize(node.left)
+		node.right = self.optimize(node.right)
+
+		left = node.left
+		right = node.right
+
+		if isinstance(left, LITERALS) and isinstance(
+			right, LITERALS
+		):
+			return self.fold_binary(node)
+
+		return node

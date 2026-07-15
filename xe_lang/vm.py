@@ -635,7 +635,7 @@ class VM:
 							addr = res.register(self.pop())
 							if res.error: return res
 
-							self.write_mem_string(addr, f"{value:08X}")
+							self.write_mem_string(addr, f"0x{value:08x}")
 						case 9:  # PUT_CHAR
 							value = res.register(self.pop())
 							if res.error: return res
@@ -667,13 +667,23 @@ class VM:
 								return res
 							chars_ptr = res.register(self.pop())
 
-							self.data_memory[metadata_ptr] = chars_ptr              # string.descriptionVec[0] = ptr_to_chars
-							self.data_memory[metadata_ptr + 1] = required_chars_len # string.descriptionVec[1] = len + 1
-							self.data_memory[metadata_ptr + 2] = capacity           # string.descriptionVec[2] = capacity
+							self.data_memory[metadata_ptr] = chars_ptr              # string.descriptor[0] = ptr_to_chars
+							self.data_memory[metadata_ptr + 1] = required_chars_len # string.descriptor[1] = len + 1
+							self.data_memory[metadata_ptr + 2] = capacity           # string.descriptor[2] = capacity
 
 							self.write_mem_string(chars_ptr, result_str)
 
 							self.stack.append(metadata_ptr)
+						case 11:  # STR_COMPARE
+							str2_addr = res.register(self.pop())
+							str1_addr = res.register(self.pop())
+							if res.error:
+								return res
+							
+							str1 = self.read_mem_string(self.data_memory[str1_addr])
+							str2 = self.read_mem_string(self.data_memory[str2_addr])
+
+							self.stack.append(TRUE if str1 == str2 else FALSE)
 						case 21:  # MALLOC
 							words = res.register(self.pop())
 							if res.error:

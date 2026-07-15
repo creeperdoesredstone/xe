@@ -22,7 +22,7 @@ class Type:
 
 	def __str__(self):
 		return (self.base if self.base else "Unknown") + ("*" * self.pointer_layers)
-	
+
 	def __repr__(self):
 		return self.__str__()
 
@@ -271,6 +271,22 @@ class SemanticAnalyzer:
 
 		result_type = Type(base_type)
 		node.type = result_type
+
+		if left_type == Type("string") and right_type == Type("string"):
+			node.__class__ = StringOperation
+			if node.op._type not in (TT.ADD, TT.EQ, TT.NE):
+				return res.fail(
+					SemanticError(
+						(
+							f"Operator '{node.op._type.name}' "
+							f"is not defined for "
+							f"'{left_type}' and '{right_type}'."
+						),
+						node.start_pos,
+						node.end_pos,
+					)
+				)
+
 		return res.success(result_type)
 
 	def visit_VariableDeclaration(self, node: VariableDeclaration) -> Result:
@@ -370,31 +386,47 @@ class SemanticAnalyzer:
 		}
 
 		if node.operator._type in compound_ops:
-			if symbol.type.pointer_layers != 0 or symbol.type.base not in (
-				"int",
-				"float",
+			if (
+				node.operator._type == TT.ADD_ASGN and
+				symbol.type == Type("string") and
+				value_type == Type("string")
 			):
+				pass
+			else:
+				if symbol.type.pointer_layers != 0 or symbol.type.base not in (
+					"int",
+					"float",
+				):
+					return res.fail(
+						SemanticError(
+							f"Operator '{node.operator._type.name}' requires numeric operands",
+							node.start_pos,
+							node.end_pos,
+						)
+					)
+
+				if value_type.pointer_layers != 0 or value_type.base not in (
+					"int",
+					"float",
+				):
+					return res.fail(
+						SemanticError(
+							f"Operator '{node.operator._type.name}' requires numeric operands",
+							node.start_pos,
+							node.end_pos,
+						)
+					)
+				
+			if symbol.type == Type("string") and value_type != Type("string"):
 				return res.fail(
 					SemanticError(
-						f"Operator '{node.operator._type.name}' requires numeric operands",
+						f"Cannot perform '{node.operator._type.name}' between '{symbol.type}' and '{value_type}'.",
 						node.start_pos,
 						node.end_pos,
 					)
 				)
 
-			if value_type.pointer_layers != 0 or value_type.base not in (
-				"int",
-				"float",
-			):
-				return res.fail(
-					SemanticError(
-						f"Operator '{node.operator._type.name}' requires numeric operands",
-						node.start_pos,
-						node.end_pos,
-					)
-				)
-
-			if symbol.type == Type("int") and value_type == Type("float"):
+			elif symbol.type == Type("int") and value_type != Type("int"):
 				return res.fail(
 					SemanticError(
 						f"Cannot perform '{node.operator._type.name}' between '{symbol.type}' and '{value_type}'.",
@@ -1043,17 +1075,6 @@ class SemanticAnalyzer:
 		if res.error:
 			return res
 
-		# Array must be a pointer
-		if array_type.pointer_layers == 0:
-			return res.fail(
-				SemanticError(
-					f"Cannot index a non-array type '{array_type}'.",
-					node.array.start_pos,
-					node.array.end_pos,
-				)
-			)
-
-		# Index must be int
 		index_type = res.register(self.analyze(node.index))
 		if res.error:
 			return res
@@ -1067,8 +1088,18 @@ class SemanticAnalyzer:
 				)
 			)
 
-		# Result type is the element type (pointer_layers - 1)
-		result_type = Type(array_type.base, array_type.pointer_layers - 1)
+		if array_type.pointer_layers == 0 and array_type.base != "string":
+			return res.fail(
+				SemanticError(
+					f"Cannot index a non-array type '{array_type}'.",
+					node.array.start_pos,
+					node.array.end_pos,
+				)
+			)
+		elif array_type.base == "string":
+			result_type = Type("string")
+		else:
+			result_type = Type(array_type.base, min(array_type.pointer_layers - 1, 0))
 		node.type = result_type
 		return res.success(result_type)
 
@@ -1174,10 +1205,10 @@ class SemanticAnalyzer:
 
 	def visit_StructDefinition(self, node: StructDefinition) -> Result:
 		res = Result()
-		
+
 		struct_name = node.var.value
-		
-		if hasattr(self, 'structs') and struct_name in self.structs:
+
+		if hasattr(self, "structs") and struct_name in self.structs:
 			return res.fail(
 				SemanticError(
 					f"Struct '{struct_name}' already defined.",
@@ -1185,13 +1216,16 @@ class SemanticAnalyzer:
 					node.end_pos,
 				)
 			)
-			
-		if not hasattr(self, 'structs'):
+
+		if not hasattr(self, "structs"):
 			self.structs = {}
 
 		field_dict = {}
 		for field in node.fields:
-			if field.field_type not in DATA_TYPES and field.field_type not in self.structs:
+			if (
+				field.field_type not in DATA_TYPES
+				and field.field_type not in self.structs
+			):
 				return res.fail(
 					SemanticError(
 						f"Unknown field type '{field.field_type}' in struct '{struct_name}'.",
@@ -1199,8 +1233,10 @@ class SemanticAnalyzer:
 						field.end_pos,
 					)
 				)
-			
-			field_dict[field.field_name] = Type(field.field_type, field.field_pointer_layers)
+
+			field_dict[field.field_name] = Type(
+				field.field_type, field.field_pointer_layers
+			)
 
 		self.structs[struct_name] = field_dict
 		return res.success(None)
@@ -1221,7 +1257,7 @@ class SemanticAnalyzer:
 				)
 			)
 
-		if hasattr(self, 'structs') and parent_type.base in self.structs:
+		if hasattr(self, "structs") and parent_type.base in self.structs:
 			fields = self.structs[parent_type.base]
 			member_name = node.member.value
 			if member_name not in fields:
@@ -1232,22 +1268,22 @@ class SemanticAnalyzer:
 						node.member.end_pos,
 					)
 				)
-			
+
 			result_type = fields[member_name]
 			node.type = result_type
 			return res.success(result_type)
 
-		if hasattr(self, 'classes') and parent_type.base in self.classes:
+		if hasattr(self, "classes") and parent_type.base in self.classes:
 			member_name = node.member.value
 			current_class = parent_type.base
-			
+
 			while current_class is not None:
 				class_info = self.classes.get(current_class)
-				if class_info and member_name in class_info['members']:
-					result_type = class_info['members'][member_name]
+				if class_info and member_name in class_info["members"]:
+					result_type = class_info["members"][member_name]
 					node.type = result_type
 					return res.success(result_type)
-				current_class = class_info['parent'] if class_info else None
+				current_class = class_info["parent"] if class_info else None
 
 			return res.fail(
 				SemanticError(
@@ -1267,8 +1303,8 @@ class SemanticAnalyzer:
 
 	def visit_ClassDefinition(self, node: ClassDefinition) -> Result:
 		res = Result()
-		
-		if not hasattr(self, 'classes'):
+
+		if not hasattr(self, "classes"):
 			self.classes = {}
 
 		if node.name in self.classes:
@@ -1291,24 +1327,28 @@ class SemanticAnalyzer:
 
 		class_members = {}
 		self.classes[node.name] = {
-			'parent': node.parent_class,
-			'members': class_members
+			"parent": node.parent_class,
+			"members": class_members,
 		}
 
 		self.push_scope()
-		
+
 		for member in node.members:
 			res.register(self.analyze(member))
 			if res.error:
 				self.pop_scope()
 				return res
-			
+
 			if isinstance(member, VariableDeclaration):
 				class_members[member.name] = Type(member.type, member.pointer_layers)
 			elif isinstance(member, ArrayDeclaration):
-				class_members[member.name] = Type(member.element_type, member.pointer_layers + 1, True)
+				class_members[member.name] = Type(
+					member.element_type, member.pointer_layers + 1, True
+				)
 			elif isinstance(member, FunctionDefinition):
-				class_members[member.name] = Type(member.return_type, member.pointer_layers)
+				class_members[member.name] = Type(
+					member.return_type, member.pointer_layers
+				)
 			elif isinstance(member, ProcedureDefinition):
 				class_members[member.name] = Type("none")
 
@@ -1318,7 +1358,11 @@ class SemanticAnalyzer:
 	def visit_NewArrayExpression(self, node: NewArrayExpression) -> Result:
 		res = Result()
 
-		if node.type_name not in DATA_TYPES and (not hasattr(self, 'structs') or node.type_name not in self.structs) and (not hasattr(self, 'classes') or node.type_name not in self.classes):
+		if (
+			node.type_name not in DATA_TYPES
+			and (not hasattr(self, "structs") or node.type_name not in self.structs)
+			and (not hasattr(self, "classes") or node.type_name not in self.classes)
+		):
 			return res.fail(
 				SemanticError(
 					f"Unknown base allocation type '{node.type_name}'.",
@@ -1347,7 +1391,7 @@ class SemanticAnalyzer:
 	def visit_NewObjectExpression(self, node: NewObjectExpression) -> Result:
 		res = Result()
 
-		if not hasattr(self, 'classes') or node.type_name not in self.classes:
+		if not hasattr(self, "classes") or node.type_name not in self.classes:
 			return res.fail(
 				SemanticError(
 					f"Unknown type template or class target '{node.type_name}'.",
@@ -1367,7 +1411,7 @@ class SemanticAnalyzer:
 
 	def visit_FreePointer(self, node: FreePointer) -> Result:
 		res = Result()
-		
+
 		target_type = res.register(self.analyze(node.target))
 		if res.error:
 			return res
