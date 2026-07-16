@@ -33,7 +33,7 @@ KEYWORDS = [
 	"struct",
 	"asm"
 ]
-DATA_TYPES = ["int", "float", "string", "bool", "char"]
+DATA_TYPES = ["int", "float", "string", "bool", "char", "function"]
 
 
 def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:

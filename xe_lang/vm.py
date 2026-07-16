@@ -4,7 +4,7 @@ import time
 import math
 import threading
 from xe_lang.helper import Result, VMError, Position
-from xe_lang.assembler import INSTRUCTION_MAP
+from disassemble import decode_instruction
 
 TRUE = 0xFFFFFFFF
 FALSE = 0
@@ -63,7 +63,8 @@ class VM:
 		self.program = program[4:]
 		self.instructions = program[4:4 + self.text_size]
 		self.program_memory = program[4 + self.text_size:]
-		self.stack: list = []
+		STACK_SIZE = 65536
+		self.stack = [0] * STACK_SIZE
 		self.call_stack: list = []
 		self.ip: int = 0
 		self.data_memory: list = [0] * 65536
@@ -76,6 +77,7 @@ class VM:
 		self.sp: int = 0
 		self.cr: int = 0
 		self.im: int = TRUE
+		self.bp: int = 0
 
 		self.labels = {}
 		self.start_time = time.time()
@@ -229,13 +231,14 @@ class VM:
 
 	def run(self) -> Result:
 		res = Result()
-		self.stack.clear()
+		self.stack = [0] * 65536
 		self.call_stack.clear()
 		self.cr = 0
 		self.im = TRUE
 		self.fp = 0
 		self.ip = 0
 		self.heap_pointer = 0x2000
+		self.sp = 0
 
 		self.free_list = [
 			(0x2000, 0xE000)
@@ -243,8 +246,12 @@ class VM:
 		self.allocations = {}
 
 		while self.ip < len(self.instructions):
-			self.sp = len(self.stack)
 			exec_res = self.execute(self.instructions[self.ip])
+			# print(self.stack[:self.sp], self.stack[self.sp:self.sp + 4])
+			# print(self.data_memory[8192:8192+16])
+			# print("SP:", self.sp)
+			# print("FP:", self.fp)
+			# print()
 
 			if exec_res.error:
 				if self.root:
@@ -275,14 +282,18 @@ class VM:
 
 		return res.success(self.stack)
 
+	def push(self, value) -> None:
+		self.stack[self.sp] = value
+		self.sp += 1
+
 	def pop(self) -> Result:
 		res = Result()
 		pos = Position(0, 0, 0, "<bin>", "")
 		if not self.stack:
 			return res.fail(VMError("Stack underflow", pos.copy(), pos.copy()))
-		val = self.stack.pop()
-		self.sp = len(self.stack)
-		return res.success(val)
+		
+		self.sp -= 1
+		return res.success(self.stack[self.sp])
 
 	def check_stack(self, n: int) -> Result:
 		pos = Position(0, 0, 0, "<bin>", "")
@@ -307,7 +318,7 @@ class VM:
 				else:
 					self.free_list[i] = (start + words, size - words)
 
-				self.stack.append(ptr)
+				self.push(ptr)
 				return res.success(True)
 		else:
 			return res.fail(VMError("Out of memory", pos.copy(), pos.copy()))
@@ -320,14 +331,15 @@ class VM:
 		ins_mod = (instruction >> 16) & 0xFFFF
 		ins_arg = instruction & 0xFFFF
 		ins_arg32 = (ins_mod << 16) | ins_arg
+		# print(decode_instruction(instruction))
 
 		if ins_type == 0:  # PUSH
-			self.stack.append(ins_arg32)
+			self.push(ins_arg32)
 
 		if ins_type == 1:  # Other Stack Instructions
 			match ins_mod:
 				case 0:  # LOAD
-					self.stack.append(self.data_memory[ins_arg])
+					self.push(self.data_memory[ins_arg])
 				case 1:  # STORE
 					value = res.register(self.pop())
 					if res.error:
@@ -335,15 +347,16 @@ class VM:
 
 					self.data_memory[ins_arg] = value
 				case 2:  # POP
-					res.register(self.pop())
-					if res.error:
-						return res
+					for _ in range(ins_arg):
+						res.register(self.pop())
+						if res.error:
+							return res
 				case 3:  # DUP
-					res.register(self.check_stack(1))
+					res.register(self.check_stack(ins_arg + 1))
 					if res.error:
 						return res
 
-					self.stack.append(self.stack[-1])
+					self.push(self.stack[self.sp - ins_arg - 1])
 				case 4:  # SWAP
 					res.register(self.check_stack(2))
 					if res.error:
@@ -352,14 +365,14 @@ class VM:
 					b = res.register(self.pop())
 					a = res.register(self.pop())
 
-					self.stack.append(b)
-					self.stack.append(a)
+					self.push(b)
+					self.push(a)
 				case 5:  # OVER
 					res.register(self.check_stack(2))
 					if res.error:
 						return res
 
-					self.stack.append(self.stack[-2])
+					self.push(self.stack[-2])
 				case 6:  # ROT
 					res.register(self.check_stack(3))
 					if res.error:
@@ -369,14 +382,14 @@ class VM:
 					b = res.register(self.pop())
 					a = res.register(self.pop())
 
-					self.stack.append(c)
-					self.stack.append(a)
-					self.stack.append(b)
+					self.push(c)
+					self.push(a)
+					self.push(b)
 				case 7:  # LOADIND
 					addr = res.register(self.pop())
 					if res.error:
 						return res
-					self.stack.append(self.data_memory[addr])
+					self.push(self.data_memory[addr])
 				case 8:  # STOREIND
 					value = res.register(self.pop())
 					addr = res.register(self.pop())
@@ -385,14 +398,11 @@ class VM:
 						return res
 					self.data_memory[addr] = value
 				case 9:  # PUSHFP
-					self.stack.append(self.fp)
+					self.push(self.fp)
 				case 10:  # POPFP
-					fp = res.register(self.pop())
-					if res.error:
-						return res
-					self.fp = fp
+					self.fp = self.stack[self.fp]
 				case 11:  # SETFP
-					self.fp = self.sp
+					self.fp = self.sp - 1
 				case 12:  # LOADFP
 					addr = ins_arg
 					if res.error:
@@ -403,6 +413,18 @@ class VM:
 					if res.error:
 						return res
 					self.data_memory[addr] = self.fp
+				case 14: # LOADSP
+					offset = ins_arg
+					if ins_arg > 0x7fff: offset -= 0x10000
+					self.push(self.stack[self.fp - offset])
+				case 15: # STORESP
+					offset = ins_arg
+					if ins_arg > 0x7fff: offset -= 0x10000
+					value = res.register(self.pop())
+					if res.error: return res
+					self.stack[self.fp - offset] = value
+				case 16: # LEAVE
+					self.sp = self.fp + 2
 
 		if ins_type == 2:  # Conversion
 			res.register(self.check_stack(1))
@@ -497,8 +519,8 @@ class VM:
 						self.cr = 0
 					case 0x17:
 						if not is_float_op:
-							self.stack.append(a)
-							self.stack.append(b)
+							self.push(a)
+							self.push(b)
 							val = self.cr
 			else:
 				a = res.register(self.pop())
@@ -543,7 +565,7 @@ class VM:
 
 			if is_float_op:
 				val = float_to_u32(float(val))
-			self.stack.append(val & TRUE)
+			self.push(val & TRUE)
 
 		if ins_type == 4:  # Branching
 			addr = ins_arg
@@ -588,7 +610,7 @@ class VM:
 			match ins_mod:
 				case 0: return res.success(False)
 				case 1: return res.success(False)
-				case 2: self.stack.append(self.im)
+				case 2: self.push(self.im)
 				case 3:
 					self.im = res.register(self.pop())
 					if res.error: return res
@@ -605,12 +627,12 @@ class VM:
 							addr = res.register(self.pop())
 							if res.error: return res
 							string = self.read_mem_string(addr)
-							self.stack.append(int(string))
+							self.push(int(string))
 						case 4:  # CHARS2FLOAT
 							addr = res.register(self.pop())
 							if res.error: return res
 							string = self.read_mem_string(addr)
-							self.stack.append(float_to_u32(float(string)))
+							self.push(float_to_u32(float(string)))
 						case 5:  # INT2CHARS
 							value = res.register(self.pop())
 							addr = res.register(self.pop())
@@ -623,7 +645,7 @@ class VM:
 							addr = res.register(self.pop())
 							if res.error: return res
 
-							self.write_mem_string(addr, str(value))
+							self.write_mem_string(addr, f"{value:.6f}")
 						case 7:  # BOOL2CHARS
 							value = bool(res.register(self.pop()))
 							addr = res.register(self.pop())
@@ -673,7 +695,7 @@ class VM:
 
 							self.write_mem_string(chars_ptr, result_str)
 
-							self.stack.append(metadata_ptr)
+							self.push(metadata_ptr)
 						case 11:  # STR_COMPARE
 							str2_addr = res.register(self.pop())
 							str1_addr = res.register(self.pop())
@@ -683,7 +705,7 @@ class VM:
 							str1 = self.read_mem_string(self.data_memory[str1_addr])
 							str2 = self.read_mem_string(self.data_memory[str2_addr])
 
-							self.stack.append(TRUE if str1 == str2 else FALSE)
+							self.push(TRUE if str1 == str2 else FALSE)
 						case 21:  # MALLOC
 							words = res.register(self.pop())
 							if res.error:
@@ -691,9 +713,12 @@ class VM:
 
 							return self.malloc(words)
 						case 22:  # FREE
+							# print(self.allocations)
+							# print(self.free_list)
 							ptr = res.register(self.pop())
 							if res.error:
 								return res
+							# print(ptr)
 
 							words = self.allocations.pop(ptr, None)
 							if words is None:
@@ -759,5 +784,4 @@ class VM:
 					for i in range(ins_arg):
 						self.program_memory[dst + i] = self.data_memory[src + i]
 
-		self.sp = len(self.stack)
 		return res.success(True)

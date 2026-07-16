@@ -70,9 +70,10 @@ class Node:
 
 
 class Program(Node):
-	def __init__(self, start_pos: Position, end_pos: Position, statements: list[Node]):
+	def __init__(self, start_pos: Position, end_pos: Position, statements: list[Node], sub_defs: list[Node]):
 		super().__init__(start_pos, end_pos)
-		self.statements = statements
+		self.statements: list[Node] = statements
+		self.sub_defs: list[Node] = sub_defs
 
 	def __repr__(self):
 		return f"Program({self.statements})"

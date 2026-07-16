@@ -10,6 +10,11 @@ class Type:
 		self.pointer_layers: int = pointer_layers
 		self.is_array: bool = is_array
 
+		self.is_callable: bool = base == "function" and pointer_layers == 0
+		self.is_proc: bool = base == "procedure" and pointer_layers == 0
+		self.parameters: list = []
+		self.return_type = None
+
 	def __eq__(self, other):
 		return (
 			isinstance(other, Type)
@@ -41,6 +46,13 @@ class Symbol:
 		self.address: int = address
 		self.is_local: bool = is_local
 		self.arr_length: int = arr_length
+		self.parameters: list = []
+		self.return_type = None
+
+	def __repr__(self) -> str:
+		loc_str = "local" if self.is_local else "global"
+		arr_str = f"[{self.arr_length}]" if self.arr_length > 0 else ""
+		return f"<Symbol '{self.name}': {self.type}{arr_str} @ {loc_str}({self.address})>"
 
 
 class SubroutineSymbol:
@@ -49,16 +61,27 @@ class SubroutineSymbol:
 		name: str,
 		return_type: Type | None,
 		parameters: list[Type],
+		param_names: list[str],
 		is_proc: bool = False,
 	):
 		self.name: str = name
 		self.return_type: Type | None = return_type
 		self.parameters: list[Type] = parameters
+		self.param_names: list[str] = param_names
+		self.address: int = 0
+		self.type = Type("procedure" if is_proc else "function")
+		self.arr_length: int = 0
 
 		self.is_proc: bool = is_proc
 		self.next_local_offset: int = (
 			-1
 		)  # starts at -1 and decrements for each local variable
+
+	def __repr__(self) -> str:
+		kind = "proc" if self.is_proc else "fn"
+		param_str = ", ".join(str(p) for p in self.parameters)
+		ret_str = f" {self.return_type}" if self.return_type else ""
+		return f"<{kind} {self.name}({param_str}){ret_str} @ addr {self.address} (locals: {abs(self.next_local_offset) - 1})>"
 
 
 class Scope:
@@ -113,6 +136,11 @@ class SemanticAnalyzer:
 		res = Result()
 		self.push_scope()
 
+		for defn in node.sub_defs:
+			res.register(self.analyze(defn))
+			if res.error:
+				return res
+		
 		for stmt in node.statements:
 			res.register(self.analyze(stmt))
 			if res.error:
@@ -144,7 +172,7 @@ class SemanticAnalyzer:
 		return Result().success(Type("char"))
 
 	def visit_Identifier(self, node: Identifier) -> Result:
-		symbol = self.scope.lookup(node.value)
+		symbol: SubroutineSymbol|Symbol|None = self.scope.lookup(node.value)
 
 		if symbol is None:
 			return Result().fail(
@@ -154,8 +182,17 @@ class SemanticAnalyzer:
 					node.end_pos,
 				)
 			)
+				
 		node.address = symbol.address
 		node.type = symbol.type
+		symbol.type.parameters = symbol.parameters
+		symbol.type.return_type = symbol.return_type
+		node.type.parameters = symbol.parameters
+		node.arr_size = symbol.arr_length
+
+		if self.current_function is not None and \
+		node.value in self.current_function.param_names:
+			node.is_local = True
 
 		return Result().success(symbol.type)
 
@@ -677,10 +714,10 @@ class SemanticAnalyzer:
 
 		return res.success(None)
 
-	def _declare_subroutine(self, node, is_proc: bool) -> Result:
+	def _declare_subroutine(self, node: FunctionDefinition|ProcedureDefinition, is_proc: bool) -> Result:
 		res = Result()
 
-		if node.name in self.functions:
+		if node.name in self.scope.symbols:
 			return res.fail(
 				SemanticError(
 					f"'{node.name}' is already declared.",
@@ -701,16 +738,23 @@ class SemanticAnalyzer:
 				)
 			return_type = Type(node.return_type, node.pointer_layers)
 
-		self.functions[node.name] = SubroutineSymbol(
+		param_list: list[Type] = [Type(p.type, p.pointer_layers) for p in node.parameters]
+		param_names: list[str] = [p.name for p in node.parameters]
+		symbol = SubroutineSymbol(
 			node.name,
 			return_type,
-			[Type(p.type, p.pointer_layers) for p in node.parameters],
+			param_list,
+			param_names,
 			is_proc,
 		)
+		print(symbol.is_proc)
+		print(symbol.param_names)
+
+		self.scope.symbols[node.name] = symbol
 
 		return res.success(None)
 
-	def _analyze_subroutine_body(self, node, is_proc: bool) -> Result:
+	def _analyze_subroutine_body(self, node: FunctionDefinition|ProcedureDefinition, is_proc: bool) -> Result:
 		res = Result()
 
 		res.register(self._declare_subroutine(node, is_proc))
@@ -720,10 +764,12 @@ class SemanticAnalyzer:
 		self.push_scope()
 
 		prev_function = self.current_function
+
 		self.current_function = SubroutineSymbol(
 			node.name,
-			None if is_proc else self.functions[node.name].return_type,
+			None if is_proc else self.scope.parent.symbols[node.name].return_type,
 			[Type(p.type, p.pointer_layers) for p in node.parameters],
+			[p.name for p in node.parameters],
 			is_proc,
 		)
 
@@ -844,42 +890,67 @@ class SemanticAnalyzer:
 		node.type = expected
 		return res.success(None)
 
-	def _analyze_call(self, node, expect_proc: bool) -> Result:
+	def _analyze_call(self, node: FunctionCall | ProcedureCall, expect_proc: bool) -> Result:
 		res = Result()
 
-		sub: SubroutineSymbol = self.functions.get(node.name)
+		# 1. Resolve the callable type uniformly from the scope/expression
+		if isinstance(node, FunctionCall):
+			# Evaluates identifiers, nested calls like foo()(), etc.
+			caller_type: Type = res.register(self.analyze(node.caller))
+			if res.error:
+				return res
+			
+			callable_name = getattr(node.caller, 'value', '<anonymous_callable>')
+		else:
+			# ProcedureCall provides a direct string name
+			caller_type = self.current_scope.lookup(node.name)
+			if caller_type is None:
+				return res.fail(
+					SemanticError(
+						f"Undefined procedure '{node.name}'.",
+						node.start_pos,
+						node.end_pos,
+					)
+				)
+			callable_name = node.name
 
-		if sub is None:
+		# 2. Validate that the type is actually a callable function/procedure
+		if not caller_type.is_callable:
 			return res.fail(
 				SemanticError(
-					f"Undefined function or procedure '{node.name}'.",
+					f"Expression '{callable_name}' of type '{caller_type}' is not callable.",
 					node.start_pos,
 					node.end_pos,
 				)
 			)
 
-		if sub.is_proc != expect_proc:
+		# 3. Enforce function vs procedure enforcement rules
+		is_proc = caller_type.is_proc
+		if is_proc != expect_proc:
 			kind, other = (
-				("procedure", "function") if sub.is_proc else ("function", "procedure")
+				("procedure", "function") if is_proc else ("function", "procedure")
 			)
 			return res.fail(
 				SemanticError(
-					f"'{node.name}' is a {kind}; it cannot be called like a {other}.",
+					f"'{callable_name}' is a {kind}; it cannot be called like a {other}.",
 					node.start_pos,
 					node.end_pos,
 				)
 			)
 
-		if len(node.arguments) != len(sub.parameters):
+		# 4. Validate Argument Count
+		expected_params = caller_type.parameters
+		if len(node.arguments) != len(expected_params):
 			return res.fail(
 				SemanticError(
-					f"'{node.name}' expects {len(sub.parameters)} argument(s), got {len(node.arguments)}.",
+					f"'{callable_name}' expects {len(expected_params)} argument(s), got {len(node.arguments)}.",
 					node.start_pos,
 					node.end_pos,
 				)
 			)
 
-		for i, (arg, expected_type) in enumerate(zip(node.arguments, sub.parameters)):
+		# 5. Type Check Arguments
+		for i, (arg, expected_type) in enumerate(zip(node.arguments, expected_params)):
 			arg_type: Type = res.register(self.analyze(arg))
 			if res.error:
 				return res
@@ -894,17 +965,17 @@ class SemanticAnalyzer:
 				if not is_implicit_float_cast:
 					return res.fail(
 						SemanticError(
-							f"Argument {i + 1} to '{node.name}': cannot pass '{arg_type}' as '{expected_type}'.",
+							f"Argument {i + 1} to '{callable_name}': cannot pass '{arg_type}' as '{expected_type}'.",
 							arg.start_pos,
 							arg.end_pos,
 						)
 					)
 
-		node.arg_types = sub.parameters
-		node.type = sub.return_type if sub.return_type is not None else Type("none")
+		node.arg_types = expected_params
+		node.type = caller_type.return_type if caller_type.return_type is not None else Type("none")
 
 		return res.success(node.type)
-
+	
 	def visit_FunctionCall(self, node: FunctionCall) -> Result:
 		return self._analyze_call(node, expect_proc=False)
 

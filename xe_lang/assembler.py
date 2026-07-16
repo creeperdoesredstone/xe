@@ -18,8 +18,8 @@ INSTRUCTION_MAP = {
 	"PUSH": (0x0, 0x0000, 0x0000, 1, True),
 	"LOAD": (0x1, 0x0000, 0x0000, 1, False),
 	"STORE": (0x1, 0x0001, 0x0000, 1, False),
-	"POP": (0x1, 0x0002, 0x0000, 0, False),
-	"DUP": (0x1, 0x0003, 0x0000, 0, False),
+	"POP": (0x1, 0x0002, 0x0000, 1, False),
+	"DUP": (0x1, 0x0003, 0x0000, 1, False),
 	"SWAP": (0x1, 0x0004, 0x0000, 0, False),
 	"OVER": (0x1, 0x0005, 0x0000, 0, False),
 	"ROT": (0x1, 0x0006, 0x0000, 0, False),
@@ -30,6 +30,9 @@ INSTRUCTION_MAP = {
 	"SETFP": (0x1, 0x000B, 0x0000, 0, False),
 	"LOADFP": (0x1, 0x000C, 0x0000, 1, False),
 	"STOREFP": (0x1, 0x000D, 0x0000, 1, False),
+	"LOADSP": (0x1, 0x000E, 0x0000, 1, False),
+	"STORESP": (0x1, 0x000F, 0x0000, 1, False),
+	"LEAVE": (0x1, 0x0010, 0x0000, 0, False),
 	"I2F": (0x2, 0x0000, 0x0001, 0, False),
 	"F2I": (0x2, 0x0001, 0x0000, 0, False),
 	"I2B": (0x2, 0x0000, 0x0002, 0, False),
@@ -85,9 +88,9 @@ INSTRUCTION_MAP = {
 	"CALL": (0x4, 0x0003, 0x0000, 1, False),
 	"CALZ": (0x4, 0x0004, 0x0000, 1, False),
 	"CALN": (0x4, 0x0005, 0x0000, 1, False),
-	"RET": (0x4, 0x0006, 0x0000, 1, False),
-	"RETZ": (0x4, 0x0007, 0x0000, 1, False),
-	"RETN": (0x4, 0x0008, 0x0000, 1, False),
+	"RET": (0x4, 0x0006, 0x0000, 0, False),
+	"RETZ": (0x4, 0x0007, 0x0000, 0, False),
+	"RETN": (0x4, 0x0008, 0x0000, 0, False),
 	"HALT": (0x5, 0x0000, 0x0000, 0, False),
 	"WAIT": (0x5, 0x0001, 0x0000, 0, False),
 	"PUSHIM": (0x5, 0x0002, 0x0000, 0, False),
@@ -124,7 +127,7 @@ def _encode_instruction(opcode: str, args: list[int]) -> int:
 			arg = arg_value & 0xFFFF
 	else:
 		modifier = args[0] & 0xFFFF
-		arg = args[1] & 0xFFFF
+		arg = args[1] % 0x10000
 
 	return ((op & 0xF) << 32) | ((modifier & 0xFFFF) << 16) | (arg & 0xFFFF)
 
@@ -188,9 +191,7 @@ def assemble(fn: str, ftxt: str) -> Result:
 
 		token_index = 0
 
-		#
 		# labels / section markers
-		#
 		while token_index < len(tokens) and tokens[token_index].startswith(":"):
 			label = tokens[token_index][1:]
 
@@ -232,9 +233,7 @@ def assemble(fn: str, ftxt: str) -> Result:
 		if token_index >= len(tokens):
 			continue
 
-		#
 		# TEXT SECTION
-		#
 		if section == "text":
 			opcode = tokens[token_index].upper()
 
@@ -324,9 +323,7 @@ def assemble(fn: str, ftxt: str) -> Result:
 
 			address += 1
 
-		#
 		# DATA SECTION
-		#
 		else:
 			if len(tokens[token_index:]) != 1:
 				start = _make_position(
@@ -397,9 +394,7 @@ def assemble(fn: str, ftxt: str) -> Result:
 				)
 			)
 
-	#
-	# Build final program
-	#
+
 	program = [
 		MAGIC,
 		VERSION,
@@ -410,9 +405,7 @@ def assemble(fn: str, ftxt: str) -> Result:
 	program.extend(instructions)
 	program.extend(data)
 
-	#
-	# Write .xbn
-	#
+
 	stem = Path(fn).stem
 
 	if not stem.startswith("<"):

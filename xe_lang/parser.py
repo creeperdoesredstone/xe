@@ -59,12 +59,13 @@ def parse(tokens: list[Token]) -> Result:
 	def program(terminate: TT | None = None) -> Result:
 		res = Result()
 		statements: list[Node] = []
+		sub_defs: list[Node] = []
 
 		while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
 			advance()
 
 		if current_tok._type == TT.EOF:
-			return res.success(Program(current_tok.start_pos, current_tok.end_pos, []))
+			return res.success(Program(current_tok.start_pos, current_tok.end_pos, [], []))
 
 		while current_tok._type != TT.EOF:
 
@@ -86,7 +87,10 @@ def parse(tokens: list[Token]) -> Result:
 					)
 				)
 
-			statements.append(stmt)
+			if isinstance(stmt, (FunctionDefinition, ProcedureDefinition)):
+				sub_defs.append(stmt)
+			else:
+				statements.append(stmt)
 
 			if (
 				current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF)
@@ -103,14 +107,15 @@ def parse(tokens: list[Token]) -> Result:
 			while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
 				advance()
 
-		if not statements:
-			return res.success(Program(current_tok.start_pos, current_tok.end_pos, []))
+		if not statements and not sub_defs:
+			return res.success(Program(current_tok.start_pos, current_tok.end_pos, [], []))
 
 		return res.success(
 			Program(
 				statements[0].start_pos,
 				statements[-1].end_pos,
 				statements,
+				sub_defs
 			)
 		)
 
@@ -990,7 +995,7 @@ def parse(tokens: list[Token]) -> Result:
 					)
 				)
 
-				if current_tok._type == TT.COM:
+				if current_tok._type == TT.COMMA:
 					advance()
 					continue
 
@@ -1131,7 +1136,7 @@ def parse(tokens: list[Token]) -> Result:
 					)
 				)
 
-				if current_tok._type == TT.COM:
+				if current_tok._type == TT.COMMA:
 					advance()
 					continue
 
@@ -1492,7 +1497,7 @@ def parse(tokens: list[Token]) -> Result:
 					return res
 				args.append(arg)
 
-				if current_tok._type == TT.COM:
+				if current_tok._type == TT.COMMA:
 					advance()
 					continue
 				break
@@ -1554,7 +1559,7 @@ def parse(tokens: list[Token]) -> Result:
 					return res
 				args.append(arg)
 
-				if current_tok._type == TT.COM:
+				if current_tok._type == TT.COMMA:
 					advance()
 					continue
 
@@ -1568,6 +1573,8 @@ def parse(tokens: list[Token]) -> Result:
 					current_tok.end_pos,
 				)
 			)
+		end_pos = current_tok.end_pos.copy()
+		advance()
 
 		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
 			return res.fail(
@@ -1576,10 +1583,7 @@ def parse(tokens: list[Token]) -> Result:
 					current_tok.start_pos,
 					current_tok.end_pos,
 				)
-			)
-
-		end_pos = current_tok.end_pos.copy()
-		advance()
+			)		
 
 		return res.success(ProcedureCall(start_pos, end_pos, proc_name, args))
 
@@ -1723,7 +1727,7 @@ def parse(tokens: list[Token]) -> Result:
 
 						args.append(arg)
 
-						if current_tok._type == TT.COM:
+						if current_tok._type == TT.COMMA:
 							advance()
 							continue
 
