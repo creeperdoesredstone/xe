@@ -716,7 +716,7 @@ class X26IDE(QMainWindow):
         if error:
             self.append_output(ansi_to_html(f"{error}"))
         else:
-            self.append_output(f"Execution finished successfully.\n\nStack: {result}")
+            self.append_output(f"Execution finished successfully.\n\nStack: {result[:32]}")
 
         if hasattr(self.runtime_context, "vm") and self.runtime_context.vm:
             self.graphics_view.update_frame(self.runtime_context.vm.front_buffer)
