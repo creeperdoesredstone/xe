@@ -11,6 +11,11 @@ Instruction = tuple
 TRUE = 0xFFFFFFFF
 FALSE = 0
 
+SAVED_FP_OFFSET = 0
+RETURN_SLOT_OFFSET = 1
+FIRST_ARG_OFFSET = 2
+FIRST_LOCAL_OFFSET = -1
+
 for_labels = 0
 while_labels = 0
 repeat_labels = 0
@@ -18,6 +23,9 @@ if_labels = 0
 switch_labels = 0
 string_labels = 0
 array_labels = 0
+
+func_stack: list[str] = []
+func_name: str | None = None
 
 nodes_to_lookup: list[Node] = []
 
@@ -72,7 +80,11 @@ def format_instructions(instructions: list[Instruction]) -> str:
 	return "\n".join(lines)
 
 
-def compile_ast(ast: Node, fn: str) -> Result:
+def compile_ast(ast: Program, fn: str) -> Result:
+	global func_name, func_stack
+	func_stack = []
+	func_name = None
+
 	init_labels()
 
 	res = Result()
@@ -81,14 +93,25 @@ def compile_ast(ast: Node, fn: str) -> Result:
 
 	instructions = [(None, None, f":SECTION_TEXT_{name}")]
 
-	prgm_instructions = res.register(emit(ast))
-	if res.error:
-		return res
+	main_prgm_instructions = []
+	for stmt in ast.statements:
+		stmt_instructions = res.register(emit(stmt))
+		if res.error:
+			return res
+		main_prgm_instructions.extend(stmt_instructions)
+
+	main_prgm_instructions.append((None, None, "HALT"))
+
+	for sub in ast.sub_defs:
+		sub_instructions = res.register(emit(sub))
+		if res.error:
+			return res
+		main_prgm_instructions.extend(sub_instructions)
+	main_prgm_instructions.append((None, None, "HALT"))
 
 	data_lookup = generate_lookup_data()
 
-	instructions.extend(prgm_instructions)
-	instructions.append((None, None, "HALT"))
+	instructions.extend(main_prgm_instructions)
 	instructions.append((None, None, f":SECTION_DATA_{name}"))
 
 	instructions.extend(data_lookup)
@@ -136,6 +159,13 @@ def emit_Program(node: Program) -> Result:
 
 		instructions.extend(stmt_instructions)
 
+	for defn in node.sub_defs:
+		sub_def_instructions = res.register(emit(defn))
+		if res.error:
+			return res
+
+		instructions.extend(sub_def_instructions)
+
 	return res.success(instructions)
 
 
@@ -171,8 +201,8 @@ def emit_StringLiteral(node: StringLiteral) -> Result:
 		# get description vector pointer
 		(node.start_pos, node.end_pos, "PUSH", 3),
 		(node.start_pos, node.end_pos, "SYS", 21),
-		(node.start_pos, node.end_pos, "DUP",),
-		(node.start_pos, node.end_pos, "DUP",),
+		(node.start_pos, node.end_pos, "DUP", 0),
+		(node.start_pos, node.end_pos, "DUP", 0),
 		(node.start_pos, node.end_pos, "PUSH", 16 * ceil((len(node.value) + 1) / 16)),
 		(node.start_pos, node.end_pos, "SYS", 21),
 		(
@@ -185,11 +215,7 @@ def emit_StringLiteral(node: StringLiteral) -> Result:
 			node.end_pos,
 			"INCI",
 		),
-		(
-			node.start_pos,
-			node.end_pos,
-			"DUP",
-		),
+		(node.start_pos, node.end_pos, "DUP", 0),
 		(node.start_pos, node.end_pos, "PUSH", len(node.value) + 1),
 		(
 			node.start_pos,
@@ -201,11 +227,7 @@ def emit_StringLiteral(node: StringLiteral) -> Result:
 			node.end_pos,
 			"INCI",
 		),
-		(
-			node.start_pos,
-			node.end_pos,
-			"DUP",
-		),
+		(node.start_pos, node.end_pos, "DUP", 0),
 		(node.start_pos, node.end_pos, "PUSH", 16 * ceil((len(node.value) + 1) / 16)),
 		(
 			node.start_pos,
@@ -264,11 +286,12 @@ def emit_CharLiteral(node: CharLiteral) -> Result:
 
 
 def emit_Identifier(node: Identifier) -> Result:
+	opcode = "LOADSP" if node.is_local else "LOAD"
 	instructions = [
 		(
 			node.start_pos,
 			node.end_pos,
-			"LOAD",
+			opcode,
 			node.address,
 		)
 	]
@@ -354,8 +377,6 @@ def emit_BinaryOperation(node: BinaryOperation) -> Result:
 	right = res.register(emit(node.right))
 	if res.error:
 		return res
-	
-	print(node)
 
 	if node.type.base == "float" and node.type.pointer_layers == 0:
 		if node.left.type.base == "int" and node.left.type.pointer_layers == 0:
@@ -454,7 +475,7 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 	):
 		pass
 
-	if (node.type.base == "string"):
+	if node.type.base == "string":
 		# only concatenation is supported
 		instructions.append(
 			(
@@ -469,7 +490,6 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 		if res.error:
 			return res
 		instructions.extend(value_ins)
-
 
 		instructions.append(
 			(
@@ -488,7 +508,7 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 			)
 		)
 		return res.success(instructions)
-	
+
 	compound_map = {
 		TT.ADD_ASGN: "ADD",
 		TT.SUB_ASGN: "SUB",
@@ -660,7 +680,7 @@ def emit_ForLoop(node: ForLoop) -> Result:
 		return res
 
 	instructions.append(
-		(node.init_expr.end_pos, node.init_expr.end_pos, f":beginfor_{for_labels}")
+		(node.init_expr.end_pos, node.init_expr.end_pos, f":beginfor({for_labels})")
 	)
 
 	instructions.extend(res.register(emit(node.condition_expr)))
@@ -671,7 +691,7 @@ def emit_ForLoop(node: ForLoop) -> Result:
 			node.condition_expr.end_pos,
 			node.condition_expr.end_pos,
 			"BRZ",
-			f"endfor_{for_labels}",
+			f"endfor({for_labels})",
 		)
 	)
 
@@ -687,11 +707,11 @@ def emit_ForLoop(node: ForLoop) -> Result:
 			node.step_expr.end_pos,
 			node.step_expr.end_pos,
 			"JUMP",
-			f"beginfor_{for_labels}",
+			f"beginfor({for_labels})",
 		)
 	)
 	instructions.append(
-		(node.step_expr.end_pos, node.step_expr.end_pos, f":endfor_{for_labels}")
+		(node.step_expr.end_pos, node.step_expr.end_pos, f":endfor({for_labels})")
 	)
 
 	for_labels += 1
@@ -704,7 +724,9 @@ def emit_WhileLoop(node: WhileLoop) -> Result:
 
 	instructions = []
 
-	instructions.append((node.start_pos, node.start_pos, f":beginwhile_{while_labels}"))
+	instructions.append(
+		(node.start_pos, node.start_pos, f":beginwhile({while_labels})")
+	)
 
 	instructions.extend(res.register(emit(node.condition_expr)))
 	if res.error:
@@ -714,7 +736,7 @@ def emit_WhileLoop(node: WhileLoop) -> Result:
 			node.condition_expr.end_pos,
 			node.condition_expr.end_pos,
 			"BRZ",
-			f"endwhile_{while_labels}",
+			f"endwhile({while_labels})",
 		)
 	)
 
@@ -727,11 +749,11 @@ def emit_WhileLoop(node: WhileLoop) -> Result:
 			node.body.end_pos,
 			node.body.end_pos,
 			"JUMP",
-			f"beginwhile_{while_labels}",
+			f"beginwhile({while_labels})",
 		)
 	)
 	instructions.append(
-		(node.body.end_pos, node.body.end_pos, f":endwhile_{while_labels}")
+		(node.body.end_pos, node.body.end_pos, f":endwhile({while_labels})")
 	)
 
 	while_labels += 1
@@ -745,7 +767,7 @@ def emit_RepeatLoop(node: RepeatLoop) -> Result:
 	instructions = []
 
 	instructions.append(
-		(node.start_pos, node.start_pos, f":beginrepeat_{repeat_labels}")
+		(node.start_pos, node.start_pos, f":beginrepeat({repeat_labels})")
 	)
 
 	instructions.extend(res.register(emit(node.body)))
@@ -760,7 +782,7 @@ def emit_RepeatLoop(node: RepeatLoop) -> Result:
 			node.condition_expr.end_pos,
 			node.condition_expr.end_pos,
 			"BRZ",
-			f"beginrepeat_{repeat_labels}",
+			f"beginrepeat({repeat_labels})",
 		)
 	)
 
@@ -768,7 +790,7 @@ def emit_RepeatLoop(node: RepeatLoop) -> Result:
 		(
 			node.condition_expr.end_pos,
 			node.condition_expr.end_pos,
-			f":endrepeat_{repeat_labels}",
+			f":endrepeat({repeat_labels})",
 		)
 	)
 
@@ -785,21 +807,21 @@ def emit_IfConditional(node: IfConditional) -> Result:
 
 	for i, (condition, body) in enumerate(node.cases):
 		next_label = (
-			f"branch_{label}_{i}" if i != len(node.cases) - 1 else f"else_{label}"
+			f"branch({label}_{i})" if i != len(node.cases) - 1 else f"else({label})"
 		)
 
 		instructions.extend(res.register(emit(condition)))
 		instructions.append((condition.end_pos, condition.end_pos, "BRZ", next_label))
 
 		instructions.extend(res.register(emit(body)))
-		instructions.append((body.end_pos, body.end_pos, "JUMP", f"endif_{label}"))
+		instructions.append((body.end_pos, body.end_pos, "JUMP", f"endif({label})"))
 
 		instructions.append((condition.end_pos, condition.end_pos, f":{next_label}"))
 
 	if node.else_case:
 		instructions.extend(res.register(emit(node.else_case)))
 
-	instructions.append((node.end_pos, node.end_pos, f":endif_{label}"))
+	instructions.append((node.end_pos, node.end_pos, f":endif({label})"))
 
 	if_labels += 1
 	return res.success(instructions)
@@ -814,7 +836,6 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 	res = Result()
 	instructions = []
 
-
 	instructions.extend(res.register(emit(node.match_expr)))
 	if res.error:
 		return res
@@ -822,9 +843,9 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 	for i, (case_expr, body) in enumerate(node.cases):
 
 		fail_label = (
-			f"case_{label}_{i + 1}"
+			f"case({label}_{i + 1})"
 			if i < len(node.cases) - 1
-			else (f"default_{label}" if node.default_case else f"endswitch_{label}")
+			else (f"default({label})" if node.default_case else f"endswitch({label})")
 		)
 
 		if i != 0:
@@ -832,17 +853,11 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 				(
 					case_expr.start_pos,
 					case_expr.start_pos,
-					f":case_{label}_{i}",
+					f":case({label}_{i})",
 				)
 			)
 
-		instructions.append(
-			(
-				case_expr.start_pos,
-				case_expr.start_pos,
-				"DUP",
-			)
-		)
+		instructions.append((case_expr.start_pos, case_expr.start_pos, "DUP", 0))
 
 		instructions.extend(res.register(emit(case_expr)))
 		if res.error:
@@ -870,13 +885,7 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 			)
 		)
 
-		instructions.append(
-			(
-				case_expr.end_pos,
-				case_expr.end_pos,
-				"POP",
-			)
-		)
+		instructions.append((case_expr.end_pos, case_expr.end_pos, "POP", 1))
 
 		instructions.extend(res.register(emit(body)))
 		if res.error:
@@ -887,7 +896,7 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 				body.end_pos,
 				body.end_pos,
 				"JUMP",
-				f"endswitch_{label}",
+				f"endswitch({label})",
 			)
 		)
 
@@ -897,17 +906,13 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 			(
 				node.default_case.start_pos,
 				node.default_case.start_pos,
-				f":default_{label}",
+				f":default({label})",
 			)
 		)
 
 		# discard switch value
 		instructions.append(
-			(
-				node.default_case.start_pos,
-				node.default_case.start_pos,
-				"POP",
-			)
+			(node.default_case.start_pos, node.default_case.start_pos, "POP", 1)
 		)
 
 		instructions.extend(res.register(emit(node.default_case)))
@@ -915,19 +920,13 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 			return res
 
 	else:
-		instructions.append(
-			(
-				node.end_pos,
-				node.end_pos,
-				"POP",
-			)
-		)
+		instructions.append((node.end_pos, node.end_pos, "POP", 1))
 
 	instructions.append(
 		(
 			node.end_pos,
 			node.end_pos,
-			f":endswitch_{label}",
+			f":endswitch({label})",
 		)
 	)
 
@@ -935,46 +934,129 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 
 
 def emit_FunctionDefinition(node: FunctionDefinition) -> Result:
+	global func_stack, func_name
+
 	res = Result()
 	instructions = []
 
-	instructions.append((node.start_pos, node.start_pos, f":func_{node.name}"))
-
-	instructions.append((node.start_pos, node.start_pos, "PUSHFP"))
-	instructions.append((node.start_pos, node.start_pos, "SETFP"))
-
-	locals_count = getattr(node, "locals_count", 0)
-	for _ in range(locals_count):
-		instructions.append((node.start_pos, node.start_pos, "PUSH", 0))
-
-	body_instructions = res.register(emit(node.body))
-	if res.error:
-		return res
-	instructions.extend(body_instructions)
-
-	instructions.append((node.end_pos, node.end_pos, f":cleanup_{node.name}"))
-
-	for _ in range(locals_count):
-		instructions.append((node.end_pos, node.end_pos, "POP"))
+	if func_name is not None:
+		func_stack.append(func_name)
+	func_name = node.name
 
 	is_proc = (
 		getattr(node, "is_proc", False) or getattr(node, "return_type", None) is None
 	)
-	params_count = len(getattr(node, "parameters", [])) or len(
-		getattr(node, "args", [])
+
+	locals_count = getattr(node, "locals_count", 0)
+
+	params = getattr(node, "parameters", None)
+	if params is None:
+		params = getattr(node, "args", [])
+	params_count = len(params)
+
+	# ------------------------------------------------------------
+	# Prologue
+	# ------------------------------------------------------------
+
+	instructions.append((node.start_pos, node.start_pos, f":{node.name}"))
+
+	# Caller already pushed FP.
+	instructions.append((node.start_pos, node.start_pos, "SETFP"))
+
+	# Reserve return slot.
+	if not is_proc:
+		instructions.append((node.start_pos, node.start_pos, "PUSH", 0))
+
+	# Allocate locals.
+	for _ in range(locals_count):
+		instructions.append((node.start_pos, node.start_pos, "PUSH", 0))
+
+	# ------------------------------------------------------------
+	# Body
+	# ------------------------------------------------------------
+
+	body = res.register(emit(node.body))
+	if res.error:
+		func_name = func_stack.pop() if func_stack else None
+		return res
+
+	instructions.extend(body)
+
+	# ------------------------------------------------------------
+	# Epilogue
+	# ------------------------------------------------------------
+
+	instructions.append((node.end_pos, node.end_pos, f":cleanup({node.name})"))
+
+	if not is_proc:
+		# save return value into the reserved return slot
+		instructions.append(
+			(
+				node.end_pos,
+				node.end_pos,
+				"STORESP",
+				params_count,
+			)
+		)
+
+	# remove locals while preserving the return slot
+	instructions.append(
+		(
+			node.end_pos,
+			node.end_pos,
+			"LEAVE",
+		)
 	)
 
-	if is_proc:
-		instructions.append((node.end_pos, node.end_pos, "POPFP"))
-		if params_count > 0:
-			instructions.append((node.end_pos, node.end_pos, "RET", params_count))
-		else:
-			instructions.append((node.end_pos, node.end_pos, "RET"))
-	else:
-		if params_count > 0:
-			instructions.append((node.end_pos, node.end_pos, "STORESP", params_count))
-		instructions.append((node.end_pos, node.end_pos, "POPFP"))
-		instructions.append((node.end_pos, node.end_pos, "RET"))
+	# restore caller FP
+	instructions.append(
+		(
+			node.end_pos,
+			node.end_pos,
+			"POPFP",
+		)
+	)
+
+	# remove arguments (callee cleans)
+	if params_count:
+		instructions.append(
+			(
+				node.end_pos,
+				node.end_pos,
+				"POP",
+				params_count + 1,
+			)
+		)
+
+	instructions.append(
+		(
+			node.end_pos,
+			node.end_pos,
+			"RET",
+		)
+	)
+
+	func_name = func_stack.pop() if func_stack else None
+
+	return res.success(instructions)
+
+
+def emit_ProcedureDefinition(node: ProcedureDefinition) -> Result:
+	return emit_FunctionDefinition(node)
+
+
+def emit_ReturnStatement(node: ReturnStatement) -> Result:
+	global func_name
+	res = Result()
+	instructions = []
+
+	if node.value is not None:
+		value_instructions = res.register(emit(node.value))
+		if res.error:
+			return res
+		instructions.extend(value_instructions)
+
+	instructions.append((node.start_pos, node.end_pos, "JUMP", f"cleanup({func_name})"))
 
 	return res.success(instructions)
 
@@ -993,8 +1075,8 @@ def emit_OutputStatement(node: OutputStatement) -> Result:
 				[
 					(expr.end_pos, expr.end_pos, "PUSH", 10),
 					(expr.end_pos, expr.end_pos, "SYS", 21),  # malloc
-					(expr.end_pos, expr.end_pos, "DUP"),
-					(expr.end_pos, expr.end_pos, "DUP"),
+					(expr.end_pos, expr.end_pos, "DUP", 0),
+					(expr.end_pos, expr.end_pos, "DUP", 0),
 				]
 				+ expr_instructions
 				+ [
@@ -1010,8 +1092,8 @@ def emit_OutputStatement(node: OutputStatement) -> Result:
 						[
 							(expr.end_pos, expr.end_pos, "PUSH", 16),
 							(expr.end_pos, expr.end_pos, "SYS", 21),  # malloc
-							(expr.end_pos, expr.end_pos, "DUP"),
-							(expr.end_pos, expr.end_pos, "DUP"),
+							(expr.end_pos, expr.end_pos, "DUP", 0),
+							(expr.end_pos, expr.end_pos, "DUP", 0),
 						]
 						+ expr_instructions
 						+ [
@@ -1025,20 +1107,17 @@ def emit_OutputStatement(node: OutputStatement) -> Result:
 						(expr.end_pos, expr.end_pos, "SYS", 9)  # putchar
 					]
 				case "string":
-					instructions += (
-						expr_instructions
-						+ [
-							(expr.end_pos, expr.end_pos, "LOADIND"),
-							(expr.end_pos, expr.end_pos, "SYS", 1),  # outchars
-						]
-					)
+					instructions += expr_instructions + [
+						(expr.end_pos, expr.end_pos, "LOADIND"),
+						(expr.end_pos, expr.end_pos, "SYS", 1),  # outchars
+					]
 				case _:
 					instructions += (
 						[
 							(expr.end_pos, expr.end_pos, "PUSH", 16),
 							(expr.end_pos, expr.end_pos, "SYS", 21),  # malloc
-							(expr.end_pos, expr.end_pos, "DUP"),
-							(expr.end_pos, expr.end_pos, "DUP"),
+							(expr.end_pos, expr.end_pos, "DUP", 0),
+							(expr.end_pos, expr.end_pos, "DUP", 0),
 						]
 						+ expr_instructions
 						+ [
@@ -1081,7 +1160,7 @@ def emit_ArrayDeclaration(node: ArrayDeclaration) -> Result:
 		[
 			(node.start_pos, node.end_pos, "PUSH", node.size.value),
 			(node.start_pos, node.end_pos, "SYS", 21),
-			(node.start_pos, node.end_pos, "STORE", node.address)
+			(node.start_pos, node.end_pos, "STORE", node.address),
 		]
 	)
 
@@ -1102,7 +1181,7 @@ def emit_ArrayInitializer(node: ArrayInitializer, init_address: int = -1) -> Res
 
 	for inst_list in element_instructions:
 		if init_address > -1:
-			instructions.append((elem.end_pos, elem.end_pos, "DUP"))
+			instructions.append((elem.end_pos, elem.end_pos, "DUP", 0))
 
 		instructions.extend(inst_list)
 
@@ -1111,7 +1190,7 @@ def emit_ArrayInitializer(node: ArrayInitializer, init_address: int = -1) -> Res
 			instructions.append((elem.end_pos, elem.end_pos, "INCI"))
 
 	if init_address > -1:
-		instructions.append((node.end_pos, node.end_pos, "POP"))
+		instructions.append((node.end_pos, node.end_pos, "POP", 1))
 	return res.success(instructions)
 
 
@@ -1245,13 +1324,7 @@ def emit_ArrayAssign(node: ArrayAssign) -> Result:
 		)
 	)
 
-	instructions.append(
-		(
-			node.start_pos,
-			node.end_pos,
-			"DUP",
-		)
-	)
+	instructions.append((node.start_pos, node.end_pos, "DUP", 0))
 
 	instructions.append(
 		(
@@ -1308,14 +1381,7 @@ def emit_StringOperation(node: StringOperation) -> Result:
 
 	arg = 10 if node.op._type == TT.ADD else 11
 
-	instructions.append(
-		(
-			node.start_pos,
-			node.end_pos,
-			"SYS",
-			arg
-		)
-	)
+	instructions.append((node.start_pos, node.end_pos, "SYS", arg))
 
 	if node.op._type == TT.NE:
 		instructions.append(
@@ -1323,6 +1389,47 @@ def emit_StringOperation(node: StringOperation) -> Result:
 				node.end_pos,
 				node.end_pos,
 				"NOT",
+			)
+		)
+
+	return res.success(instructions)
+
+
+def emit_FunctionCall(node: FunctionCall) -> Result:
+	res = Result()
+	instructions = []
+
+	# Evaluate arguments left-to-right.
+	for arg in node.arguments:
+		arg_instr = res.register(emit(arg))
+		if res.error:
+			return res
+		instructions.extend(arg_instr)
+
+	# Save caller's frame pointer.
+	instructions.append((node.start_pos, node.end_pos, "PUSHFP"))
+
+	if isinstance(node.caller, Identifier):
+		instructions.append(
+			(
+				node.start_pos,
+				node.end_pos,
+				"CALL",
+				node.caller.value,
+			)
+		)
+	else:
+		caller_instr = res.register(emit(node.caller))
+		if res.error:
+			return res
+
+		instructions.extend(caller_instr)
+
+		instructions.append(
+			(
+				node.start_pos,
+				node.end_pos,
+				"CALLIND",
 			)
 		)
 
