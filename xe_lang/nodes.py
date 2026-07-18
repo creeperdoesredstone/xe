@@ -47,7 +47,7 @@ class Node:
 							)
 						elif isinstance(item, tuple):
 							lines.append(
-								f"{child_prefix}  {ANSI.MAGENTA}Case [{i}]{ANSI.END}:"
+								f"{child_prefix}  {ANSI.PURPLE}Case [{i}]{ANSI.END}:"
 							)
 							for part in item:
 								if isinstance(part, Node):
@@ -70,7 +70,13 @@ class Node:
 
 
 class Program(Node):
-	def __init__(self, start_pos: Position, end_pos: Position, statements: list[Node], sub_defs: list[Node]):
+	def __init__(
+		self,
+		start_pos: Position,
+		end_pos: Position,
+		statements: list[Node],
+		sub_defs: list[Node],
+	):
 		super().__init__(start_pos, end_pos)
 		self.statements: list[Node] = statements
 		self.sub_defs: list[Node] = sub_defs
@@ -137,6 +143,7 @@ class Identifier(Node):
 		self.address: int = -1
 		self.pointer_layers: int = 0
 		self.is_local: bool = False
+		self.const_value: Node | None = None
 
 	def __repr__(self):
 		return f"IDEN:{self.value}"
@@ -179,11 +186,13 @@ class VariableDeclaration(Node):
 		name: str,
 		type: str,
 		pointer_layers: int,
+		is_variable: bool,
 	):
 		super().__init__(start_pos, end_pos)
 		self.name: str = name
 		self.type: str = type
 		self.pointer_layers: int = pointer_layers
+		self.is_variable: bool = is_variable
 
 	def __repr__(self):
 		return f"DECLARE ({self.name}: {self.type})"
@@ -393,11 +402,11 @@ class StructDefinition(Node):
 		start_pos: Position,
 		end_pos: Position,
 		var: Identifier,
-		fields: list[tuple[str, str]],
+		fields: list[StructField],
 	):
 		super().__init__(start_pos, end_pos)
 		self.var = var
-		self.fields: list[tuple[str, str]] = fields
+		self.fields: list[StructField] = fields
 
 
 class ClassDefinition(Node):
@@ -516,6 +525,23 @@ class MemberAccess(Node):
 		super().__init__(start_pos, end_pos)
 		self.parent: Node = parent
 		self.member: Node = member
+
+
+class MemberAssign(Node):
+	def __init__(
+		self,
+		start_pos: Position,
+		end_pos: Position,
+		obj: Node,
+		member: Identifier,
+		value: Node,
+		op: Token,
+	):
+		super().__init__(start_pos, end_pos)
+		self.obj: Node = obj
+		self.member: Identifier = member
+		self.value: Node = value
+		self.operator: Token = op
 
 
 class StructField(Node):

@@ -61,16 +61,14 @@ class VM:
 			raise ValueError("Corrupt executable")
 
 		self.program = program[4:]
-		self.instructions = program[4:4 + self.text_size]
-		self.program_memory = program[4 + self.text_size:]
+		self.instructions = program[4 : 4 + self.text_size]
+		self.program_memory = program[4 + self.text_size :]
 		STACK_SIZE = 65536
 		self.stack = [0] * STACK_SIZE
 		self.call_stack: list = []
 		self.ip: int = 0
 		self.data_memory: list = [0] * 65536
-		self.free_list: list = [
-			(0x2000, 0xE000)
-		]
+		self.free_list: list = [(0x2000, 0xE000)]
 		self.allocations: dict[int, int] = {}
 
 		self.fp: int = 0
@@ -240,15 +238,13 @@ class VM:
 		self.heap_pointer = 0x2000
 		self.sp = 0
 
-		self.free_list = [
-			(0x2000, 0xE000)
-		]
+		self.free_list = [(0x2000, 0xE000)]
 		self.allocations = {}
 
 		while self.ip < len(self.instructions):
 			exec_res = self.execute(self.instructions[self.ip])
-			# print(self.stack[:self.sp], self.stack[self.sp:self.sp + 4])
-			# print(self.data_memory[8192:8192+16])
+			# print(self.stack[: self.sp], self.stack[self.sp : self.sp + 4])
+			# print(self.data_memory[8192 : 8192 + 16])
 			# print("SP:", self.sp)
 			# print("FP:", self.fp)
 			# print()
@@ -280,7 +276,7 @@ class VM:
 			except Exception:
 				pass
 
-		return res.success(self.stack)
+		return res.success(self.stack[: self.sp])
 
 	def push(self, value) -> None:
 		self.stack[self.sp] = value
@@ -291,7 +287,7 @@ class VM:
 		pos = Position(0, 0, 0, "<bin>", "")
 		if not self.stack:
 			return res.fail(VMError("Stack underflow", pos.copy(), pos.copy()))
-		
+
 		self.sp -= 1
 		return res.success(self.stack[self.sp])
 
@@ -300,7 +296,7 @@ class VM:
 		if len(self.stack) < n:
 			return Result().fail(VMError("Stack underflow", pos.copy(), pos.copy()))
 		return Result().success(None)
-	
+
 	def malloc(self, words: int):
 		res = Result()
 		pos = Position(0, 0, 0, "<bin>", "")
@@ -413,35 +409,43 @@ class VM:
 					if res.error:
 						return res
 					self.data_memory[addr] = self.fp
-				case 14: # LOADSP
+				case 14:  # LOADSP
 					offset = ins_arg
-					if ins_arg > 0x7fff: offset -= 0x10000
+					if ins_arg > 0x7FFF:
+						offset -= 0x10000
 					self.push(self.stack[self.fp - offset])
-				case 15: # STORESP
+				case 15:  # STORESP
 					offset = ins_arg
-					if ins_arg > 0x7fff: offset -= 0x10000
+					if ins_arg > 0x7FFF:
+						offset -= 0x10000
 					value = res.register(self.pop())
-					if res.error: return res
+					if res.error:
+						return res
 					self.stack[self.fp - offset] = value
-				case 16: # LEAVE
+				case 16:  # LEAVE
 					self.sp = self.fp + 2
 
 		if ins_type == 2:  # Conversion
 			res.register(self.check_stack(1))
 			if res.error:
 				return res
+			value = self.stack[self.sp - 1]
+			if ins_mod != 1 and value > 0x7fffffff:
+				value -= 0x100000000
 			if ins_mod == 0 and ins_arg == 1:  # I2F
-				self.stack[-1] = float_to_u32(float(self.stack[-1]))
+				self.stack[self.sp - 1] = float_to_u32(float(value))
 			elif ins_mod == 0 and ins_arg == 2:  # I2B
-				self.stack[-1] = FALSE if self.stack[-1] == 0 else TRUE
+				self.stack[self.sp - 1] = (
+					FALSE if value == 0 else TRUE
+				)
 			elif ins_mod == 1 and ins_arg == 0:  # F2I
-				self.stack[-1] = int(u32_to_float(self.stack[-1]))
+				self.stack[self.sp - 1] = int(u32_to_float(value))
 			elif ins_mod == 1 and ins_arg == 2:  # F2B
-				self.stack[-1] = FALSE if u32_to_float(self.stack[-1]) == 0 else TRUE
+				self.stack[self.sp - 1] = FALSE if u32_to_float(value) == 0 else TRUE
 			elif ins_mod == 2 and ins_arg == 0:  # B2I
 				pass
 			elif ins_mod == 2 and ins_arg == 1:  # B2F
-				self.stack[-1] = float_to_u32(float(self.stack[-1]))
+				self.stack[self.sp - 1] = float_to_u32(float(value))
 
 		if ins_type == 3:  # Math
 			is_float_op = ins_mod % 2 == 1
@@ -571,110 +575,123 @@ class VM:
 			addr = ins_arg
 			if ins_mod % 3 != 0:
 				res.register(self.check_stack(1))
-				if res.error: return res
+				if res.error:
+					return res
 				value = res.register(self.pop())
 
 			match ins_mod:
-				case 0: # JUMP
+				case 0:  # JUMP
 					self.ip = addr - 1
-				case 1: # BRZ
+				case 1:  # BRZ
 					if value == 0:
 						self.ip = addr - 1
-				case 2: # BRNZ
+				case 2:  # BRNZ
 					if value != 0:
 						self.ip = addr - 1
-				case 3: # CALL
+				case 3:  # CALL
 					self.call_stack.append(self.ip)
 					self.ip = addr - 1
-				case 4: # CALZ
+				case 4:  # CALZ
 					if value == 0:
 						self.call_stack.append(self.ip)
 						self.ip = addr - 1
-				case 5: # CALN
+				case 5:  # CALN
 					if value != 0:
 						self.call_stack.append(self.ip)
 						self.ip = addr - 1
-				case 6: # RET
+				case 6:  # RET
 					self.ip = self.call_stack[-1]
 					self.call_stack.pop()
-				case 7: # RETZ
+				case 7:  # RETZ
 					if value == 0:
 						self.ip = self.call_stack[-1]
 						self.call_stack.pop()
-				case 8: # RETN
+				case 8:  # RETN
 					if value != 0:
 						self.ip = self.call_stack[-1]
 						self.call_stack.pop()
 
 		if ins_type == 5:  # System instructions
 			match ins_mod:
-				case 0: return res.success(False)
-				case 1: return res.success(False)
-				case 2: self.push(self.im)
+				case 0:
+					return res.success(False)
+				case 1:
+					return res.success(False)
+				case 2:
+					self.push(self.im)
 				case 3:
 					self.im = res.register(self.pop())
-					if res.error: return res
+					if res.error:
+						return res
 				# no interrupt handling yet
-				case 7: # SYS
+				case 7:  # SYS
 					match ins_arg:
 						case 1:  # OUTPUT_CHARS
 							addr = res.register(self.pop())
-							if res.error: return res
+							if res.error:
+								return res
 							self._output(self.read_mem_string(addr))
 						case 2:  # READ_CHARS
 							...
 						case 3:  # CHARS2INT
 							addr = res.register(self.pop())
-							if res.error: return res
+							if res.error:
+								return res
 							string = self.read_mem_string(addr)
 							self.push(int(string))
 						case 4:  # CHARS2FLOAT
 							addr = res.register(self.pop())
-							if res.error: return res
+							if res.error:
+								return res
 							string = self.read_mem_string(addr)
 							self.push(float_to_u32(float(string)))
 						case 5:  # INT2CHARS
 							value = res.register(self.pop())
 							addr = res.register(self.pop())
-							if res.error: return res
+							if res.error:
+								return res
 
 							self.write_mem_string(addr, str(value))
 						case 6:  # FLOAT2CHARS
 							value = res.register(self.pop())
 							value = u32_to_float(value)
 							addr = res.register(self.pop())
-							if res.error: return res
+							if res.error:
+								return res
 
 							self.write_mem_string(addr, f"{value:.6f}")
 						case 7:  # BOOL2CHARS
 							value = bool(res.register(self.pop()))
 							addr = res.register(self.pop())
-							if res.error: return res
+							if res.error:
+								return res
 
 							self.write_mem_string(addr, str(value).lower())
 						case 8:  # INT2HEX
 							value = res.register(self.pop())
 							addr = res.register(self.pop())
-							if res.error: return res
+							if res.error:
+								return res
 
 							self.write_mem_string(addr, f"0x{value:08x}")
 						case 9:  # PUT_CHAR
 							value = res.register(self.pop())
-							if res.error: return res
+							if res.error:
+								return res
 
 							self._output(chr(value))
-						case 10: # STR_CONCAT
+						case 10:  # STR_CONCAT
 							str2_addr = res.register(self.pop())
 							str1_addr = res.register(self.pop())
 							if res.error:
 								return res
-							
+
 							str1 = self.read_mem_string(self.data_memory[str1_addr])
 							str2 = self.read_mem_string(self.data_memory[str2_addr])
 
 							result_str = str1 + str2
 							str_len = len(result_str)
-							
+
 							required_chars_len = str_len + 1
 							capacity = math.ceil(required_chars_len)
 
@@ -689,9 +706,15 @@ class VM:
 								return res
 							chars_ptr = res.register(self.pop())
 
-							self.data_memory[metadata_ptr] = chars_ptr              # string.descriptor[0] = ptr_to_chars
-							self.data_memory[metadata_ptr + 1] = required_chars_len # string.descriptor[1] = len + 1
-							self.data_memory[metadata_ptr + 2] = capacity           # string.descriptor[2] = capacity
+							self.data_memory[metadata_ptr] = (
+								chars_ptr  # string.descriptor[0] = ptr_to_chars
+							)
+							self.data_memory[metadata_ptr + 1] = (
+								required_chars_len  # string.descriptor[1] = len + 1
+							)
+							self.data_memory[metadata_ptr + 2] = (
+								capacity  # string.descriptor[2] = capacity
+							)
 
 							self.write_mem_string(chars_ptr, result_str)
 
@@ -701,7 +724,7 @@ class VM:
 							str1_addr = res.register(self.pop())
 							if res.error:
 								return res
-							
+
 							str1 = self.read_mem_string(self.data_memory[str1_addr])
 							str2 = self.read_mem_string(self.data_memory[str2_addr])
 
@@ -722,10 +745,14 @@ class VM:
 
 							words = self.allocations.pop(ptr, None)
 							if words is None:
-								return res.fail(VMError("Invalid free", pos.copy(), pos.copy()))
+								return res.fail(
+									VMError("Invalid free", pos.copy(), pos.copy())
+								)
 
 							i = 0
-							while i < len(self.free_list) and self.free_list[i][0] < ptr:
+							while (
+								i < len(self.free_list) and self.free_list[i][0] < ptr
+							):
 								i += 1
 
 							self.free_list.insert(i, (ptr, words))
@@ -735,7 +762,10 @@ class VM:
 								curr_start, curr_size = self.free_list[i]
 
 								if prev_start + prev_size == curr_start:
-									self.free_list[i - 1] = (prev_start, prev_size + curr_size)
+									self.free_list[i - 1] = (
+										prev_start,
+										prev_size + curr_size,
+									)
 									self.free_list.pop(i)
 									i -= 1
 
@@ -744,12 +774,15 @@ class VM:
 								next_start, next_size = self.free_list[i + 1]
 
 								if curr_start + curr_size == next_start:
-									self.free_list[i] = (curr_start, curr_size + next_size)
+									self.free_list[i] = (
+										curr_start,
+										curr_size + next_size,
+									)
 									self.free_list.pop(i + 1)
 
 		if ins_type == 8:  # Other
 			match ins_mod:
-				case 0: # LOOKUP
+				case 0:  # LOOKUP
 					src = res.register(self.pop()) - self.text_size
 					dst = res.register(self.pop())
 
@@ -757,12 +790,12 @@ class VM:
 						return res
 
 					if src < 0 or src + ins_arg > len(self.program_memory):
-						return res.fail(VMError(
-							"Program memory out of bounds",
-							pos.copy(),
-							pos.copy()
-						))
-					
+						return res.fail(
+							VMError(
+								"Program memory out of bounds", pos.copy(), pos.copy()
+							)
+						)
+
 					if dst < 0 or dst + ins_arg > len(self.data_memory):
 						return res.fail(
 							VMError(
@@ -774,7 +807,7 @@ class VM:
 
 					for i in range(ins_arg):
 						self.data_memory[dst + i] = self.program_memory[src + i]
-				case 1:      # WRITE
+				case 1:  # WRITE
 					src = res.register(self.pop())
 					dst = res.register(self.pop())
 

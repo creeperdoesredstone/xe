@@ -183,15 +183,18 @@ def parse(tokens: list[Token]) -> Result:
 			)
 		advance()
 
-		if current_tok._type != TT.TYPE:
+		# allow either a builtin TYPE token (int, float, ...) or an IDENT
+		# referring to a user-defined struct/class name (e.g. Vec2)
+		if current_tok._type not in (TT.TYPE, TT.IDENT):
 			return res.fail(
 				InvalidSyntaxError(
-					f"Expected a valid data type (e.g., int, float) after type assignment ':', but found '{current_tok.value or current_tok._type.name}'.",
+					f"Expected a valid data type (e.g., int, float) or a struct/class name after variable name '{iden_name}', but found '{current_tok.value or current_tok._type.name}'.",
 					current_tok.start_pos,
 					current_tok.end_pos,
 				)
 			)
 		type_name: str = current_tok.value
+		is_variable: bool = current_tok._type == TT.IDENT
 		end_pos: Position = current_tok.end_pos.copy()
 		advance()
 
@@ -215,9 +218,9 @@ def parse(tokens: list[Token]) -> Result:
 			)
 		return res.success(
 			VariableDeclaration(
-				start_pos, end_pos, iden_name, type_name, pointer_layers
+				start_pos, end_pos, iden_name, type_name, pointer_layers, is_variable
 			)
-		)
+    )
 
 	def array_declaration() -> Result:
 		start_pos: Position = current_tok.start_pos.copy()
@@ -1250,8 +1253,7 @@ def parse(tokens: list[Token]) -> Result:
 				)
 			)
 
-		name = current_tok.value
-		advance()
+		name = res.register(literal())
 
 		if current_tok._type != TT.LBR:
 			return res.fail(
@@ -1267,6 +1269,8 @@ def parse(tokens: list[Token]) -> Result:
 		fields = []
 
 		while current_tok._type != TT.RBR:
+			while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
+				advance()
 
 			if current_tok._type != TT.IDENT:
 				return res.fail(
@@ -1630,6 +1634,13 @@ def parse(tokens: list[Token]) -> Result:
 				return res.success(
 					ArrayAssign(
 						lhs.start_pos, rhs.end_pos, lhs.array, lhs.index, rhs, op_tok
+					)
+				)
+			
+			elif isinstance(lhs, MemberAccess):
+				return res.success(
+					MemberAssign(
+						lhs.start_pos, rhs.end_pos, lhs.parent, lhs.member, rhs, op_tok
 					)
 				)
 

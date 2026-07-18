@@ -33,7 +33,22 @@ nodes_to_lookup: list[Node] = []
 # - implement structs
 # - implement classes (no OOP needed, basically structs with methods)
 # - implement graphics via syscalls (dw about implementation we'll do that in r1)
-# - fix & test subroutines (functions & procedures)
+
+
+def resolve_struct_base_address(node: Node) -> tuple[int, bool]:
+	if isinstance(node, Identifier):
+		return (node.address, node.is_local)
+
+	if isinstance(node, MemberAccess):
+		base_address, is_local = resolve_struct_base_address(node.parent)
+		return (base_address + node.field_address, is_local)
+
+	raise AssemblyError(
+		f"Cannot resolve a compile-time address for struct member access on '{type(node).__name__}'. "
+		"Only plain variables and nested struct fields are supported currently.",
+		node.start_pos,
+		node.end_pos,
+	)
 
 
 def init_labels():
@@ -437,6 +452,8 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 	res = Result()
 
 	instructions = []
+	store_opcode = "STORESP" if node.is_local else "STORE"
+	load_opcode = "LOADSP" if node.is_local else "LOAD"
 
 	if node.operator._type == TT.ASGN:
 		if node.type.is_array and isinstance(node.value, ArrayInitializer):
@@ -460,7 +477,7 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 			(
 				node.start_pos,
 				node.end_pos,
-				"STORE",
+				store_opcode,
 				node.address,
 			)
 		)
@@ -481,7 +498,7 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 			(
 				node.start_pos,
 				node.end_pos,
-				"LOAD",
+				load_opcode,
 				node.address,
 			)
 		)
@@ -503,7 +520,7 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 			(
 				node.end_pos,
 				node.end_pos,
-				"STORE",
+				store_opcode,
 				node.address,
 			)
 		)
@@ -537,7 +554,7 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 		(
 			node.start_pos,
 			node.end_pos,
-			"LOAD",
+			load_opcode,
 			node.address,
 		)
 	)
@@ -567,7 +584,7 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 		(
 			node.start_pos,
 			node.end_pos,
-			"STORE",
+			store_opcode,
 			node.address,
 		)
 	)
@@ -1432,5 +1449,161 @@ def emit_FunctionCall(node: FunctionCall) -> Result:
 				"CALLIND",
 			)
 		)
+
+	return res.success(instructions)
+
+
+def emit_ProcedureCall(node: ProcedureCall) -> Result:
+	res = Result()
+	instructions = []
+
+	# Evaluate arguments left-to-right.
+	for arg in node.arguments:
+		arg_instr = res.register(emit(arg))
+		if res.error:
+			return res
+		instructions.extend(arg_instr)
+
+	# Save caller's frame pointer.
+	instructions.append((node.start_pos, node.end_pos, "PUSHFP"))
+
+	instructions.append(
+		(
+			node.start_pos,
+			node.end_pos,
+			"CALL",
+			node.name,
+		)
+	)
+
+	return res.success(instructions)
+
+
+def emit_StructDefinition(node: StructDefinition) -> Result:
+	return Result().success([])
+
+
+def emit_MemberAccess(node: MemberAccess) -> Result:
+	res = Result()
+
+	try:
+		base_address, is_local = resolve_struct_base_address(node.parent)
+	except AssemblyError as err:
+		return res.fail(err)
+
+	address = base_address + node.field_address
+	opcode = "LOADSP" if is_local else "LOAD"
+
+	return res.success(
+		[
+			(
+				node.start_pos,
+				node.end_pos,
+				opcode,
+				address,
+			)
+		]
+	)
+
+
+def emit_MemberAssign(node: MemberAssign) -> Result:
+	res = Result()
+	instructions = []
+
+	try:
+		base_address, is_local = resolve_struct_base_address(node.obj)
+	except AssemblyError as err:
+		return res.fail(err)
+
+	address = base_address + node.field_address
+	store_opcode = "STORESP" if is_local else "STORE"
+	load_opcode = "LOADSP" if is_local else "LOAD"
+
+	if node.operator._type == TT.ASGN:
+		value_ins = res.register(emit(node.value))
+		if res.error:
+			return res
+		instructions.extend(value_ins)
+
+		if (
+			node.type.base == "float"
+			and node.type.pointer_layers == 0
+			and node.value.type.base == "int"
+			and node.value.type.pointer_layers == 0
+		):
+			instructions.append((node.start_pos, node.end_pos, "I2F"))
+
+		instructions.append(
+			(
+				node.start_pos,
+				node.end_pos,
+				store_opcode,
+				address,
+			)
+		)
+
+		return res.success(instructions)
+
+	compound_map = {
+		TT.ADD_ASGN: "ADD",
+		TT.SUB_ASGN: "SUB",
+		TT.MUL_ASGN: "MUL",
+		TT.DIV_ASGN: "DIV",
+		TT.MOD_ASGN: "MOD",
+		TT.POW_ASGN: "POW",
+	}
+
+	opcode = compound_map.get(node.operator._type)
+	if opcode is None:
+		return res.fail(
+			AssemblyError(
+				f"Unsupported assignment operator '{node.operator._type.name}'",
+				node.start_pos,
+				node.end_pos,
+			)
+		)
+
+	opcode += (
+		"F" if (node.type.base == "float" and node.type.pointer_layers == 0) else "I"
+	)
+
+	instructions.append(
+		(
+			node.start_pos,
+			node.end_pos,
+			load_opcode,
+			address,
+		)
+	)
+
+	value_ins = res.register(emit(node.value))
+	if res.error:
+		return res
+	instructions.extend(value_ins)
+
+	if (
+		node.type.base == "float"
+		and node.type.pointer_layers == 0
+		and node.value.type.base == "int"
+		and node.value.type.pointer_layers == 0
+	):
+		instructions.append((node.start_pos, node.end_pos, "I2F"))
+
+	instructions.append(
+		(
+			node.start_pos,
+			node.end_pos,
+			opcode,
+		)
+	)
+
+	instructions.append(
+		(
+			node.start_pos,
+			node.end_pos,
+			store_opcode,
+			address,
+		)
+	)
 
 	return res.success(instructions)

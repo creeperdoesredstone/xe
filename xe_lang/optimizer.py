@@ -41,6 +41,13 @@ class Optimizer:
 			return self.fold_unary(node)
 
 		return node
+	
+	def visit_Identifier(self, node: Identifier):
+		if node.const_value is not None:
+			node.const_value.start_pos = node.start_pos
+			node.const_value.end_pos = node.end_pos
+			return node.const_value
+		return node
 
 	def fold_unary(self, node: UnaryOperation):
 		op = node.op._type
