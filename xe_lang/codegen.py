@@ -11,11 +11,6 @@ Instruction = tuple
 TRUE = 0xFFFFFFFF
 FALSE = 0
 
-SAVED_FP_OFFSET = 0
-RETURN_SLOT_OFFSET = 1
-FIRST_ARG_OFFSET = 2
-FIRST_LOCAL_OFFSET = -1
-
 for_labels = 0
 while_labels = 0
 repeat_labels = 0
@@ -33,6 +28,33 @@ nodes_to_lookup: list[Node] = []
 # - implement structs
 # - implement classes (no OOP needed, basically structs with methods)
 # - implement graphics via syscalls (dw about implementation we'll do that in r1)
+
+
+def emit_argument(arg: Node) -> Result:
+    res = Result()
+    struct_sym = getattr(arg, "struct_symbol", None)
+
+    if struct_sym is None:
+        return emit(arg)
+
+    if not isinstance(arg, (Identifier, MemberAccess)):
+        return res.fail(
+            AssemblyError(
+                "Only plain variables or struct fields can be passed by value as struct arguments.",
+                arg.start_pos,
+                arg.end_pos,
+            )
+        )
+
+    base_address, is_local = resolve_struct_base_address(arg)
+    load_opcode = "LOADSP" if is_local else "LOAD"
+
+    instructions = [
+        (arg.start_pos, arg.end_pos, load_opcode, base_address + slot)
+        for slot in range(struct_sym.size)
+    ]
+
+    return res.success(instructions)
 
 
 def resolve_struct_base_address(node: Node) -> tuple[int, bool]:
@@ -460,6 +482,32 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 			value_ins = res.register(emit_ArrayInitializer(node.value, node.address))
 			instructions.extend(value_ins)
 			return res.success(instructions)
+		
+		struct_sym = getattr(node, "struct_symbol", None)
+
+		if struct_sym is not None:
+			if isinstance(node.value, (Identifier, MemberAccess)):
+				# copying an existing struct value by name/field
+				src_base, src_is_local = resolve_struct_base_address(node.value)
+				src_load_opcode = "LOADSP" if src_is_local else "LOAD"
+				for slot in range(struct_sym.size):
+					instructions.append(
+						(node.start_pos, node.end_pos, src_load_opcode, src_base + slot)
+					)
+			else:
+				# FunctionCall producing a struct return
+				value_ins = res.register(emit(node.value))
+				if res.error:
+					return res
+				instructions.extend(value_ins)
+
+			for slot in reversed(range(struct_sym.size)):
+				instructions.append(
+					(node.start_pos, node.end_pos, store_opcode, node.address + slot)
+				)
+
+			return res.success(instructions)
+		
 		value_ins = res.register(emit(node.value))
 		if res.error:
 			return res
@@ -965,33 +1013,25 @@ def emit_FunctionDefinition(node: FunctionDefinition) -> Result:
 	)
 
 	locals_count = getattr(node, "locals_count", 0)
+	return_width = getattr(node, "return_width", 0 if is_proc else 1)
 
 	params = getattr(node, "parameters", None)
 	if params is None:
 		params = getattr(node, "args", [])
-	params_count = len(params)
+	params_count = getattr(node, "param_count", len(params))
 
-	# ------------------------------------------------------------
-	# Prologue
-	# ------------------------------------------------------------
-
+	# prologue
 	instructions.append((node.start_pos, node.start_pos, f":{node.name}"))
-
-	# Caller already pushed FP.
 	instructions.append((node.start_pos, node.start_pos, "SETFP"))
 
-	# Reserve return slot.
-	if not is_proc:
-		instructions.append((node.start_pos, node.start_pos, "PUSH", 0))
+	if return_width > params_count:
+		for _ in range(locals_count):
+			instructions.append((node.start_pos, node.start_pos, "PUSH", 0))
 
-	# Allocate locals.
 	for _ in range(locals_count):
 		instructions.append((node.start_pos, node.start_pos, "PUSH", 0))
 
-	# ------------------------------------------------------------
-	# Body
-	# ------------------------------------------------------------
-
+	# body
 	body = res.register(emit(node.body))
 	if res.error:
 		func_name = func_stack.pop() if func_stack else None
@@ -999,29 +1039,21 @@ def emit_FunctionDefinition(node: FunctionDefinition) -> Result:
 
 	instructions.extend(body)
 
-	# ------------------------------------------------------------
-	# Epilogue
-	# ------------------------------------------------------------
-
+	# epilogue
 	instructions.append((node.end_pos, node.end_pos, f":cleanup({node.name})"))
 
 	if not is_proc:
-		# save return value into the reserved return slot
-		instructions.append(
-			(
-				node.end_pos,
-				node.end_pos,
-				"STORESP",
-				params_count,
+		for slot in range(return_width):
+			instructions.append(
+				(node.end_pos, node.end_pos, "STORESP", params_count - slot)
 			)
-		)
 
-	# remove locals while preserving the return slot
 	instructions.append(
 		(
 			node.end_pos,
 			node.end_pos,
-			"LEAVE",
+			"POP",
+			locals_count,
 		)
 	)
 
@@ -1041,7 +1073,7 @@ def emit_FunctionDefinition(node: FunctionDefinition) -> Result:
 				node.end_pos,
 				node.end_pos,
 				"POP",
-				params_count + 1,
+				params_count - return_width,
 			)
 		)
 
@@ -1068,12 +1100,39 @@ def emit_ReturnStatement(node: ReturnStatement) -> Result:
 	instructions = []
 
 	if node.value is not None:
-		value_instructions = res.register(emit(node.value))
-		if res.error:
-			return res
-		instructions.extend(value_instructions)
+		struct_sym = getattr(node.value, "struct_symbol", None)
 
-	instructions.append((node.start_pos, node.end_pos, "JUMP", f"cleanup({func_name})"))
+		if struct_sym is not None:
+			if not isinstance(node.value, (Identifier, MemberAccess)):
+				return res.fail(
+					AssemblyError(
+						"Only a plain variable or struct field can be returned by value.",
+						node.value.start_pos,
+						node.value.end_pos,
+					)
+				)
+
+			base_address, is_local = resolve_struct_base_address(node.value)
+			load_opcode = "LOADSP"
+
+			for slot in range(struct_sym.size):
+				instructions.append(
+					(
+						node.start_pos,
+						node.end_pos,
+						load_opcode,
+						base_address - slot,
+					)
+				)
+		else:
+			value_instructions = res.register(emit(node.value))
+			if res.error:
+				return res
+			instructions.extend(value_instructions)
+
+	instructions.append(
+		(node.start_pos, node.end_pos, "JUMP", f"cleanup({func_name})")
+	)
 
 	return res.success(instructions)
 
@@ -1416,9 +1475,13 @@ def emit_FunctionCall(node: FunctionCall) -> Result:
 	res = Result()
 	instructions = []
 
+	if node.caller.return_width > node.caller.param_width:
+		for _ in range(node.return_width - node.param_width):
+			instructions.append((node.start_pos, node.start_pos, "PUSH", 0))
+
 	# Evaluate arguments left-to-right.
 	for arg in node.arguments:
-		arg_instr = res.register(emit(arg))
+		arg_instr = res.register(emit_argument(arg))
 		if res.error:
 			return res
 		instructions.extend(arg_instr)
@@ -1436,7 +1499,7 @@ def emit_FunctionCall(node: FunctionCall) -> Result:
 			)
 		)
 	else:
-		caller_instr = res.register(emit(node.caller))
+		caller_instr = res.register(emit_argument(node.caller))
 		if res.error:
 			return res
 

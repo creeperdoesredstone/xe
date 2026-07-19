@@ -341,6 +341,8 @@ class FunctionDefinition(Node):
 		self.pointer_layers: int = pointer_layers
 		self.body: Program = body
 
+		self.return_width: int = 0
+
 
 class ProcedureDefinition(Node):
 	def __init__(
@@ -355,6 +357,8 @@ class ProcedureDefinition(Node):
 		self.name: str = name
 		self.parameters: list[Parameter] = parameters
 		self.body: Program = body
+
+		self.return_width: int = 0
 
 
 class FunctionCall(Node):

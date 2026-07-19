@@ -59,7 +59,14 @@ def parse(tokens: list[Token]) -> Result:
 	def program(terminate: TT | None = None) -> Result:
 		res = Result()
 		statements: list[Node] = []
-		sub_defs: list[Node] = []
+		definitions: list[Node] = []
+
+		DEFINITION_TYPES = (
+			FunctionDefinition,
+			ProcedureDefinition,
+			StructDefinition,
+			ClassDefinition
+		)
 
 		while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
 			advance()
@@ -87,8 +94,8 @@ def parse(tokens: list[Token]) -> Result:
 					)
 				)
 
-			if isinstance(stmt, (FunctionDefinition, ProcedureDefinition)):
-				sub_defs.append(stmt)
+			if isinstance(stmt, DEFINITION_TYPES):
+				definitions.append(stmt)
 			else:
 				statements.append(stmt)
 
@@ -107,7 +114,7 @@ def parse(tokens: list[Token]) -> Result:
 			while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
 				advance()
 
-		if not statements and not sub_defs:
+		if not statements and not definitions:
 			return res.success(Program(current_tok.start_pos, current_tok.end_pos, [], []))
 
 		return res.success(
@@ -115,7 +122,7 @@ def parse(tokens: list[Token]) -> Result:
 				statements[0].start_pos,
 				statements[-1].end_pos,
 				statements,
-				sub_defs
+				definitions
 			)
 		)
 
@@ -940,9 +947,7 @@ def parse(tokens: list[Token]) -> Result:
 		params = []
 
 		if current_tok._type != TT.RPR:
-
 			while True:
-
 				# parameter name
 				if current_tok._type != TT.IDENT:
 					return res.fail(
@@ -969,7 +974,7 @@ def parse(tokens: list[Token]) -> Result:
 				advance()
 
 				# type
-				if current_tok._type != TT.TYPE:
+				if current_tok._type not in (TT.TYPE, TT.IDENT):
 					return res.fail(
 						InvalidSyntaxError(
 							f"Expected type for parameter '{param_name}'.",
@@ -1081,9 +1086,7 @@ def parse(tokens: list[Token]) -> Result:
 		params = []
 
 		if current_tok._type != TT.RPR:
-
 			while True:
-
 				# parameter name
 				if current_tok._type != TT.IDENT:
 					return res.fail(
@@ -1110,7 +1113,7 @@ def parse(tokens: list[Token]) -> Result:
 				advance()
 
 				# type
-				if current_tok._type != TT.TYPE:
+				if current_tok._type not in (TT.TYPE, TT.IDENT):
 					return res.fail(
 						InvalidSyntaxError(
 							f"Expected type for parameter '{param_name}'.",
@@ -1156,7 +1159,7 @@ def parse(tokens: list[Token]) -> Result:
 		advance()
 
 		# return type
-		if current_tok._type != TT.TYPE:
+		if current_tok._type not in (TT.TYPE, TT.IDENT):
 			return res.fail(
 				InvalidSyntaxError(
 					"Expected return type after parameter list.",

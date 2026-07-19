@@ -79,6 +79,7 @@ class BaseSymbol:
 	return_type: Union[Type, None] = None
 	is_callable: bool = False
 	is_library: bool = False
+	is_local: bool = False
 	const_value: Node|None = None
 
 
@@ -100,6 +101,7 @@ class SubroutineSymbol(BaseSymbol):
 	is_proc: bool = False
 	is_callable: bool = True
 	next_local_offset: int = -1
+	return_width: int = 0
 
 	def __post_init__(self):
 		self.type = Type("procedure" if self.is_proc else "function")

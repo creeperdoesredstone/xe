@@ -15,6 +15,18 @@ class SemanticAnalyzer:
 
 		self.current_function: SubroutineSymbol | None = None
 
+	def _resolve_param_or_return_type(
+		self, type_name: str, pointer_layers: int
+	) -> Type | None:
+		if type_name in DATA_TYPES:
+			return Type(type_name, pointer_layers)
+
+		sym = self.scope.lookup(type_name)
+		if isinstance(sym, (StructSymbol, ClassSymbol)):
+			return Type(type_name, pointer_layers)
+
+		return None
+
 	def push_scope(self):
 		self.scope = Scope(self.scope)
 
@@ -115,12 +127,12 @@ class SemanticAnalyzer:
 		node.type.parameters = symbol.parameters
 		node.arr_size = symbol.arr_length
 		node.is_library = symbol.is_library
+		node.is_local = symbol.is_local
+		node.struct_symbol = getattr(symbol, "struct_symbol", None)
 
-		if (
-			self.current_function is not None
-			and node.value in self.current_function.param_names
-		):
-			node.is_local = True
+		if isinstance(symbol, SubroutineSymbol):
+			node.return_width = symbol.return_width
+			node.param_width = symbol.param_width
 
 		return Result().success(symbol.type)
 
@@ -297,10 +309,10 @@ class SemanticAnalyzer:
 			is_local = True
 
 		var_symbol = VariableSymbol(
-			node.name,
-			symbol_type,
-			address,
-			is_local,
+			name=node.name,
+			type=symbol_type,
+			address=address,
+			is_local=is_local,
 		)
 
 		if isinstance(struct_or_class_sym, StructSymbol):
@@ -326,6 +338,8 @@ class SemanticAnalyzer:
 		node.address = symbol.address
 		node.is_local = symbol.is_local
 		node.type = symbol.type
+		node.is_local = symbol.is_local
+		node.struct_symbol = getattr(symbol, "struct_symbol", None)
 
 		value_type = res.register(self.analyze(node.value))
 
@@ -670,7 +684,10 @@ class SemanticAnalyzer:
 
 		return_type = None
 		if not is_proc:
-			if node.return_type not in DATA_TYPES:
+			return_type = self._resolve_param_or_return_type(
+				node.return_type, node.pointer_layers
+			)
+			if return_type is None:
 				return res.fail(
 					SemanticError(
 						f"Unknown return type '{node.return_type}'.",
@@ -678,20 +695,54 @@ class SemanticAnalyzer:
 						node.end_pos,
 					)
 				)
-			return_type = Type(node.return_type, node.pointer_layers)
+			node.return_width = (
+				self.sizeof(return_type) if return_type.pointer_layers == 0 else 1
+			)
+		else:
+			node.return_width = 0
 
-		param_list: list[Type] = [
-			Type(p.type, p.pointer_layers) for p in node.parameters
-		]
-		param_names: list[str] = [p.name for p in node.parameters]
+		param_types: list[Type] = []
+		param_names: list[str] = []
+
+		for p in node.parameters:
+			if p.name in param_names:
+				return res.fail(
+					SemanticError(
+						f"Duplicate parameter '{p.name}'",
+						p.start_pos,
+						p.end_pos
+					)
+				)
+			
+			param_type = self._resolve_param_or_return_type(p.type, p.pointer_layers)
+			if param_type is None:
+				return res.fail(
+					SemanticError(
+						f"Unknown type '{p.type}' for parameter '{p.name}'.",
+						p.start_pos,
+						p.end_pos,
+					)
+				)
+			
+			param_names.append(p.name)
+			param_types.append(param_type)
+
 		symbol = SubroutineSymbol(
 			name=node.name,
 			type=Type("procedure" if is_proc else "function"),
 			return_type=return_type,
-			parameters=param_list,
+			parameters=param_types,
 			param_names=param_names,
 			is_proc=is_proc,
+			return_width=node.return_width
 		)
+
+		param_widths: list[int] = []
+		for param, param_type in zip(node.parameters, symbol.parameters):
+			width = self.sizeof(param_type) if param_type.pointer_layers == 0 else 1
+			param_widths.append(width)
+
+		symbol.param_width = sum(param_widths)
 
 		self.scope.symbols[node.name] = symbol
 
@@ -707,8 +758,8 @@ class SemanticAnalyzer:
 			return res
 
 		self.push_scope()
-
 		prev_function = self.current_function
+		declared_symbol: SubroutineSymbol = self.scope.parent.symbols[node.name]
 
 		self.current_function = SubroutineSymbol(
 			name=node.name,
@@ -717,6 +768,7 @@ class SemanticAnalyzer:
 			parameters=[Type(p.type, p.pointer_layers) for p in node.parameters],
 			param_names=[p.name for p in node.parameters],
 			is_proc=is_proc,
+			return_width=node.return_width
 		)
 
 		def bail(error: SemanticError) -> Result:
@@ -724,7 +776,17 @@ class SemanticAnalyzer:
 			self.current_function = prev_function
 			return res.fail(error)
 
-		param_count = len(node.parameters)
+		param_widths: list[int] = []
+		for param, param_type in zip(node.parameters, declared_symbol.parameters):
+			width = self.sizeof(param_type) if param_type.pointer_layers == 0 else 1
+			param_widths.append(width)
+
+		running_offset = 0
+		offsets = [0] * len(node.parameters)
+		for i in reversed(range(len(node.parameters))):
+			running_offset += param_widths[i]
+			offsets[i] = running_offset
+
 		for i, param in enumerate(node.parameters):
 			if param.name in self.scope.symbols:
 				return bail(
@@ -735,7 +797,7 @@ class SemanticAnalyzer:
 					)
 				)
 
-			if param.type not in DATA_TYPES:
+			if self._resolve_param_or_return_type(param.type, param.pointer_layers) is None:
 				return bail(
 					SemanticError(
 						f"Unknown type '{param.type}'.",
@@ -744,15 +806,18 @@ class SemanticAnalyzer:
 					)
 				)
 
-			# First parameter gets the highest (furthest-from-FP) offset.
-			offset = param_count - i
-
-			self.scope.symbols[param.name] = VariableSymbol(
+			var_symbol: VariableSymbol = VariableSymbol(
 				name=param.name,
 				type=Type(param.type, param.pointer_layers),
-				address=offset,
+				address=offsets[i],
 				is_local=True,
 			)
+
+			struct_sym = self.scope.lookup(param.type)
+			if isinstance(struct_sym, StructSymbol):
+				var_symbol.struct_symbol = struct_sym
+
+			self.scope.symbols[param.name] = var_symbol
 
 		res.register(self.analyze(node.body))
 		if res.error:
@@ -762,7 +827,7 @@ class SemanticAnalyzer:
 
 		# next_local_offset started at -1 and was decremented once per local
 		node.locals_count = -1 - self.current_function.next_local_offset
-		node.param_count = param_count
+		node.param_count = sum(param_widths)
 
 		self.pop_scope()
 		self.current_function = prev_function
@@ -1063,7 +1128,11 @@ class SemanticAnalyzer:
 
 		node.address = address
 		self.scope.symbols[node.name] = VariableSymbol(
-			node.name, symbol_type, address, is_local, node.size.value
+			name=node.name,
+			type=symbol_type,
+			address=address,
+			is_local=is_local,
+			arr_length=node.size.value
 		)
 
 		return res.success(None)
@@ -1294,9 +1363,7 @@ class SemanticAnalyzer:
 			offset += self.sizeof(field_type)
 
 		struct.size = offset
-
 		node.symbol = struct
-
 		return res.success(None)
 
 	def visit_MemberAccess(self, node: MemberAccess) -> Result:
