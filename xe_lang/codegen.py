@@ -1043,7 +1043,7 @@ def emit_FunctionDefinition(node: FunctionDefinition) -> Result:
 	instructions.append((node.end_pos, node.end_pos, f":cleanup({node.name})"))
 
 	if not is_proc:
-		for slot in range(return_width):
+		for slot in reversed(range(return_width)):
 			instructions.append(
 				(node.end_pos, node.end_pos, "STORESP", params_count - slot)
 			)
@@ -1073,7 +1073,7 @@ def emit_FunctionDefinition(node: FunctionDefinition) -> Result:
 				node.end_pos,
 				node.end_pos,
 				"POP",
-				params_count - return_width,
+				params_count - return_width + 1,
 			)
 		)
 
@@ -1522,7 +1522,7 @@ def emit_ProcedureCall(node: ProcedureCall) -> Result:
 
 	# Evaluate arguments left-to-right.
 	for arg in node.arguments:
-		arg_instr = res.register(emit(arg))
+		arg_instr = res.register(emit_argument(arg))
 		if res.error:
 			return res
 		instructions.extend(arg_instr)
@@ -1554,7 +1554,7 @@ def emit_MemberAccess(node: MemberAccess) -> Result:
 	except AssemblyError as err:
 		return res.fail(err)
 
-	address = base_address + node.field_address
+	address = base_address - node.field_address if is_local else base_address + node.field_address
 	opcode = "LOADSP" if is_local else "LOAD"
 
 	return res.success(
@@ -1578,7 +1578,7 @@ def emit_MemberAssign(node: MemberAssign) -> Result:
 	except AssemblyError as err:
 		return res.fail(err)
 
-	address = base_address + node.field_address
+	address = base_address - node.field_address if is_local else base_address + node.field_address
 	store_opcode = "STORESP" if is_local else "STORE"
 	load_opcode = "LOADSP" if is_local else "LOAD"
 
