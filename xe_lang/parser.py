@@ -155,8 +155,6 @@ def parse(tokens: list[Token]) -> Result:
 					return struct_definition()
 				case "class":
 					return class_definition()
-				case "new":
-					return new_expr()
 				case "return":
 					return return_statement()
 				case "call":
@@ -1451,7 +1449,7 @@ def parse(tokens: list[Token]) -> Result:
 
 		advance()  # consume 'new'
 
-		if current_tok._type != TT.TYPE:
+		if current_tok._type not in (TT.TYPE, TT.IDENT):
 			return res.fail(
 				InvalidSyntaxError(
 					f"Expected a type name or class identifier after 'new', found '{current_tok.value or current_tok._type.name}'.",
@@ -1597,6 +1595,9 @@ def parse(tokens: list[Token]) -> Result:
 	# other parse subroutines
 	def expr() -> Result:
 		res = Result()
+
+		if current_tok == Token(TT.KEYWORD, "new", None, None):
+			return new_expr()
 
 		lhs = res.register(logical_or())
 		if res.error:

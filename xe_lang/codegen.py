@@ -512,29 +512,39 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 			return res.success(instructions)
 		
 		struct_sym = getattr(node, "struct_symbol", None)
+		is_by_value_struct = struct_sym is not None and node.type.pointer_layers == 0
 
-		if struct_sym is not None:
-			if isinstance(node.value, (Identifier, MemberAccess)):
-				# copying an existing struct value by name/field
-				src_base, src_is_local = resolve_struct_base_address(node.value)
-				src_load_opcode = "LOADSP" if src_is_local else "LOAD"
-				for slot in range(struct_sym.size):
+		if is_by_value_struct:
+			if struct_sym is not None:
+				if isinstance(node.value, (Identifier, MemberAccess)):
+					# copying an existing struct value by name/field
+					src_base, src_is_local = resolve_struct_base_address(node.value)
+					src_load_opcode = "LOADSP" if src_is_local else "LOAD"
+					for slot in range(struct_sym.size):
+						instructions.append(
+							(node.start_pos, node.end_pos, src_load_opcode, src_base + slot)
+						)
+				else:
+					# FunctionCall producing a struct return
+					if not isinstance(node.value, FunctionCall):
+						return res.fail(
+							AssemblyError(
+								f"Cannot assign a value of this form to a by-value struct/class variable.",
+								node.value.start_pos,
+								node.value.end_pos,
+							)
+						)
+					value_ins = res.register(emit(node.value))
+					if res.error:
+						return res
+					instructions.extend(value_ins)
+
+				for slot in reversed(range(struct_sym.size)):
 					instructions.append(
-						(node.start_pos, node.end_pos, src_load_opcode, src_base + slot)
+						(node.start_pos, node.end_pos, store_opcode, node.address + slot)
 					)
-			else:
-				# FunctionCall producing a struct return
-				value_ins = res.register(emit(node.value))
-				if res.error:
-					return res
-				instructions.extend(value_ins)
 
-			for slot in reversed(range(struct_sym.size)):
-				instructions.append(
-					(node.start_pos, node.end_pos, store_opcode, node.address + slot)
-				)
-
-			return res.success(instructions)
+				return res.success(instructions)
 		
 		value_ins = res.register(emit(node.value))
 		if res.error:
@@ -1819,5 +1829,61 @@ def emit_MethodCall(node: MethodCall) -> Result:
 
 	instructions.append((node.start_pos, node.end_pos, "PUSHFP"))
 	instructions.append((node.start_pos, node.end_pos, "CALL", node.mangled_name))
+
+	return res.success(instructions)
+
+
+def emit_NewArrayExpression(node: NewArrayExpression) -> Result:
+	res = Result()
+	instructions = []
+
+	size_instructions = res.register(emit(node.size_expr))
+	if res.error:
+		return res
+	instructions.extend(size_instructions)
+
+	element_width = getattr(node, "element_width", 1)
+
+	if element_width != 1:
+		instructions.append((node.start_pos, node.end_pos, "PUSH", element_width))
+		instructions.append((node.start_pos, node.end_pos, "MULI"))
+
+	instructions.append((node.start_pos, node.end_pos, "SYS", 21))  # malloc
+
+	return res.success(instructions)
+
+
+def emit_NewObjectExpression(node: NewObjectExpression) -> Result:
+	res = Result()
+	instructions = []
+
+	size = node.struct_symbol.size
+
+	instructions.append((node.start_pos, node.end_pos, "PUSH", size))
+	instructions.append((node.start_pos, node.end_pos, "SYS", 21))  # malloc
+
+	for i, arg in enumerate(node.args):
+		field = node.field_list[i]
+
+		instructions.append((node.start_pos, node.end_pos, "DUP", 0))
+
+		if field.address:
+			instructions.append((node.start_pos, node.end_pos, "PUSH", field.address))
+			instructions.append((node.start_pos, node.end_pos, "ADDI"))
+
+		arg_instructions = res.register(emit(arg))
+		if res.error:
+			return res
+		instructions.extend(arg_instructions)
+
+		if (
+			field.type.base == "float"
+			and field.type.pointer_layers == 0
+			and arg.type.base == "int"
+			and arg.type.pointer_layers == 0
+		):
+			instructions.append((node.start_pos, node.end_pos, "I2F"))
+
+		instructions.append((node.start_pos, node.end_pos, "STREIND"))
 
 	return res.success(instructions)

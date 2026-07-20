@@ -1896,11 +1896,8 @@ class SemanticAnalyzer:
 	def visit_NewArrayExpression(self, node: NewArrayExpression) -> Result:
 		res = Result()
 
-		if (
-			node.type_name not in DATA_TYPES
-			and (not hasattr(self, "structs") or node.type_name not in self.structs)
-			and (not hasattr(self, "classes") or node.type_name not in self.classes)
-		):
+		sym = self.scope.lookup(node.type_name)
+		if node.type_name not in DATA_TYPES and not isinstance(sym, (StructSymbol, ClassSymbol)):
 			return res.fail(
 				SemanticError(
 					f"Unknown base allocation type '{node.type_name}'.",
@@ -1924,25 +1921,61 @@ class SemanticAnalyzer:
 
 		allocated_type = Type(node.type_name, node.pointer_layers + 1)
 		node.type = allocated_type
+
+		node.struct_symbol = sym if isinstance(sym, (StructSymbol, ClassSymbol)) else None
+		node.element_width = self.sizeof(Type(node.type_name)) if node.pointer_layers == 0 else 1
+
 		return res.success(allocated_type)
 
 	def visit_NewObjectExpression(self, node: NewObjectExpression) -> Result:
 		res = Result()
 
-		if not hasattr(self, "classes") or node.type_name not in self.classes:
+		struct_or_class_symbol = self.scope.lookup(node.type_name)
+		if not isinstance(struct_or_class_symbol, (StructSymbol, ClassSymbol)):
 			return res.fail(
 				SemanticError(
-					f"Unknown type template or class target '{node.type_name}'.",
+					f"Unknown struct or class target '{node.type_name}'.",
 					node.start_pos,
 					node.end_pos,
 				)
 			)
 
-		for arg in node.args:
-			res.register(self.analyze(arg))
+		field_list = list(struct_or_class_symbol.fields.values())
+
+		if len(node.args) > len(field_list):
+			return res.fail(
+				SemanticError(
+					f"Too many initializers for '{node.type_name}': expected at most {len(field_list)}, got {len(node.args)}.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		for i, arg in enumerate(node.args):
+			arg_type = res.register(self.analyze(arg))
 			if res.error:
 				return res
 
+			expected_type = field_list[i].type
+
+			if arg_type != expected_type:
+				is_implicit_float_cast = (
+					arg_type.pointer_layers == 0
+					and expected_type.pointer_layers == 0
+					and expected_type.base == "float"
+					and arg_type.base == "int"
+				)
+				if not is_implicit_float_cast:
+					return res.fail(
+						SemanticError(
+							f"Cannot initialize field '{field_list[i].name}' of type '{expected_type}' with '{arg_type}'.",
+							arg.start_pos,
+							arg.end_pos,
+						)
+					)
+
+		node.struct_symbol = struct_or_class_symbol
+		node.field_list = field_list
 		allocated_type = Type(node.type_name, 1)
 		node.type = allocated_type
 		return res.success(allocated_type)
