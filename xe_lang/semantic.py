@@ -27,6 +27,30 @@ class SemanticAnalyzer:
 
 		return None
 
+	def _check_member_access_operator(self, base_type: Type, node) -> SemanticError | None:
+		if node.is_arrow:
+			if base_type.pointer_layers == 0:
+				return SemanticError(
+					f"Cannot use '->' on non-pointer type '{base_type}'. Use '.' instead.",
+					node.start_pos,
+					node.end_pos,
+				)
+			if base_type.pointer_layers > 1:
+				return SemanticError(
+					f"Cannot use '->' on multi-level pointer type '{base_type}'. Dereference it first.",
+					node.start_pos,
+					node.end_pos,
+				)
+		else:
+			if base_type.pointer_layers > 0:
+				return SemanticError(
+					f"Cannot use '.' on pointer type '{base_type}'. Use '->' instead.",
+					node.start_pos,
+					node.end_pos,
+				)
+
+		return None
+
 	def push_scope(self):
 		self.scope = Scope(self.scope)
 
@@ -43,11 +67,8 @@ class SemanticAnalyzer:
 
 		sym = self.scope.lookup(_type.base)
 
-		if isinstance(sym, StructSymbol):
+		if isinstance(sym, (StructSymbol, ClassSymbol)):
 			return sym.size
-
-		if isinstance(sym, ClassSymbol):
-			return 1
 
 		raise Exception(f"Unknown type {_type}")
 
@@ -1606,15 +1627,10 @@ class SemanticAnalyzer:
 		parent_type: Type = res.register(self.analyze(node.parent))
 		if res.error:
 			return res
-
-		if parent_type.pointer_layers > 0:
-			return res.fail(
-				SemanticError(
-					f"Cannot access member of a pointer type '{parent_type}'. Dereference it first.",
-					node.start_pos,
-					node.end_pos,
-				)
-			)
+		
+		op_error = self._check_member_access_operator(parent_type, node)
+		if op_error:
+			return res.fail(op_error)
 
 		struct_or_class_symbol = self.scope.lookup(parent_type.base)
 
@@ -1671,14 +1687,9 @@ class SemanticAnalyzer:
 		if res.error:
 			return res
 
-		if parent_type.pointer_layers > 0:
-			return res.fail(
-				SemanticError(
-					f"Cannot access member of a pointer type '{parent_type}'. Dereference it first.",
-					node.start_pos,
-					node.end_pos,
-				)
-			)
+		op_error = self._check_member_access_operator(parent_type, node)
+		if op_error:
+			return res.fail(op_error)
 
 		struct_or_class_symbol = self.scope.lookup(parent_type.base)
 		member_name = node.member.value
@@ -1960,6 +1971,10 @@ class SemanticAnalyzer:
 		obj_type: Type = res.register(self.analyze(node.obj))
 		if res.error:
 			return res
+
+		op_error = self._check_member_access_operator(obj_type, node)
+		if op_error:
+			return res.fail(op_error)
 
 		# Method calls work on both by-value instances and pointers-to-instance.
 		base_type_name = obj_type.base
