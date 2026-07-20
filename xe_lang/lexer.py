@@ -151,8 +151,8 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 			make_operator_tok(TT.ADD, start_pos)
 			turn_to_asgn_tok()
 		elif current_char == "-":
-			make_operator_tok(TT.SUB, start_pos)
-			turn_to_asgn_tok()
+			make_compound_tok(TT.SUB, TT.ARROW, ">")
+			if tokens[-1]._type == TT.SUB: turn_to_asgn_tok()
 		elif current_char == "*":
 			make_compound_tok(TT.MUL, TT.POW, "*")
 			turn_to_asgn_tok()

@@ -1299,7 +1299,7 @@ def parse(tokens: list[Token]) -> Result:
 
 			advance()
 
-			if current_tok._type != TT.TYPE:
+			if current_tok._type not in (TT.TYPE, TT.IDENT):
 				return res.fail(InvalidSyntaxError(
 					f"Expected data type after ':', found {current_tok.value or current_tok._type} instead.",
 					current_tok.start_pos,
@@ -1761,7 +1761,8 @@ def parse(tokens: list[Token]) -> Result:
 				)
 				advance()
 
-			elif current_tok._type == TT.DOT:  # member expression
+			elif current_tok._type in (TT.DOT, TT.ARROW):  # member expression
+				is_arrow: bool = current_tok._type == TT.ARROW
 				advance()
 
 				if current_tok._type != TT.IDENT:
@@ -1773,20 +1774,42 @@ def parse(tokens: list[Token]) -> Result:
 						)
 					)
 
-				member = Identifier(
-					current_tok.start_pos,
-					current_tok.end_pos,
-					current_tok.value,
-				)
-
-				result = MemberAccess(
-					result.start_pos,
-					current_tok.end_pos.copy(),
-					result,
-					member,
-				)
-
+				member_name = current_tok.value
+				member_start = current_tok.start_pos
+				member_end = current_tok.end_pos
 				advance()
+
+				if current_tok._type == TT.LPR:
+					advance()
+					args: list[Node] = []
+
+					if current_tok._type != TT.RPR:
+						while True:
+							arg = res.register(expr())
+							if res.error:
+								return res
+							args.append(arg)
+
+							if current_tok._type == TT.COMMA:
+								advance()
+								continue
+
+							if current_tok._type != TT.RPR:
+								return res.fail(
+									InvalidSyntaxError(
+										"Expected ',' or ')' after method call argument.",
+										current_tok.start_pos,
+										current_tok.end_pos,
+									)
+								)
+							break
+
+					member_end = current_tok.end_pos.copy()
+					advance()
+					result = MethodCall(result.start_pos, member_end, result, member_name, args, is_arrow)
+				else:
+					member = Identifier(member_start, member_end, member_name)
+					result = MemberAccess(result.start_pos, member_start, result, member, is_arrow)
 
 			else:
 				break

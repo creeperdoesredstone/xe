@@ -414,7 +414,18 @@ class StructDefinition(Node):
 
 
 class ClassDefinition(Node):
-	pass
+	def __init__(
+		self,
+		start_pos: Position,
+		end_pos: Position,
+		name: str,
+		parent_class: str|None,
+		members: list[Node],
+	):
+		super().__init__(start_pos, end_pos)
+		self.name = name
+		self.parent_class = parent_class
+		self.members: list[Node] = members
 
 
 class NewArrayExpression(Node):
@@ -524,11 +535,17 @@ class ArrayAssign(Node):
 
 class MemberAccess(Node):
 	def __init__(
-		self, start_pos: Position, end_pos: Position, parent: Node, member: Node
+		self,
+		start_pos: Position,
+		end_pos: Position,
+		parent: Node,
+		member: Node,
+		is_arrow: bool = False
 	):
 		super().__init__(start_pos, end_pos)
 		self.parent: Node = parent
 		self.member: Node = member
+		self.is_arrow: bool = is_arrow
 
 
 class MemberAssign(Node):
@@ -540,12 +557,14 @@ class MemberAssign(Node):
 		member: Identifier,
 		value: Node,
 		op: Token,
+		is_arrow: bool = False
 	):
 		super().__init__(start_pos, end_pos)
 		self.obj: Node = obj
 		self.member: Identifier = member
 		self.value: Node = value
 		self.operator: Token = op
+		self.is_arrow: bool = is_arrow
 
 
 class StructField(Node):
@@ -568,3 +587,24 @@ class StringOperation(BinaryOperation):
 		self, start_pos: Position, end_pos: Position, left: Node, op: Node, right: Node
 	):
 		super().__init__(start_pos, end_pos, left, op, right)
+
+
+class MethodCall(Node):
+	def __init__(
+		self,
+		start_pos: Position,
+		end_pos: Position,
+		obj: Node,
+		method_name: str,
+		arguments: list[Node],
+		is_arrow: bool = False
+	):
+		super().__init__(start_pos, end_pos)
+		self.obj: Node = obj
+		self.method_name: str = method_name
+		self.arguments: list[Node] = arguments
+		self.arg_types: list = []
+		self.is_arrow: bool = is_arrow
+
+	def __repr__(self):
+		return f"METHOD_CALL({self.obj}.{self.method_name}({self.arguments}))"

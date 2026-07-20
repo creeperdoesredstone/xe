@@ -31,30 +31,58 @@ nodes_to_lookup: list[Node] = []
 
 
 def emit_argument(arg: Node) -> Result:
-    res = Result()
-    struct_sym = getattr(arg, "struct_symbol", None)
+	res = Result()
+	struct_sym = getattr(arg, "struct_symbol", None)
 
-    if struct_sym is None:
-        return emit(arg)
+	if struct_sym is None:
+		return emit(arg)
 
-    if not isinstance(arg, (Identifier, MemberAccess)):
-        return res.fail(
-            AssemblyError(
-                "Only plain variables or struct fields can be passed by value as struct arguments.",
-                arg.start_pos,
-                arg.end_pos,
-            )
-        )
+	if not isinstance(arg, (Identifier, MemberAccess)):
+		return res.fail(
+			AssemblyError(
+				"Only plain variables or struct fields can be passed by value as struct arguments.",
+				arg.start_pos,
+				arg.end_pos,
+			)
+		)
 
-    base_address, is_local = resolve_struct_base_address(arg)
-    load_opcode = "LOADSP" if is_local else "LOAD"
+	base_address, is_local = resolve_struct_base_address(arg)
+	load_opcode = "LOADSP" if is_local else "LOAD"
 
-    instructions = [
-        (arg.start_pos, arg.end_pos, load_opcode, base_address + slot)
-        for slot in range(struct_sym.size)
-    ]
+	instructions = [
+		(arg.start_pos, arg.end_pos, load_opcode, base_address + slot)
+		for slot in range(struct_sym.size)
+	]
 
-    return res.success(instructions)
+	return res.success(instructions)
+
+
+def is_pointer_base(node: Node) -> bool:
+	t = getattr(node, "type", None)
+	return t is not None and getattr(t, "pointer_layers", 0) > 0
+
+
+def emit_pointer_field_address(node: Node) -> Result:
+	res = Result()
+
+	field_address = node.field_address if hasattr(node, "field_address") else 0
+
+	if isinstance(node, MemberAccess):
+		base_instructions = res.register(emit(node.parent))
+	elif isinstance(node, MemberAssign):
+		base_instructions = res.register(emit(node.obj))
+	else:
+		base_instructions = res.register(emit(node))
+
+	if res.error:
+		return res
+
+	instructions = list(base_instructions)
+	if field_address:
+		instructions.append((node.start_pos, node.end_pos, "PUSH", field_address))
+		instructions.append((node.start_pos, node.end_pos, "ADDI"))
+
+	return res.success(instructions)
 
 
 def resolve_struct_base_address(node: Node) -> tuple[int, bool]:
@@ -1549,6 +1577,14 @@ def emit_StructDefinition(node: StructDefinition) -> Result:
 def emit_MemberAccess(node: MemberAccess) -> Result:
 	res = Result()
 
+	if is_pointer_base(node.parent):
+		addr_instructions = res.register(emit_pointer_field_address(node))
+		if res.error:
+			return res
+		instructions = list(addr_instructions)
+		instructions.append((node.start_pos, node.end_pos, "LOADIND"))
+		return res.success(instructions)
+
 	try:
 		base_address, is_local = resolve_struct_base_address(node.parent)
 	except AssemblyError as err:
@@ -1572,6 +1608,65 @@ def emit_MemberAccess(node: MemberAccess) -> Result:
 def emit_MemberAssign(node: MemberAssign) -> Result:
 	res = Result()
 	instructions = []
+
+	if is_pointer_base(node.obj):
+		addr_instructions = res.register(emit_pointer_field_address(node))
+		if res.error:
+			return res
+		instructions = list(addr_instructions)
+
+		if node.operator._type == TT.ASGN:
+			value_ins = res.register(emit(node.value))
+			if res.error:
+				return res
+			instructions.extend(value_ins)
+
+			if (
+				node.type.base == "float"
+				and node.type.pointer_layers == 0
+				and node.value.type.base == "int"
+				and node.value.type.pointer_layers == 0
+			):
+				instructions.append((node.start_pos, node.end_pos, "I2F"))
+
+			instructions.append((node.start_pos, node.end_pos, "STREIND"))
+			return res.success(instructions)
+
+		# compound ops on a pointer-based field: duplicate the address,
+		# load current value, combine, store back.
+		compound_map = {
+			TT.ADD_ASGN: "ADD", TT.SUB_ASGN: "SUB", TT.MUL_ASGN: "MUL",
+			TT.DIV_ASGN: "DIV", TT.MOD_ASGN: "MOD", TT.POW_ASGN: "POW",
+		}
+		opcode = compound_map.get(node.operator._type)
+		if opcode is None:
+			return res.fail(
+				AssemblyError(
+					f"Unsupported assignment operator '{node.operator._type.name}'",
+					node.start_pos, node.end_pos,
+				)
+			)
+		opcode += "F" if (node.type.base == "float" and node.type.pointer_layers == 0) else "I"
+
+		instructions.append((node.start_pos, node.end_pos, "DUP", 0))
+		instructions.append((node.start_pos, node.end_pos, "LOADIND"))
+
+		value_ins = res.register(emit(node.value))
+		if res.error:
+			return res
+		instructions.extend(value_ins)
+
+		if (
+			node.type.base == "float"
+			and node.type.pointer_layers == 0
+			and node.value.type.base == "int"
+			and node.value.type.pointer_layers == 0
+		):
+			instructions.append((node.start_pos, node.end_pos, "I2F"))
+
+		instructions.append((node.start_pos, node.end_pos, opcode))
+		instructions.append((node.start_pos, node.end_pos, "STREIND"))
+		return res.success(instructions)
 
 	try:
 		base_address, is_local = resolve_struct_base_address(node.obj)
@@ -1668,5 +1763,61 @@ def emit_MemberAssign(node: MemberAssign) -> Result:
 			address,
 		)
 	)
+
+	return res.success(instructions)
+
+
+def emit_method(node: FunctionDefinition | ProcedureDefinition) -> Result:
+	original_name = node.name
+	node.name = node.mangled_name  # temporarily swap for label emission
+	try:
+		return emit_FunctionDefinition(node)
+	finally:
+		node.name = original_name
+
+
+def emit_ClassDefinition(node: ClassDefinition) -> Result:
+	res = Result()
+	instructions = []
+
+	for member in node.members:
+		if isinstance(member, (FunctionDefinition, ProcedureDefinition)):
+			method_instructions = res.register(emit_method(member))
+			if res.error:
+				return res
+			instructions.extend(method_instructions)
+
+	return res.success(instructions)
+
+
+def emit_MethodCall(node: MethodCall) -> Result:
+	res = Result()
+	instructions = []
+
+	if node.obj_is_pointer:
+		obj_instructions = res.register(emit(node.obj))
+		if res.error:
+			return res
+		instructions.extend(obj_instructions)
+	else:
+		if not isinstance(node.obj, Identifier):
+			return res.fail(
+				AssemblyError(
+					"Only a plain variable can currently be used as the receiver of a by-value method call.",
+					node.obj.start_pos,
+					node.obj.end_pos,
+				)
+			)
+		address = node.obj.address
+		instructions.append((node.start_pos, node.end_pos, "PUSH", address))
+
+	for arg in node.arguments:
+		arg_instr = res.register(emit_argument(arg))
+		if res.error:
+			return res
+		instructions.extend(arg_instr)
+
+	instructions.append((node.start_pos, node.end_pos, "PUSHFP"))
+	instructions.append((node.start_pos, node.end_pos, "CALL", node.mangled_name))
 
 	return res.success(instructions)

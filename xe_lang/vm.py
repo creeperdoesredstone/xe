@@ -243,11 +243,10 @@ class VM:
 
 		while self.ip < len(self.instructions):
 			exec_res = self.execute(self.instructions[self.ip])
-			# print(self.stack[: self.sp], self.stack[self.sp : self.sp + 4])
+			# print(self.stack[: self.sp][:32])
 			# print(self.data_memory[8192 : 8192 + 16])
 			# print("SP:", self.sp)
 			# print("FP:", self.fp)
-			# print()
 
 			if exec_res.error:
 				if self.root:
@@ -262,6 +261,7 @@ class VM:
 				break
 
 			self.ip += 1
+			# input()
 
 			# process window events if the window is alive
 			if self.ip % 200 == 0 and self.root:
@@ -276,7 +276,7 @@ class VM:
 			except Exception:
 				pass
 
-		return res.success(self.stack[: self.sp])
+		return res.success(self.stack[:self.sp])
 
 	def push(self, value) -> None:
 		self.stack[self.sp] = value
@@ -650,6 +650,9 @@ class VM:
 							addr = res.register(self.pop())
 							if res.error:
 								return res
+							
+							if value > 0x7fffffff:
+								value -= 0x100000000
 
 							self.write_mem_string(addr, str(value))
 						case 6:  # FLOAT2CHARS

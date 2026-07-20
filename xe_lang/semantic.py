@@ -111,6 +111,25 @@ class SemanticAnalyzer:
 	def visit_Identifier(self, node: Identifier) -> Result:
 		symbol: BaseSymbol | None = self.scope.lookup(node.value)
 
+		if symbol is None and self.current_function is not None:
+			owning_class = getattr(self.current_function, "owning_class", None)
+			if owning_class is not None:
+				field = owning_class.fields.get(node.value)
+				if field is not None:
+					# rewrite identifier into $self.<field> in place,
+					# mutating the identifier into a MemberAccess
+					self_symbol = self.scope.lookup("$self")
+					node.__class__ = MemberAccess
+					node.parent = Identifier(node.start_pos, node.start_pos, "$self")
+					node.parent.address = self_symbol.address
+					node.parent.is_local = True
+					node.parent.type = self_symbol.type
+					node.member = Identifier(node.start_pos, node.end_pos, node.value)
+					node.field_address = field.address
+					node.struct_symbol = owning_class
+					node.type = field.type
+					return Result().success(field.type)
+
 		if symbol is None:
 			return Result().fail(
 				SemanticError(
@@ -325,7 +344,85 @@ class SemanticAnalyzer:
 	def visit_VariableAssign(self, node: VariableAssign) -> Result:
 		res = Result()
 
+		COMPOUND_OPS = {
+			TT.ADD_ASGN,
+			TT.SUB_ASGN,
+			TT.MUL_ASGN,
+			TT.DIV_ASGN,
+			TT.MOD_ASGN,
+			TT.POW_ASGN,
+		}
+
 		symbol = self.scope.lookup(node.name)
+
+		if symbol is None and self.current_function is not None:
+			owning_class = getattr(self.current_function, "owning_class", None)
+			if owning_class is not None:
+				field = owning_class.fields.get(node.name)
+				if field is not None:
+					# rewrite identifier into $self.<field> in place,
+					# mutating the identifier into a MemberAccess
+					self_symbol = self.scope.lookup("$self")
+					node.__class__ = MemberAssign
+					node.obj = Identifier(node.start_pos, node.start_pos, "$self")
+					node.obj.address = self_symbol.address
+					node.obj.is_local = True
+					node.obj.type = self_symbol.type
+					node.member = Identifier(node.start_pos, node.start_pos, node.name)
+					node.field_address = field.address
+					node.struct_symbol = owning_class
+					node.type = field.type
+
+					value_type = res.register(self.analyze(node.value))
+					if res.error:
+						return res
+
+					if node.operator._type == TT.ASGN:
+						if value_type != field.type:
+							is_implicit_float_cast = (
+								value_type.pointer_layers == 0
+								and field.type.pointer_layers == 0
+								and field.type.base == "float"
+								and value_type.base == "int"
+							)
+							if not is_implicit_float_cast:
+								return res.fail(
+									SemanticError(
+										f"Cannot assign '{value_type}' to field '{node.member.value}' of type '{field.type}'.",
+										node.value.start_pos,
+										node.value.end_pos,
+									)
+								)
+						return res.success(None)
+					
+					if node.operator._type in COMPOUND_OPS:
+						if node.type.pointer_layers != 0 or node.type.base not in ("int", "float"):
+							return res.fail(
+								SemanticError(
+									f"Operator '{node.operator._type.name}' requires numeric operands.",
+									node.start_pos,
+									node.end_pos,
+								)
+							)
+
+						if value_type.pointer_layers != 0 or value_type.base not in ("int", "float"):
+							return res.fail(
+								SemanticError(
+									f"Operator '{node.operator._type.name}' requires numeric operands.",
+									node.start_pos,
+									node.end_pos,
+								)
+							)
+
+						return res.success(None)
+
+					return res.fail(
+						SemanticError(
+							f"Unsupported assignment operator '{node.operator._type.name}' on a field.",
+							node.start_pos,
+							node.end_pos,
+						)
+					)
 
 		if symbol is None:
 			return res.fail(
@@ -367,16 +464,7 @@ class SemanticAnalyzer:
 
 			return res.success(None)
 
-		compound_ops = {
-			TT.ADD_ASGN,
-			TT.SUB_ASGN,
-			TT.MUL_ASGN,
-			TT.DIV_ASGN,
-			TT.MOD_ASGN,
-			TT.POW_ASGN,
-		}
-
-		if node.operator._type in compound_ops:
+		if node.operator._type in COMPOUND_OPS:
 			if (
 				node.operator._type == TT.ADD_ASGN
 				and symbol.type == Type("string")
@@ -826,6 +914,152 @@ class SemanticAnalyzer:
 			return res
 
 		# next_local_offset started at -1 and was decremented once per local
+		node.locals_count = -1 - self.current_function.next_local_offset
+		node.param_count = sum(param_widths)
+
+		self.pop_scope()
+		self.current_function = prev_function
+
+		return res.success(None)
+
+	def _analyze_method(
+		self,
+		node: FunctionDefinition | ProcedureDefinition,
+		is_proc: bool,
+		class_sym: ClassSymbol,
+	) -> Result:
+		res = Result()
+
+		mangled_name = f"{class_sym.name}_{node.name}"
+		node.mangled_name = mangled_name
+		node.owning_class = class_sym.name
+
+		if node.name in class_sym.methods:
+			return res.fail(
+				SemanticError(
+					f"Method '{node.name}' already declared in class '{class_sym.name}'.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		return_type = None
+		if not is_proc:
+			return_type = self._resolve_param_or_return_type(node.return_type, node.pointer_layers)
+			if return_type is None:
+				return res.fail(
+					SemanticError(
+						f"Unknown return type '{node.return_type}'.",
+						node.start_pos,
+						node.end_pos,
+					)
+				)
+			node.return_width = self.sizeof(return_type) if return_type.pointer_layers == 0 else 1
+		else:
+			node.return_width = 0
+
+		param_list: list[Type] = []
+		for p in node.parameters:
+			param_type = self._resolve_param_or_return_type(p.type, p.pointer_layers)
+			if param_type is None:
+				return res.fail(
+					SemanticError(
+						f"Unknown type '{p.type}' for parameter '{p.name}'.",
+						p.start_pos,
+						p.end_pos,
+					)
+				)
+			param_list.append(param_type)
+
+		param_names = [p.name for p in node.parameters]
+
+		method_symbol = SubroutineSymbol(
+			name=mangled_name,
+			type=Type("procedure" if is_proc else "function"),
+			return_type=return_type,
+			parameters=param_list,
+			param_names=param_names,
+			is_proc=is_proc,
+		)
+		class_sym.methods[node.name] = method_symbol
+
+		# ---- analyze the body with $self bound ----
+
+		self.push_scope()
+		prev_function = self.current_function
+
+		self.current_function = SubroutineSymbol(
+			name=mangled_name,
+			type=Type("procedure" if is_proc else "function"),
+			return_type=return_type,
+			parameters=[Type(class_sym.name, 1)] + param_list,
+			param_names=["$self"] + param_names,
+			is_proc=is_proc,
+			return_width=node.return_width,
+		)
+
+		self_ptr_type = Type(class_sym.name, 1)
+
+		# $self is always the first "parameter" -- prepend its width (1, since
+		# it's always a pointer) ahead of the declared parameters' widths.
+		param_widths = [1] + [
+			self.sizeof(t) if t.pointer_layers == 0 else 1 for t in param_list
+		]
+
+		# Positive offsets, matching _analyze_subroutine_body's convention
+		# exactly: first-pushed argument ends up at the largest offset.
+		running_offset = 0
+		offsets = [0] * len(param_widths)
+		for i in reversed(range(len(param_widths))):
+			running_offset += param_widths[i]
+			offsets[i] = running_offset
+
+		self_symbol = VariableSymbol(
+			name="$self",
+			type=self_ptr_type,
+			address=offsets[0],
+			is_local=True,
+		)
+		self_symbol.struct_symbol = class_sym
+		self.scope.symbols["$self"] = self_symbol
+
+		for i, param in enumerate(node.parameters):
+			if param.name in self.scope.symbols:
+				self.pop_scope()
+				self.current_function = prev_function
+				return res.fail(
+					SemanticError(
+						f"Parameter '{param.name}' already declared.",
+						param.start_pos,
+						param.end_pos,
+					)
+				)
+
+			param_type = param_list[i]
+			var_symbol = VariableSymbol(
+				name=param.name,
+				type=param_type,
+				address=offsets[i + 1],   # shifted by 1 to account for $self at index 0
+				is_local=True,
+			)
+
+			struct_sym = self.scope.lookup(param.type)
+			if isinstance(struct_sym, (StructSymbol, ClassSymbol)):
+				var_symbol.struct_symbol = struct_sym
+
+			self.scope.symbols[param.name] = var_symbol
+
+		self.current_function.owning_class = class_sym
+		# next_local_offset always starts at -1, exactly like plain functions --
+		# no shift needed, since parameters (positive) and locals (negative)
+		# occupy disjoint ranges regardless of how many parameters there are.
+
+		res.register(self.analyze(node.body))
+		if res.error:
+			self.pop_scope()
+			self.current_function = prev_function
+			return res
+
 		node.locals_count = -1 - self.current_function.next_local_offset
 		node.param_count = sum(param_widths)
 
@@ -1382,16 +1616,16 @@ class SemanticAnalyzer:
 				)
 			)
 
-		struct_sym = self.scope.lookup(parent_type.base)
+		struct_or_class_symbol = self.scope.lookup(parent_type.base)
 
-		if isinstance(struct_sym, StructSymbol):
+		if isinstance(struct_or_class_symbol, (StructSymbol, ClassSymbol)):
 			member_name = node.member.value
-			field: VariableSymbol | None = struct_sym.fields.get(member_name)
+			field: VariableSymbol | None = struct_or_class_symbol.fields.get(member_name)
 
 			if field is None:
 				return res.fail(
 					SemanticError(
-						f"Struct '{parent_type.base}' has no field named '{member_name}'.",
+						f"'{parent_type.base}' has no field named '{member_name}'.",
 						node.member.start_pos,
 						node.member.end_pos,
 					)
@@ -1399,7 +1633,7 @@ class SemanticAnalyzer:
 
 			node.type = field.type
 			node.field_address = field.address
-			node.struct_symbol = struct_sym
+			node.struct_symbol = struct_or_class_symbol
 			return res.success(field.type)
 
 		if parent_type.base in self.classes:
@@ -1446,23 +1680,23 @@ class SemanticAnalyzer:
 				)
 			)
 
-		struct_sym = self.scope.lookup(parent_type.base)
+		struct_or_class_symbol = self.scope.lookup(parent_type.base)
 		member_name = node.member.value
 		field_type: Type | None = None
 
-		if isinstance(struct_sym, StructSymbol):
-			field: VariableSymbol | None = struct_sym.fields.get(member_name)
+		if isinstance(struct_or_class_symbol, (StructSymbol, ClassSymbol)):
+			field: VariableSymbol | None = struct_or_class_symbol.fields.get(member_name)
 			if field is None:
 				return res.fail(
 					SemanticError(
-						f"Struct '{parent_type.base}' has no field named '{member_name}'.",
+						f"'{parent_type.base}' has no field named '{member_name}'.",
 						node.member.start_pos,
 						node.member.end_pos,
 					)
 				)
 			field_type = field.type
 			node.field_address = field.address
-			node.struct_symbol = struct_sym
+			node.struct_symbol = struct_or_class_symbol
 
 		elif parent_type.base in self.classes:
 			current_class = parent_type.base
@@ -1555,55 +1789,97 @@ class SemanticAnalyzer:
 	def visit_ClassDefinition(self, node: ClassDefinition) -> Result:
 		res = Result()
 
-		if not hasattr(self, "classes"):
-			self.classes = {}
-
-		if node.name in self.classes:
+		if node.name in self.scope.symbols:
 			return res.fail(
 				SemanticError(
-					f"Class '{node.name}' already defined.",
+					f"'{node.name}' is already declared.",
 					node.start_pos,
 					node.end_pos,
 				)
 			)
 
-		if node.parent_class and node.parent_class not in self.classes:
-			return res.fail(
-				SemanticError(
-					f"Base class '{node.parent_class}' is undefined.",
-					node.start_pos,
-					node.end_pos,
+		base_class_sym = None
+		if node.parent_class:
+			base_class_sym = self.scope.lookup(node.parent_class)
+			if not isinstance(base_class_sym, ClassSymbol):
+				return res.fail(
+					SemanticError(
+						f"Base class '{node.parent_class}' is undefined.",
+						node.start_pos,
+						node.end_pos,
+					)
 				)
-			)
 
-		class_members = {}
-		self.classes[node.name] = {
-			"parent": node.parent_class,
-			"members": class_members,
-		}
+		class_sym = ClassSymbol(
+			name=node.name,
+			type=Type(node.name),
+			base_class=base_class_sym,
+		)
 
+		self.scope.symbols[node.name] = class_sym
+		offset = base_class_sym.size if base_class_sym else 0
 		self.push_scope()
 
 		for member in node.members:
-			res.register(self.analyze(member))
-			if res.error:
-				self.pop_scope()
-				return res
+			if isinstance(member, (VariableDeclaration, ArrayDeclaration)):
+				field_name = member.name
 
-			if isinstance(member, VariableDeclaration):
-				class_members[member.name] = Type(member.type, member.pointer_layers)
-			elif isinstance(member, ArrayDeclaration):
-				class_members[member.name] = Type(
-					member.element_type, member.pointer_layers + 1, True
+				if field_name in class_sym.fields:
+					return res.fail(
+						SemanticError(
+							f"Duplicate field '{field_name}' in class '{node.name}'",
+							member.start_pos,
+							member.end_pos,
+						)
+					)
+
+				if isinstance(member, VariableDeclaration):
+					field_type_name = member.type
+					pointer_layers = member.pointer_layers
+				else:
+					field_type_name = member.element_type
+					pointer_layers = member.pointer_layers + 1
+
+				field_type = self._resolve_param_or_return_type(field_type_name, pointer_layers)
+				if field_type is None:
+					return res.fail(
+						SemanticError(
+							f"Unknown type '{field_type_name}' for field '{field_name}'.",
+							member.start_pos,
+							member.end_pos,
+						)
+					)
+
+				class_sym.fields[field_name] = VariableSymbol(
+					name=field_name,
+					type=field_type,
+					address=offset,
 				)
-			elif isinstance(member, FunctionDefinition):
-				class_members[member.name] = Type(
-					member.return_type, member.pointer_layers
+				offset += self.sizeof(field_type) if field_type.pointer_layers == 0 else 1
+
+			elif isinstance(member, (FunctionDefinition, ProcedureDefinition)):
+				is_proc = isinstance(member, ProcedureDefinition)
+				res.register(
+					self._analyze_method(member, is_proc, class_sym)
 				)
-			elif isinstance(member, ProcedureDefinition):
-				class_members[member.name] = Type("none")
+				if res.error:
+					self.pop_scope()
+					return res
+
+			else:
+				return res.fail(
+					SemanticError(
+						f"Unsupported member '{type(member).__name__}' inside class '{node.name}'.",
+						member.start_pos,
+						member.end_pos,
+					)
+				)
+
+		class_sym.size = offset
 
 		self.pop_scope()
+		node.symbol = class_sym
+
 		return res.success(None)
 
 	def visit_NewArrayExpression(self, node: NewArrayExpression) -> Result:
@@ -1677,6 +1953,77 @@ class SemanticAnalyzer:
 			)
 
 		return res.success(None)
+	
+	def visit_MethodCall(self, node: MethodCall) -> Result:
+		res = Result()
+
+		obj_type: Type = res.register(self.analyze(node.obj))
+		if res.error:
+			return res
+
+		# Method calls work on both by-value instances and pointers-to-instance.
+		base_type_name = obj_type.base
+		class_sym = self.scope.lookup(base_type_name)
+
+		if not isinstance(class_sym, ClassSymbol):
+			return res.fail(
+				SemanticError(
+					f"'{base_type_name}' is not a class; cannot call method '{node.method_name}' on it.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		method_sym = class_sym.methods.get(node.method_name)
+		if method_sym is None:
+			return res.fail(
+				SemanticError(
+					f"Class '{class_sym.name}' has no method named '{node.method_name}'.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		expected_params = method_sym.parameters
+		if len(node.arguments) != len(expected_params):
+			return res.fail(
+				SemanticError(
+					f"'{node.method_name}' expects {len(expected_params)} argument(s), got {len(node.arguments)}.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		for i, (arg, expected_type) in enumerate(zip(node.arguments, expected_params)):
+			arg_type = res.register(self.analyze(arg))
+			if res.error:
+				return res
+
+			if arg_type != expected_type:
+				is_implicit_float_cast = (
+					arg_type.pointer_layers == 0
+					and expected_type.pointer_layers == 0
+					and expected_type.base == "float"
+					and arg_type.base == "int"
+				)
+				if not is_implicit_float_cast:
+					return res.fail(
+						SemanticError(
+							f"Argument {i + 1} to '{node.method_name}': cannot pass '{arg_type}' as '{expected_type}'.",
+							arg.start_pos,
+							arg.end_pos,
+						)
+					)
+
+		node.arg_types = expected_params
+		node.mangled_name = method_sym.name
+		node.obj_is_pointer = obj_type.pointer_layers > 0
+		node.class_symbol = class_sym
+		node.type = (
+			method_sym.return_type if method_sym.return_type is not None else Type("none")
+		)
+
+		return res.success(node.type)
 
 
 def analyze(ast: Node) -> Result:
