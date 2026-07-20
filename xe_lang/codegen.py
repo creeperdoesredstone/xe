@@ -1,7 +1,8 @@
 from xe_lang.helper import TT, Result, AssemblyError
 from xe_lang.nodes import *
 from xe_lang.rules import BINARY_OPCODE_MAP
-from math import ceil
+from math import sin, cos, tan, asin, acos, atan, sqrt, ceil
+from xe_lang.symbols import BuiltInID
 
 from pathlib import Path
 import struct
@@ -25,8 +26,6 @@ func_name: str | None = None
 nodes_to_lookup: list[Node] = []
 
 # TODO:
-# - implement structs
-# - implement classes (no OOP needed, basically structs with methods)
 # - implement graphics via syscalls (dw about implementation we'll do that in r1)
 
 
@@ -1887,3 +1886,70 @@ def emit_NewObjectExpression(node: NewObjectExpression) -> Result:
 		instructions.append((node.start_pos, node.end_pos, "STREIND"))
 
 	return res.success(instructions)
+
+
+def emit_LibraryAccess(node: LibraryAccess) -> Result:
+	res = Result()
+
+	if node.const_value is None:
+		return res.fail(
+			AssemblyError(
+				f"Library member '{node.library_name}::{node.member_name}' has no constant value to emit.",
+				node.start_pos,
+				node.end_pos,
+			)
+		)
+
+	return emit(node.const_value)
+
+
+MATH_BUILTIN_OPCODES = {
+	BuiltInID.MATH_SIN: "SINF",
+	BuiltInID.MATH_COS: "COSF",
+	BuiltInID.MATH_TAN: "TANF",
+	BuiltInID.MATH_ASIN: "ASINF",
+	BuiltInID.MATH_ACOS: "ACOSF",
+	BuiltInID.MATH_ATAN: "ATANF",
+}
+
+
+def emit_LibraryCall(node: LibraryCall) -> Result:
+	res = Result()
+	instructions = []
+
+	for arg in node.arguments:
+		arg_instructions = res.register(emit(arg))
+		if res.error:
+			return res
+		instructions.extend(arg_instructions)
+
+		if (
+			arg.type.base == "int"
+			and arg.type.pointer_layers == 0
+		):
+			instructions.append((arg.start_pos, arg.end_pos, "I2F"))
+
+	if node.builtin_id in MATH_BUILTIN_OPCODES:
+		opcode = MATH_BUILTIN_OPCODES[node.builtin_id]
+		instructions.append((node.start_pos, node.end_pos, opcode))
+		return res.success(instructions)
+
+	if node.builtin_id == BuiltInID.MATH_SQRT:
+		instructions.append((node.start_pos, node.end_pos, "SQRTF"))
+		return res.success(instructions)
+
+	if node.builtin_id == BuiltInID.MATH_POW:
+		instructions.append((node.start_pos, node.end_pos, "POWF"))
+		return res.success(instructions)
+	
+	if node.builtin_id == BuiltInID.MATH_LERP:
+		instructions.append((node.start_pos, node.end_pos, "LERPF"))
+		return res.success(instructions)
+
+	return res.fail(
+		AssemblyError(
+			f"No codegen implemented for builtin '{node.library_name}::{node.member_name}'.",
+			node.start_pos,
+			node.end_pos,
+		)
+	)

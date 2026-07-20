@@ -1848,6 +1848,59 @@ def parse(tokens: list[Token]) -> Result:
 
 		if tok._type == TT.IDENT:
 			iden_name: str = tok.value
+
+			if current_tok._type == TT.SCOPE:
+				advance()
+
+				if current_tok._type != TT.IDENT:
+					return res.fail(
+						InvalidSyntaxError(
+							f"Expected a member name after '::', but found '{current_tok.value or current_tok._type.name}'.",
+							current_tok.start_pos,
+							current_tok.end_pos,
+						)
+					)
+
+				member_name = current_tok.value
+				member_end = current_tok.end_pos.copy()
+				advance()
+
+				if current_tok._type == TT.LPR:
+					advance()
+
+					args = []
+					if current_tok._type != TT.RPR:
+						while True:
+							arg = res.register(expr())
+							if res.error:
+								return res
+							args.append(arg)
+
+							if current_tok._type == TT.COMMA:
+								advance()
+								continue
+
+							if current_tok._type != TT.RPR:
+								return res.fail(
+									InvalidSyntaxError(
+										"Expected ',' or ')' after library call argument.",
+										current_tok.start_pos,
+										current_tok.end_pos,
+									)
+								)
+							break
+
+					end_pos = current_tok.end_pos.copy()
+					advance()
+
+					return res.success(
+						LibraryCall(tok.start_pos, end_pos, iden_name, member_name, args)
+					)
+
+				return res.success(
+					LibraryAccess(tok.start_pos, member_end, iden_name, member_name)
+        )
+
 			return res.success(Identifier(tok.start_pos, tok.end_pos, iden_name))
 
 		if tok._type == TT.LPR:

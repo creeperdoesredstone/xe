@@ -93,6 +93,7 @@ class SemanticAnalyzer:
 	def visit_Program(self, node: Program) -> Result:
 		res = Result()
 		self.push_scope()
+		init_libraries(self.scope)
 
 		for defn in node.sub_defs:
 			res.register(self.analyze(defn))
@@ -1161,7 +1162,6 @@ class SemanticAnalyzer:
 	) -> Result:
 		res = Result()
 
-		# 1. Resolve the callable type uniformly from the scope/expression
 		if isinstance(node, FunctionCall):
 			# Evaluates identifiers, nested calls like foo()(), etc.
 			caller_type: Type = res.register(self.analyze(node.caller))
@@ -1182,7 +1182,6 @@ class SemanticAnalyzer:
 				)
 			callable_name = node.name
 
-		# 2. Validate that the type is actually a callable function/procedure
 		if not caller_type.is_callable:
 			return res.fail(
 				SemanticError(
@@ -1192,7 +1191,6 @@ class SemanticAnalyzer:
 				)
 			)
 
-		# 3. Enforce function vs procedure enforcement rules
 		is_proc = caller_type.is_proc
 		if is_proc != expect_proc:
 			kind, other = (
@@ -1206,7 +1204,6 @@ class SemanticAnalyzer:
 				)
 			)
 
-		# 4. Validate Argument Count
 		expected_params = caller_type.parameters
 		if len(node.arguments) != len(expected_params):
 			return res.fail(
@@ -1217,7 +1214,6 @@ class SemanticAnalyzer:
 				)
 			)
 
-		# 5. Type Check Arguments
 		for i, (arg, expected_type) in enumerate(zip(node.arguments, expected_params)):
 			arg_type: Type = res.register(self.analyze(arg))
 			if res.error:
@@ -2071,6 +2067,110 @@ class SemanticAnalyzer:
 			method_sym.return_type if method_sym.return_type is not None else Type("none")
 		)
 
+		return res.success(node.type)
+
+	def visit_LibraryAccess(self, node: LibraryAccess) -> Result:
+		res = Result()
+
+		lib_sym = self.scope.lookup(node.library_name)
+		if not isinstance(lib_sym, LibrarySymbol):
+			return res.fail(
+				SemanticError(
+					f"'{node.library_name}' is not a library.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		member_sym = lib_sym.lookup(node.member_name)
+		if member_sym is None:
+			return res.fail(
+				SemanticError(
+					f"Library '{node.library_name}' has no member named '{node.member_name}'.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		if isinstance(member_sym, (SubroutineSymbol, BuiltInSubroutineSymbol)):
+			return res.fail(
+				SemanticError(
+					f"'{node.library_name}::{node.member_name}' is a function; it must be called.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		node.type = member_sym.type
+		node.const_value = member_sym.const_value
+		return res.success(member_sym.type)
+
+	def visit_LibraryCall(self, node: LibraryCall) -> Result:
+		res = Result()
+
+		lib_sym = self.scope.lookup(node.library_name)
+		if not isinstance(lib_sym, LibrarySymbol):
+			return res.fail(
+				SemanticError(
+					f"'{node.library_name}' is not a library.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		member_sym = lib_sym.lookup(node.member_name)
+		if member_sym is None:
+			return res.fail(
+				SemanticError(
+					f"Library '{node.library_name}' has no member named '{node.member_name}'.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		if not isinstance(member_sym, BuiltInSubroutineSymbol):
+			return res.fail(
+				SemanticError(
+					f"'{node.library_name}::{node.member_name}' is not callable.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		expected_params = member_sym.parameters
+		if len(node.arguments) != len(expected_params):
+			return res.fail(
+				SemanticError(
+					f"'{node.library_name}::{node.member_name}' expects {len(expected_params)} argument(s), got {len(node.arguments)}.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		for i, (arg, expected_type) in enumerate(zip(node.arguments, expected_params)):
+			arg_type = res.register(self.analyze(arg))
+			if res.error:
+				return res
+
+			if arg_type != expected_type:
+				is_implicit_float_cast = (
+					arg_type.pointer_layers == 0
+					and expected_type.pointer_layers == 0
+					and expected_type.base == "float"
+					and arg_type.base == "int"
+				)
+				if not is_implicit_float_cast:
+					return res.fail(
+						SemanticError(
+							f"Argument {i + 1} to '{node.library_name}::{node.member_name}': cannot pass '{arg_type}' as '{expected_type}'.",
+							arg.start_pos,
+							arg.end_pos,
+						)
+					)
+
+		node.arg_types = expected_params
+		node.builtin_id = member_sym.builtin_id
+		node.type = member_sym.return_type if member_sym.return_type is not None else Type("none")
 		return res.success(node.type)
 
 

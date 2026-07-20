@@ -419,7 +419,7 @@ class ClassDefinition(Node):
 		start_pos: Position,
 		end_pos: Position,
 		name: str,
-		parent_class: str|None,
+		parent_class: str | None,
 		members: list[Node],
 	):
 		super().__init__(start_pos, end_pos)
@@ -540,7 +540,7 @@ class MemberAccess(Node):
 		end_pos: Position,
 		parent: Node,
 		member: Node,
-		is_arrow: bool = False
+		is_arrow: bool = False,
 	):
 		super().__init__(start_pos, end_pos)
 		self.parent: Node = parent
@@ -557,7 +557,7 @@ class MemberAssign(Node):
 		member: Identifier,
 		value: Node,
 		op: Token,
-		is_arrow: bool = False
+		is_arrow: bool = False,
 	):
 		super().__init__(start_pos, end_pos)
 		self.obj: Node = obj
@@ -597,7 +597,7 @@ class MethodCall(Node):
 		obj: Node,
 		method_name: str,
 		arguments: list[Node],
-		is_arrow: bool = False
+		is_arrow: bool = False,
 	):
 		super().__init__(start_pos, end_pos)
 		self.obj: Node = obj
@@ -608,3 +608,32 @@ class MethodCall(Node):
 
 	def __repr__(self):
 		return f"METHOD_CALL({self.obj}.{self.method_name}({self.arguments}))"
+
+
+class LibraryCall(Node):
+	def __init__(
+		self,
+		start_pos,
+		end_pos,
+		library_name: str,
+		member_name: str,
+		arguments: list[Node],
+	):
+		super().__init__(start_pos, end_pos)
+		self.library_name: str = library_name
+		self.member_name: str = member_name
+		self.arguments: list[Node] = arguments
+		self.arg_types: list = []
+
+	def __repr__(self):
+		return f"LIB_CALL({self.library_name}::{self.member_name}({self.arguments}))"
+
+
+class LibraryAccess(Node):
+	def __init__(self, start_pos, end_pos, library_name: str, member_name: str):
+		super().__init__(start_pos, end_pos)
+		self.library_name: str = library_name
+		self.member_name: str = member_name
+
+	def __repr__(self):
+		return f"LIB_ACCESS({self.library_name}::{self.member_name})"

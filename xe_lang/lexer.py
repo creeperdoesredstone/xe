@@ -189,7 +189,7 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 		elif current_char == "}":
 			make_operator_tok(TT.RBR, start_pos)
 		elif current_char == ":":
-			make_operator_tok(TT.COL, start_pos)
+			make_compound_tok(TT.COL, TT.SCOPE, ":")
 		elif current_char == ";":
 			make_operator_tok(TT.SEMICOL, start_pos)
 		elif current_char == ",":

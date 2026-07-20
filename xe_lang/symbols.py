@@ -13,6 +13,7 @@ class BuiltInID(Enum):
 	MATH_ATAN = auto()
 	MATH_SQRT = auto()
 	MATH_POW = auto()
+	MATH_LERP = auto()
 
 	WINDOW_OPEN = auto()
 	WINDOW_CLOSE = auto()
@@ -261,6 +262,13 @@ def init_libraries(scope: Scope):
 				parameters=[Type("float"), Type("float")],
 				return_type=Type("float"),
 				builtin_id=BuiltInID.MATH_POW,
+			),
+			"lerp": BuiltInSubroutineSymbol(
+				"pow",
+				Type("function"),
+				parameters=[Type("float"), Type("float"), Type("float")],
+				return_type=Type("float"),
+				builtin_id=BuiltInID.MATH_LERP,
 			),
 			"pi": VariableSymbol("pi", Type("float"), const_value=FloatLiteral(None, None, 3.141592653589793)),
 			"e": VariableSymbol("e", Type("float"), const_value=FloatLiteral(None, None, 2.718281828459045)),
