@@ -55,6 +55,52 @@ def parse(tokens: list[Token]) -> Result:
 				continue
 			return lookahead_tok == token
 
+	def qualified_type_name() -> Result:
+		# parses a type name in type-position:
+		# a builtin TT.TYPE,
+		# a plain struct/class identifier,
+		# or a library-qualified name such as 'window::Window'
+		res: Result = Result()
+
+		if current_tok._type == TT.TYPE:
+			name = current_tok.value
+			end_pos = current_tok.end_pos.copy()
+			advance()
+			return res.success((name, None, end_pos))
+
+		if current_tok._type != TT.IDENT:
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected a valid data type or struct/class name, but found '{current_tok.value or current_tok._type.name}'.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+
+		first_name = current_tok.value
+		end_pos = current_tok.end_pos.copy()
+		advance()
+
+		if current_tok._type == TT.SCOPE:
+			advance()
+
+			if current_tok._type != TT.IDENT:
+				return res.fail(
+					InvalidSyntaxError(
+						f"Expected a type name after '::', but found '{current_tok.value or current_tok._type.name}'.",
+						current_tok.start_pos,
+						current_tok.end_pos,
+					)
+				)
+
+			qualified_name = current_tok.value
+			end_pos = current_tok.end_pos.copy()
+			advance()
+
+			return res.success((qualified_name, first_name, end_pos))
+
+		return res.success((first_name, None, end_pos))
+
 	# parse subroutines
 	def program(terminate: TT | None = None) -> Result:
 		res = Result()
@@ -65,14 +111,16 @@ def parse(tokens: list[Token]) -> Result:
 			FunctionDefinition,
 			ProcedureDefinition,
 			StructDefinition,
-			ClassDefinition
+			ClassDefinition,
 		)
 
 		while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
 			advance()
 
 		if current_tok._type == TT.EOF:
-			return res.success(Program(current_tok.start_pos, current_tok.end_pos, [], []))
+			return res.success(
+				Program(current_tok.start_pos, current_tok.end_pos, [], [])
+			)
 
 		while current_tok._type != TT.EOF:
 
@@ -115,14 +163,13 @@ def parse(tokens: list[Token]) -> Result:
 				advance()
 
 		if not statements and not definitions:
-			return res.success(Program(current_tok.start_pos, current_tok.end_pos, [], []))
+			return res.success(
+				Program(current_tok.start_pos, current_tok.end_pos, [], [])
+			)
 
 		return res.success(
 			Program(
-				statements[0].start_pos,
-				statements[-1].end_pos,
-				statements,
-				definitions
+				statements[0].start_pos, statements[-1].end_pos, statements, definitions
 			)
 		)
 
@@ -188,20 +235,14 @@ def parse(tokens: list[Token]) -> Result:
 			)
 		advance()
 
-		# allow either a builtin TYPE token (int, float, ...) or an IDENT
-		# referring to a user-defined struct/class name (e.g. Vec2)
-		if current_tok._type not in (TT.TYPE, TT.IDENT):
-			return res.fail(
-				InvalidSyntaxError(
-					f"Expected a valid data type (e.g., int, float) or a struct/class name after variable name '{iden_name}', but found '{current_tok.value or current_tok._type.name}'.",
-					current_tok.start_pos,
-					current_tok.end_pos,
-				)
-			)
-		type_name: str = current_tok.value
-		is_variable: bool = current_tok._type == TT.IDENT
-		end_pos: Position = current_tok.end_pos.copy()
-		advance()
+		# allow a builtin TYPE token (int, float, ...), a plain IDENT
+		# referring to a user-defined struct/class name (e.g. Vec2), or a
+		# library-qualified type name (e.g. window::Window)
+		type_info = res.register(qualified_type_name())
+		if res.error:
+			return res
+		type_name, library_name, end_pos = type_info
+		is_variable: bool = True
 
 		pointer_layers: int = 0
 
@@ -223,9 +264,15 @@ def parse(tokens: list[Token]) -> Result:
 			)
 		return res.success(
 			VariableDeclaration(
-				start_pos, end_pos, iden_name, type_name, pointer_layers, is_variable
+				start_pos,
+				end_pos,
+				iden_name,
+				type_name,
+				pointer_layers,
+				is_variable,
+				library_name,
 			)
-    )
+		)
 
 	def array_declaration() -> Result:
 		start_pos: Position = current_tok.start_pos.copy()
@@ -1298,11 +1345,13 @@ def parse(tokens: list[Token]) -> Result:
 			advance()
 
 			if current_tok._type not in (TT.TYPE, TT.IDENT):
-				return res.fail(InvalidSyntaxError(
-					f"Expected data type after ':', found {current_tok.value or current_tok._type} instead.",
-					current_tok.start_pos,
-					current_tok.end_pos
-				))
+				return res.fail(
+					InvalidSyntaxError(
+						f"Expected data type after ':', found {current_tok.value or current_tok._type} instead.",
+						current_tok.start_pos,
+						current_tok.end_pos,
+					)
+				)
 			end_pos: Position = current_tok.end_pos.copy()
 			field_type: str = current_tok.value
 			field_pointer_layers: int = 0
@@ -1316,21 +1365,20 @@ def parse(tokens: list[Token]) -> Result:
 
 			fields.append(
 				StructField(
-					field_start,
-					end_pos,
-					field_name,
-					field_type,
-					field_pointer_layers
+					field_start, end_pos, field_name, field_type, field_pointer_layers
 				)
 			)
 
 			if current_tok._type not in (TT.SEMICOL, TT.NEWLINE, TT.RBR):
-				return res.fail(InvalidSyntaxError(
-					f"Expected ';' or EOL after field, found {current_tok.value or current_tok._type} instead.",
-					current_tok.start_pos,
-					current_tok.end_pos
-				))
-			while current_tok._type in (TT.SEMICOL, TT.NEWLINE): advance()
+				return res.fail(
+					InvalidSyntaxError(
+						f"Expected ';' or EOL after field, found {current_tok.value or current_tok._type} instead.",
+						current_tok.start_pos,
+						current_tok.end_pos,
+					)
+				)
+			while current_tok._type in (TT.SEMICOL, TT.NEWLINE):
+				advance()
 
 		end_pos = current_tok.end_pos.copy()
 		advance()
@@ -1482,7 +1530,11 @@ def parse(tokens: list[Token]) -> Result:
 				)
 			end_pos = current_tok.end_pos.copy()
 			advance()
-			return res.success(NewArrayExpression(start_pos, end_pos, type_name, pointer_layers, size_expr))
+			return res.success(
+				NewArrayExpression(
+					start_pos, end_pos, type_name, pointer_layers, size_expr
+				)
+			)
 
 		if current_tok._type != TT.LPR:
 			return res.fail(
@@ -1515,7 +1567,7 @@ def parse(tokens: list[Token]) -> Result:
 					current_tok.end_pos,
 				)
 			)
-		
+
 		end_pos = current_tok.end_pos.copy()
 		advance()
 
@@ -1588,7 +1640,7 @@ def parse(tokens: list[Token]) -> Result:
 					current_tok.start_pos,
 					current_tok.end_pos,
 				)
-			)		
+			)
 
 		return res.success(ProcedureCall(start_pos, end_pos, proc_name, args))
 
@@ -1640,11 +1692,17 @@ def parse(tokens: list[Token]) -> Result:
 						lhs.start_pos, rhs.end_pos, lhs.array, lhs.index, rhs, op_tok
 					)
 				)
-			
+
 			elif isinstance(lhs, MemberAccess):
 				return res.success(
 					MemberAssign(
-						lhs.start_pos, rhs.end_pos, lhs.parent, lhs.member, rhs, op_tok
+						lhs.start_pos,
+						rhs.end_pos,
+						lhs.parent,
+						lhs.member,
+						rhs,
+						op_tok,
+						lhs.is_arrow,
 					)
 				)
 
@@ -1705,11 +1763,12 @@ def parse(tokens: list[Token]) -> Result:
 
 			return res.success(UnaryOperation(op.start_pos, value.end_pos, op, value))
 		return postfix()
-	
+
 	def postfix() -> Result:
 		res: Result = Result()
 		result: Node = res.register(literal())
-		if res.error: return res
+		if res.error:
+			return res
 
 		while True:
 			if current_tok._type == TT.LSQ:  # array index
@@ -1807,14 +1866,23 @@ def parse(tokens: list[Token]) -> Result:
 
 					member_end = current_tok.end_pos.copy()
 					advance()
-					result = MethodCall(result.start_pos, member_end, result, member_name, args, is_arrow)
+					result = MethodCall(
+						result.start_pos,
+						member_end,
+						result,
+						member_name,
+						args,
+						is_arrow,
+					)
 				else:
 					member = Identifier(member_start, member_end, member_name)
-					result = MemberAccess(result.start_pos, member_start, result, member, is_arrow)
+					result = MemberAccess(
+						result.start_pos, member_start, result, member, is_arrow
+					)
 
 			else:
 				break
-		
+
 		return res.success(result)
 
 	def literal() -> Result:
@@ -1894,12 +1962,14 @@ def parse(tokens: list[Token]) -> Result:
 					advance()
 
 					return res.success(
-						LibraryCall(tok.start_pos, end_pos, iden_name, member_name, args)
+						LibraryCall(
+							tok.start_pos, end_pos, iden_name, member_name, args
+						)
 					)
 
 				return res.success(
 					LibraryAccess(tok.start_pos, member_end, iden_name, member_name)
-        )
+				)
 
 			return res.success(Identifier(tok.start_pos, tok.end_pos, iden_name))
 

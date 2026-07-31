@@ -278,69 +278,24 @@ def init_libraries(scope: Scope):
 	scope.symbols["window"] = make_library(
 		"window",
 		members={
-			"open": BuiltInSubroutineSymbol(
-				"open",
-				Type("procedure"),
-				parameters=[
-					Type("int"),
-					Type("int"),
-					Type("string"),
-				],
-				is_proc=True,
-				builtin_id=BuiltInID.WINDOW_OPEN,
-			),
-			"close": BuiltInSubroutineSymbol(
-				"close",
-				Type("procedure"),
-				is_proc=True,
-				builtin_id=BuiltInID.WINDOW_CLOSE,
-			),
-			"present": BuiltInSubroutineSymbol(
-				"present",
-				Type("procedure"),
-				is_proc=True,
-				builtin_id=BuiltInID.WINDOW_PRESENT,
-			),
-			"width": VariableSymbol("width", Type("int")),
-			"height": VariableSymbol("height", Type("int")),
-		},
-	)
-
-	scope.symbols["graphics"] = make_library(
-		"graphics",
-		members={
-			"clear": BuiltInSubroutineSymbol(
-				"clear",
-				Type("procedure"),
-				parameters=[Type("int")],
-				is_proc=True,
-				builtin_id=BuiltInID.GRAPHICS_CLEAR,
-			),
-			"pixel": BuiltInSubroutineSymbol(
-				"pixel",
-				Type("procedure"),
-				parameters=[
-					Type("int"),
-					Type("int"),
-					Type("int"),
-				],
-				is_proc=True,
-				builtin_id=BuiltInID.GRAPHICS_PIXEL,
-			),
-			"line": BuiltInSubroutineSymbol(
-				"line",
-				Type("procedure"),
-				parameters=[
-					Type("int"),
-					Type("int"),
-					Type("int"),
-					Type("int"),
-					Type("int"),
-				],
-				is_proc=True,
-				builtin_id=BuiltInID.GRAPHICS_LINE,
-			),
-		},
+			"Window": ClassSymbol(
+				"Window",
+				Type("Window"),
+				fields={
+					"x": VariableSymbol("x", Type("int"), address=0),
+					"y": VariableSymbol("y", Type("int"), address=1),
+					"width": VariableSymbol("width", Type("int"), address=2),
+					"height": VariableSymbol("height", Type("int"), address=3),
+					"title": VariableSymbol("title", Type("char", 1), address=4),
+					"state": VariableSymbol("state", Type("int"), address=5),
+					"_x": VariableSymbol("_x", Type("int"), address=6),
+					"_y": VariableSymbol("_y", Type("int"), address=7),
+					"_width": VariableSymbol("_width", Type("int"), address=8),
+					"_height": VariableSymbol("_height", Type("int"), address=9),
+				},
+				size=10,
+			)
+		}
 	)
 
 	scope.symbols["os"] = make_library(

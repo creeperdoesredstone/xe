@@ -9,10 +9,7 @@ class SemanticAnalyzer:
 	def __init__(self):
 		self.scope = None
 		self.next_address = 0x0000
-		self.functions = {}
-		self.structs = {}
-		self.classes = {}
-
+		self.string_literals: list[StringLiteral] = []
 		self.current_function: SubroutineSymbol | None = None
 
 	def _resolve_param_or_return_type(
@@ -57,7 +54,7 @@ class SemanticAnalyzer:
 	def pop_scope(self):
 		self.scope = self.scope.parent
 
-	def sizeof(self, _type: Type) -> int:
+	def sizeof(self, _type: Type, resolved_sym: "StructSymbol | ClassSymbol | None" = None) -> int:
 		if _type.pointer_layers > 0:
 			return 1
 
@@ -65,7 +62,7 @@ class SemanticAnalyzer:
 			case "int" | "float" | "bool" | "char" | "string":
 				return 1
 
-		sym = self.scope.lookup(_type.base)
+		sym = resolved_sym if resolved_sym is not None else self.scope.lookup(_type.base)
 
 		if isinstance(sym, (StructSymbol, ClassSymbol)):
 			return sym.size
@@ -106,6 +103,7 @@ class SemanticAnalyzer:
 				return res
 
 		self.pop_scope()
+		node.string_literals = self.string_literals
 		return res.success(None)
 
 	def visit_IntLiteral(self, node: IntLiteral) -> Result:
@@ -118,8 +116,9 @@ class SemanticAnalyzer:
 
 	def visit_StringLiteral(self, node: StringLiteral) -> Result:
 		node.address = self.next_address
-		self.next_address += 3
+		self.next_address += 1
 		node.type = Type("string")
+		self.string_literals.append(node)
 		return Result().success(Type("string"))
 
 	def visit_BoolLiteral(self, node: BoolLiteral) -> Result:
@@ -320,8 +319,29 @@ class SemanticAnalyzer:
 			)
 
 		struct_or_class_sym = None
+		library_name = getattr(node, "library_name", None)
 
-		if node.type not in DATA_TYPES:
+		if library_name is not None:
+			lib_sym = self.scope.lookup(library_name)
+			if not isinstance(lib_sym, LibrarySymbol):
+				return res.fail(
+					SemanticError(
+						f"'{library_name}' is not a library.",
+						node.start_pos,
+						node.end_pos,
+					)
+				)
+
+			struct_or_class_sym = lib_sym.lookup(node.type)
+			if not isinstance(struct_or_class_sym, (StructSymbol, ClassSymbol)):
+				return res.fail(
+					SemanticError(
+						f"'{library_name}::{node.type}' is not a struct or class type.",
+						node.start_pos,
+						node.end_pos,
+					)
+				)
+		elif node.type not in DATA_TYPES:
 			struct_or_class_sym = self.scope.lookup(node.type)
 			if not isinstance(struct_or_class_sym, (StructSymbol, ClassSymbol)):
 				return res.fail(
@@ -338,7 +358,7 @@ class SemanticAnalyzer:
 		)
 
 
-		size = self.sizeof(symbol_type) if node.pointer_layers == 0 else 1
+		size = self.sizeof(symbol_type, struct_or_class_sym) if node.pointer_layers == 0 else 1
 
 		if self.current_function is None:
 			address = self.next_address
@@ -356,7 +376,7 @@ class SemanticAnalyzer:
 			is_local=is_local,
 		)
 
-		if isinstance(struct_or_class_sym, StructSymbol):
+		if isinstance(struct_or_class_sym, (StructSymbol, ClassSymbol)):
 			var_symbol.struct_symbol = struct_or_class_sym
 
 		self.scope.symbols[node.name] = var_symbol
@@ -1021,15 +1041,10 @@ class SemanticAnalyzer:
 		)
 
 		self_ptr_type = Type(class_sym.name, 1)
-
-		# $self is always the first "parameter" -- prepend its width (1, since
-		# it's always a pointer) ahead of the declared parameters' widths.
 		param_widths = [1] + [
 			self.sizeof(t) if t.pointer_layers == 0 else 1 for t in param_list
 		]
 
-		# Positive offsets, matching _analyze_subroutine_body's convention
-		# exactly: first-pushed argument ends up at the largest offset.
 		running_offset = 0
 		offsets = [0] * len(param_widths)
 		for i in reversed(range(len(param_widths))):
@@ -1061,7 +1076,7 @@ class SemanticAnalyzer:
 			var_symbol = VariableSymbol(
 				name=param.name,
 				type=param_type,
-				address=offsets[i + 1],   # shifted by 1 to account for $self at index 0
+				address=offsets[i + 1], # shifted by 1 to account for $self at index 0
 				is_local=True,
 			)
 
@@ -1072,10 +1087,6 @@ class SemanticAnalyzer:
 			self.scope.symbols[param.name] = var_symbol
 
 		self.current_function.owning_class = class_sym
-		# next_local_offset always starts at -1, exactly like plain functions --
-		# no shift needed, since parameters (positive) and locals (negative)
-		# occupy disjoint ranges regardless of how many parameters there are.
-
 		res.register(self.analyze(node.body))
 		if res.error:
 			self.pop_scope()
@@ -1628,7 +1639,9 @@ class SemanticAnalyzer:
 		if op_error:
 			return res.fail(op_error)
 
-		struct_or_class_symbol = self.scope.lookup(parent_type.base)
+		struct_or_class_symbol = getattr(node.parent, "struct_symbol", None)
+		if struct_or_class_symbol is None:
+			struct_or_class_symbol = self.scope.lookup(parent_type.base)
 
 		if isinstance(struct_or_class_symbol, (StructSymbol, ClassSymbol)):
 			member_name = node.member.value
@@ -1687,7 +1700,9 @@ class SemanticAnalyzer:
 		if op_error:
 			return res.fail(op_error)
 
-		struct_or_class_symbol = self.scope.lookup(parent_type.base)
+		struct_or_class_symbol = getattr(node.obj, "struct_symbol", None)
+		if struct_or_class_symbol is None:
+			struct_or_class_symbol = self.scope.lookup(parent_type.base)
 		member_name = node.member.value
 		field_type: Type | None = None
 
@@ -1866,6 +1881,16 @@ class SemanticAnalyzer:
 
 			elif isinstance(member, (FunctionDefinition, ProcedureDefinition)):
 				is_proc = isinstance(member, ProcedureDefinition)
+
+				if member.name == "init" and not is_proc:
+					return res.fail(
+						SemanticError(
+							f"'init' must be declared as a procedure (proc), not a function (fn), since it has no return value.",
+							member.start_pos,
+							member.end_pos,
+						)
+					)
+				
 				res.register(
 					self._analyze_method(member, is_proc, class_sym)
 				)
@@ -1936,6 +1961,60 @@ class SemanticAnalyzer:
 				)
 			)
 
+		node.struct_symbol = struct_or_class_symbol
+
+		init_method = None
+		if isinstance(struct_or_class_symbol, ClassSymbol):
+			init_method = struct_or_class_symbol.methods.get("init")
+
+		if init_method is not None:
+			expected_params = init_method.parameters
+			if len(node.args) != len(expected_params):
+				return res.fail(
+					SemanticError(
+						f"'{node.type_name}::init' expects {len(expected_params)} argument(s), got {len(node.args)}.",
+						node.start_pos,
+						node.end_pos,
+					)
+				)
+
+			for i, (arg, expected_type) in enumerate(zip(node.args, expected_params)):
+				arg_type = res.register(self.analyze(arg))
+				if res.error:
+					return res
+
+				if arg_type != expected_type:
+					is_implicit_float_cast = (
+						arg_type.pointer_layers == 0
+						and expected_type.pointer_layers == 0
+						and expected_type.base == "float"
+						and arg_type.base == "int"
+					)
+					if not is_implicit_float_cast:
+						return res.fail(
+							SemanticError(
+								f"Argument {i + 1} to '{node.type_name}::init': cannot pass '{arg_type}' as '{expected_type}'.",
+								arg.start_pos,
+								arg.end_pos,
+							)
+						)
+
+			node.init_method = init_method
+			node.field_list = None
+			allocated_type = Type(node.type_name, 1)
+			node.type = allocated_type
+			return res.success(allocated_type)
+
+		if isinstance(struct_or_class_symbol, ClassSymbol) and len(node.args) > 0:
+			return res.fail(
+				SemanticError(
+					f"'{node.type_name}' has no 'init' method to receive constructor arguments. "
+					f"Either add an init() method, or call 'new {node.type_name}()' with no arguments.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
 		field_list = list(struct_or_class_symbol.fields.values())
 
 		if len(node.args) > len(field_list):
@@ -1970,7 +2049,7 @@ class SemanticAnalyzer:
 						)
 					)
 
-		node.struct_symbol = struct_or_class_symbol
+		node.init_method = None
 		node.field_list = field_list
 		allocated_type = Type(node.type_name, 1)
 		node.type = allocated_type

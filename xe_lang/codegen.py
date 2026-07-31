@@ -61,6 +61,15 @@ def is_pointer_base(node: Node) -> bool:
 	return t is not None and getattr(t, "pointer_layers", 0) > 0
 
 
+def is_implicit_float_cast(arg_type, expected_type) -> bool:
+	return (
+		expected_type.base == "float"
+		and expected_type.pointer_layers == 0
+		and arg_type.base == "int"
+		and arg_type.pointer_layers == 0
+	)
+
+
 def emit_pointer_field_address(node: Node) -> Result:
 	res = Result()
 
@@ -125,6 +134,46 @@ def generate_lookup_data():
 	return instructions
 
 
+def emit_string_literal_init(node: StringLiteral) -> Result:
+	global nodes_to_lookup, string_labels
+
+	instructions = [
+		# allocate descriptor
+		(node.start_pos, node.end_pos, "PUSH", 3),
+		(node.start_pos, node.end_pos, "SYS", 21),
+		(node.start_pos, node.end_pos, "DUP", 0),
+		(node.start_pos, node.end_pos, "DUP", 0),
+		# allocate character buffer
+		(node.start_pos, node.end_pos, "PUSH", 16 * ceil((len(node.value) + 1) / 16)),
+		(node.start_pos, node.end_pos, "SYS", 21),
+		# store pointer to buffer[0] at descriptor[0]
+		(node.start_pos, node.end_pos, "STREIND"),
+		(node.start_pos, node.end_pos, "INCI"),
+		(node.start_pos, node.end_pos, "DUP", 0),
+		# store length including '\0' at descriptor[1]
+		(node.start_pos, node.end_pos, "PUSH", len(node.value) + 1),
+		(node.start_pos, node.end_pos, "STREIND"),
+		(node.start_pos, node.end_pos, "INCI"),
+		(node.start_pos, node.end_pos, "DUP", 0),
+		# store capacity of character buffer at descriptor[2]
+		(node.start_pos, node.end_pos, "PUSH", 16 * ceil((len(node.value) + 1) / 16)),
+		(node.start_pos, node.end_pos, "STREIND"),
+		# roll back to descriptor[0]
+		(node.start_pos, node.end_pos, "DECI"),
+		(node.start_pos, node.end_pos, "DECI"),
+		(node.start_pos, node.end_pos, "LOADIND"),  # buffer[0]
+		(node.start_pos, node.end_pos, "PUSH", f"STR_LIT_{string_labels}"),
+		(node.start_pos, node.end_pos, "LOOKUP", len(node.value) + 1),
+		# store the finished pointer into this literal's dedicated slot
+		(node.start_pos, node.end_pos, "STORE", node.address),
+	]
+	node.label = f"STR_LIT_{string_labels}"
+	string_labels += 1
+
+	nodes_to_lookup.append(node)
+	return Result().success(instructions)
+
+
 def float_to_u32(value: float) -> int:
 	return struct.unpack(">I", struct.pack(">f", value))[0]
 
@@ -156,6 +205,14 @@ def compile_ast(ast: Program, fn: str) -> Result:
 	nodes_to_lookup.clear()
 
 	instructions = [(None, None, f":SECTION_TEXT_{name}")]
+
+	string_init_instructions = []
+	for lit_node in getattr(ast, "string_literals", []):
+		lit_instructions = res.register(emit_string_literal_init(lit_node))
+		if res.error:
+			return res
+		string_init_instructions.extend(lit_instructions)
+	instructions.extend(string_init_instructions)
 
 	main_prgm_instructions = []
 	for stmt in ast.statements:
@@ -260,67 +317,9 @@ def emit_FloatLiteral(node: FloatLiteral) -> Result:
 
 
 def emit_StringLiteral(node: StringLiteral) -> Result:
-	global nodes_to_lookup, string_labels
-	instructions = [
-		# get description vector pointer
-		(node.start_pos, node.end_pos, "PUSH", 3),
-		(node.start_pos, node.end_pos, "SYS", 21),
-		(node.start_pos, node.end_pos, "DUP", 0),
-		(node.start_pos, node.end_pos, "DUP", 0),
-		(node.start_pos, node.end_pos, "PUSH", 16 * ceil((len(node.value) + 1) / 16)),
-		(node.start_pos, node.end_pos, "SYS", 21),
-		(
-			node.start_pos,
-			node.end_pos,
-			"STREIND",  # &str[0]
-		),
-		(
-			node.start_pos,
-			node.end_pos,
-			"INCI",
-		),
-		(node.start_pos, node.end_pos, "DUP", 0),
-		(node.start_pos, node.end_pos, "PUSH", len(node.value) + 1),
-		(
-			node.start_pos,
-			node.end_pos,
-			"STREIND",  # str.length
-		),
-		(
-			node.start_pos,
-			node.end_pos,
-			"INCI",
-		),
-		(node.start_pos, node.end_pos, "DUP", 0),
-		(node.start_pos, node.end_pos, "PUSH", 16 * ceil((len(node.value) + 1) / 16)),
-		(
-			node.start_pos,
-			node.end_pos,
-			"STREIND",  # str.capacity
-		),
-		(
-			node.start_pos,
-			node.end_pos,
-			"DECI",
-		),
-		(
-			node.start_pos,
-			node.end_pos,
-			"DECI",
-		),
-		(
-			node.start_pos,
-			node.end_pos,
-			"LOADIND",
-		),
-		(node.start_pos, node.end_pos, "PUSH", f"STR_LIT_{string_labels}"),
-		(node.start_pos, node.end_pos, "LOOKUP", len(node.value) + 1),
-	]
-	node.label = f"STR_LIT_{string_labels}"
-	string_labels += 1
-
-	nodes_to_lookup.append(node)
-	return Result().success(instructions)
+	return Result().success(
+		[(node.start_pos, node.end_pos, "LOAD", node.address)]
+	)
 
 
 def emit_BoolLiteral(node: BoolLiteral) -> Result:
@@ -1516,14 +1515,14 @@ def emit_FunctionCall(node: FunctionCall) -> Result:
 		for _ in range(node.return_width - node.param_width):
 			instructions.append((node.start_pos, node.start_pos, "PUSH", 0))
 
-	# Evaluate arguments left-to-right.
-	for arg in node.arguments:
+	for arg, expected_type in zip(node.arguments, node.arg_types):
 		arg_instr = res.register(emit_argument(arg))
 		if res.error:
 			return res
+		if is_implicit_float_cast(arg.type, expected_type):
+			instructions.extend(arg.end_pos, arg.end_pos, "I2F")
 		instructions.extend(arg_instr)
 
-	# Save caller's frame pointer.
 	instructions.append((node.start_pos, node.end_pos, "PUSHFP"))
 
 	if isinstance(node.caller, Identifier):
@@ -1557,14 +1556,15 @@ def emit_ProcedureCall(node: ProcedureCall) -> Result:
 	res = Result()
 	instructions = []
 
-	# Evaluate arguments left-to-right.
-	for arg in node.arguments:
+	for arg, expected_type in zip(node.arguments, node.arg_types):
 		arg_instr = res.register(emit_argument(arg))
 		if res.error:
 			return res
+		if is_implicit_float_cast(arg.type, expected_type):
+			instructions.extend(arg.end_pos, arg.end_pos, "I2F")
 		instructions.extend(arg_instr)
 
-	# Save caller's frame pointer.
+
 	instructions.append((node.start_pos, node.end_pos, "PUSHFP"))
 
 	instructions.append(
@@ -1820,10 +1820,12 @@ def emit_MethodCall(node: MethodCall) -> Result:
 		address = node.obj.address
 		instructions.append((node.start_pos, node.end_pos, "PUSH", address))
 
-	for arg in node.arguments:
+	for arg, expected_type in zip(node.arguments, node.arg_types):
 		arg_instr = res.register(emit_argument(arg))
 		if res.error:
 			return res
+		if is_implicit_float_cast(arg.type, expected_type):
+			instructions.append(arg.end_pos, arg.end_pos, "I2F")
 		instructions.extend(arg_instr)
 
 	instructions.append((node.start_pos, node.end_pos, "PUSHFP"))
@@ -1861,6 +1863,25 @@ def emit_NewObjectExpression(node: NewObjectExpression) -> Result:
 	instructions.append((node.start_pos, node.end_pos, "PUSH", size))
 	instructions.append((node.start_pos, node.end_pos, "SYS", 21))  # malloc
 
+	init_method = getattr(node, "init_method", None)
+
+	if init_method is not None:
+		instructions.append((node.start_pos, node.end_pos, "DUP", 0))
+
+		for arg, expected_type in zip(node.args, init_method.parameters):
+			arg_instructions = res.register(emit_argument(arg))
+			if res.error:
+				return res
+			
+			if is_implicit_float_cast(arg.type, expected_type):
+				instructions.append((node.start_pos, node.end_pos, "I2F"))
+			instructions.extend(arg_instructions)
+
+		instructions.append((node.start_pos, node.end_pos, "PUSHFP"))
+		instructions.append((node.start_pos, node.end_pos, "CALL", init_method.name))
+
+		return res.success(instructions)
+
 	for i, arg in enumerate(node.args):
 		field = node.field_list[i]
 
@@ -1875,15 +1896,10 @@ def emit_NewObjectExpression(node: NewObjectExpression) -> Result:
 			return res
 		instructions.extend(arg_instructions)
 
-		if (
-			field.type.base == "float"
-			and field.type.pointer_layers == 0
-			and arg.type.base == "int"
-			and arg.type.pointer_layers == 0
-		):
-			instructions.append((node.start_pos, node.end_pos, "I2F"))
+		if is_implicit_float_cast(arg.type, field.type):
+			instructions.append((arg.end_pos, arg.end_pos, "I2F"))
 
-		instructions.append((node.start_pos, node.end_pos, "STREIND"))
+		instructions.append((node.end_pos, node.end_pos, "STREIND"))
 
 	return res.success(instructions)
 
@@ -1926,7 +1942,7 @@ def emit_LibraryCall(node: LibraryCall) -> Result:
 		if (
 			arg.type.base == "int"
 			and arg.type.pointer_layers == 0
-		):
+		):  # only works for math libraries, other libraries will have different logic
 			instructions.append((arg.start_pos, arg.end_pos, "I2F"))
 
 	if node.builtin_id in MATH_BUILTIN_OPCODES:
