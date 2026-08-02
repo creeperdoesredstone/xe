@@ -463,7 +463,7 @@ class VM:
 				val = 0
 
 				match ins_arg:
-					case 0:
+					case 0: # ADDI/ADDF
 						val = a + b
 						self.cr = TRUE if not is_float_op and a + b > TRUE else FALSE
 					case 1:
@@ -555,13 +555,13 @@ class VM:
 							val = math.tan(math.radians(a))
 					case 7:
 						if is_float_op:
-							val = math.asin(math.radians(a))
+							val = math.degrees(math.asin(a))
 					case 8:
 						if is_float_op:
-							val = math.acos(math.radians(a))
+							val = math.degrees(math.acos(a))
 					case 9:
 						if is_float_op:
-							val = math.atan(math.radians(a))
+							val = math.degrees(math.atan(a))
 					case 10:
 						val = math.sqrt(a)
 						if not is_float_op:
@@ -696,15 +696,14 @@ class VM:
 							str_len = len(result_str)
 
 							required_chars_len = str_len + 1
-							capacity = math.ceil(required_chars_len)
 
-							# allocate 3 words for string metadata: [ptr_to_chars, length, capacity]
-							res.register(self.malloc(3))
+							# allocate 2 words for string metadata: [ptr_to_chars, length]
+							res.register(self.malloc(2))
 							if res.error:
 								return res
 							metadata_ptr = res.register(self.pop())
 
-							res.register(self.malloc(capacity))
+							res.register(self.malloc(required_chars_len))
 							if res.error:
 								return res
 							chars_ptr = res.register(self.pop())
@@ -714,9 +713,6 @@ class VM:
 							)
 							self.data_memory[metadata_ptr + 1] = (
 								required_chars_len  # string.descriptor[1] = len + 1
-							)
-							self.data_memory[metadata_ptr + 2] = (
-								capacity  # string.descriptor[2] = capacity
 							)
 
 							self.write_mem_string(chars_ptr, result_str)
@@ -739,8 +735,6 @@ class VM:
 
 							return self.malloc(words)
 						case 22:  # FREE
-							# print(self.allocations)
-							# print(self.free_list)
 							ptr = res.register(self.pop())
 							if res.error:
 								return res
