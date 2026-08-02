@@ -1473,7 +1473,7 @@ class SemanticAnalyzer:
 				)
 			)
 		elif array_type.base == "string":
-			result_type = Type("string")
+			result_type = Type("char")
 		else:
 			result_type = Type(array_type.base, min(array_type.pointer_layers - 1, 0))
 		node.type = result_type

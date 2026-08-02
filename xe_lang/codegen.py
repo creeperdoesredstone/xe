@@ -134,9 +134,7 @@ def generate_lookup_data():
 	return instructions
 
 
-def emit_string_literal_init(node: StringLiteral) -> Result:
-	global nodes_to_lookup, string_labels
-
+def emit_string_literal_desc(node: StringLiteral) -> list[Instruction]:
 	instructions = [
 		# allocate descriptor
 		(node.start_pos, node.end_pos, "PUSH", 2),
@@ -155,6 +153,15 @@ def emit_string_literal_init(node: StringLiteral) -> Result:
 		(node.start_pos, node.end_pos, "STREIND"),
 		# roll back to descriptor[0]
 		(node.start_pos, node.end_pos, "DECI"),
+	]
+
+	return instructions
+
+
+def emit_string_literal_init(node: StringLiteral) -> Result:
+	global nodes_to_lookup, string_labels
+
+	instructions = emit_string_literal_desc(node) + [
 		(node.start_pos, node.end_pos, "LOADIND"),  # buffer[0]
 		(node.start_pos, node.end_pos, "PUSH", f"STR_LIT_{string_labels}"),
 		(node.start_pos, node.end_pos, "LOOKUP", len(node.value) + 1),
@@ -2035,6 +2042,38 @@ def emit_LibraryCall(node: LibraryCall) -> Result:
 		instructions.append((node.start_pos, node.end_pos, "INCI"))
 		instructions.append((node.start_pos, node.end_pos, "LOADIND"))
 		instructions.append((node.start_pos, node.end_pos, "DECI"))
+		return res.success(instructions)
+
+	if node.builtin_id == BuiltInID.STRING_TO_INT:
+		instructions.append((node.start_pos, node.end_pos, "LOADIND"))
+		instructions.append((node.start_pos, node.end_pos, "SYS", 3))
+		return res.success(instructions)
+
+	if node.builtin_id == BuiltInID.STRING_TO_FLOAT:
+		instructions.append((node.start_pos, node.end_pos, "LOADIND"))
+		instructions.append((node.start_pos, node.end_pos, "SYS", 4))
+		return res.success(instructions)
+
+	if node.builtin_id == BuiltInID.STRING_FROM_INT:
+		instructions.extend(emit_string_literal_desc(StringLiteral(
+			None, None, " " * 15
+		)))
+		instructions.append((node.start_pos, node.end_pos, "LOADIND"))
+		instructions.append((node.start_pos, node.end_pos, "ROT"))
+		instructions.append((node.start_pos, node.end_pos, "ROT"))
+		instructions.append((node.start_pos, node.end_pos, "SYS", 5))
+		instructions.append((node.start_pos, node.end_pos, "SYS", 12))
+		return res.success(instructions)
+
+	if node.builtin_id == BuiltInID.STRING_FROM_FLOAT:
+		instructions.extend(emit_string_literal_desc(StringLiteral(
+			None, None, " " * 15
+		)))
+		instructions.append((node.start_pos, node.end_pos, "LOADIND"))
+		instructions.append((node.start_pos, node.end_pos, "ROT"))
+		instructions.append((node.start_pos, node.end_pos, "ROT"))
+		instructions.append((node.start_pos, node.end_pos, "SYS", 6))
+		instructions.append((node.start_pos, node.end_pos, "SYS", 12))
 		return res.success(instructions)
 
 	return res.fail(

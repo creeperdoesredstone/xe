@@ -22,6 +22,10 @@ class BuiltInID(Enum):
 	STRING_CONCAT = auto()
 	STRING_GET_BUFFER_PTR = auto()
 	STRING_STRLEN = auto()
+	STRING_TO_INT = auto()
+	STRING_TO_FLOAT = auto()
+	STRING_FROM_INT = auto()
+	STRING_FROM_FLOAT = auto()
 
 
 class Scope:
@@ -280,16 +284,16 @@ def init_libraries(scope: Scope):
 				"Window",
 				Type("Window"),
 				fields={
-					"x": VariableSymbol("x", Type("int"), address=0),
-					"y": VariableSymbol("y", Type("int"), address=1),
-					"width": VariableSymbol("width", Type("int"), address=2),
-					"height": VariableSymbol("height", Type("int"), address=3),
+					"display_x": VariableSymbol("display_x", Type("int"), address=0),
+					"display_y": VariableSymbol("display_y", Type("int"), address=1),
+					"display_width": VariableSymbol("display_width", Type("int"), address=2),
+					"display_height": VariableSymbol("display_height", Type("int"), address=3),
 					"title": VariableSymbol("title", Type("char", 1), address=4),
 					"state": VariableSymbol("state", Type("int"), address=5),
-					"_x": VariableSymbol("_x", Type("int"), address=6),
-					"_y": VariableSymbol("_y", Type("int"), address=7),
-					"_width": VariableSymbol("_width", Type("int"), address=8),
-					"_height": VariableSymbol("_height", Type("int"), address=9),
+					"x": VariableSymbol("x", Type("int"), address=6),
+					"y": VariableSymbol("y", Type("int"), address=7),
+					"width": VariableSymbol("width", Type("int"), address=8),
+					"height": VariableSymbol("height", Type("int"), address=9),
 				},
 				size=10,
 				methods={
@@ -340,5 +344,33 @@ def init_libraries(scope: Scope):
 				return_type=Type("int"),
 				builtin_id=BuiltInID.STRING_STRLEN,
 			),
+			"to_int": BuiltInSubroutineSymbol(
+				"to_int",
+				Type("function"),
+				parameters=[Type("string")],
+				return_type=Type("int"),
+				builtin_id=BuiltInID.STRING_TO_INT
+			),
+			"to_float": BuiltInSubroutineSymbol(
+				"to_float",
+				Type("function"),
+				parameters=[Type("string")],
+				return_type=Type("float"),
+				builtin_id=BuiltInID.STRING_TO_FLOAT
+			),
+			"from_int": BuiltInSubroutineSymbol(
+				"from_int",
+				Type("function"),
+				parameters=[Type("int")],
+				return_type=Type("string"),
+				builtin_id=BuiltInID.STRING_FROM_INT
+			),
+			"from_float": BuiltInSubroutineSymbol(
+				"from_float",
+				Type("function"),
+				parameters=[Type("float")],
+				return_type=Type("string"),
+				builtin_id=BuiltInID.STRING_FROM_FLOAT
+			)
 		},
 	)
