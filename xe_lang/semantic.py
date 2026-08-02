@@ -13,16 +13,27 @@ class SemanticAnalyzer:
 		self.current_function: SubroutineSymbol | None = None
 
 	def _resolve_param_or_return_type(
-		self, type_name: str, pointer_layers: int
+		self, type_name: str, pointer_layers: int, library_name: str | None = None
 	) -> Type | None:
+		if library_name is not None:
+			lib_sym = self.scope.lookup(library_name)
+			if not isinstance(lib_sym, LibrarySymbol):
+				return None, None
+
+			sym = lib_sym.lookup(type_name)
+			if isinstance(sym, (StructSymbol, ClassSymbol)):
+				return Type(type_name, pointer_layers), sym
+
+			return None, None
+
 		if type_name in DATA_TYPES:
-			return Type(type_name, pointer_layers)
+			return Type(type_name, pointer_layers), None
 
 		sym = self.scope.lookup(type_name)
 		if isinstance(sym, (StructSymbol, ClassSymbol)):
-			return Type(type_name, pointer_layers)
+			return Type(type_name, pointer_layers), sym
 
-		return None
+		return None, None
 
 	def _check_member_access_operator(self, base_type: Type, node) -> SemanticError | None:
 		if node.is_arrow:
@@ -144,6 +155,7 @@ class SemanticAnalyzer:
 					node.parent = Identifier(node.start_pos, node.start_pos, "$self")
 					node.parent.address = self_symbol.address
 					node.parent.is_local = True
+					node.parent.pointer_layers = 1
 					node.parent.type = self_symbol.type
 					node.member = Identifier(node.start_pos, node.end_pos, node.value)
 					node.field_address = field.address
@@ -814,8 +826,8 @@ class SemanticAnalyzer:
 
 		return_type = None
 		if not is_proc:
-			return_type = self._resolve_param_or_return_type(
-				node.return_type, node.pointer_layers
+			return_type, _ = self._resolve_param_or_return_type(
+				node.return_type, node.pointer_layers, getattr(node, "return_library", None)
 			)
 			if return_type is None:
 				return res.fail(
@@ -844,7 +856,9 @@ class SemanticAnalyzer:
 					)
 				)
 			
-			param_type = self._resolve_param_or_return_type(p.type, p.pointer_layers)
+			param_type, _ = self._resolve_param_or_return_type(
+				p.type, p.pointer_layers, getattr(p, "library_name", None)
+			)
 			if param_type is None:
 				return res.fail(
 					SemanticError(
@@ -927,7 +941,10 @@ class SemanticAnalyzer:
 					)
 				)
 
-			if self._resolve_param_or_return_type(param.type, param.pointer_layers) is None:
+			resolved_param_type, struct_sym = self._resolve_param_or_return_type(
+				param.type, param.pointer_layers, getattr(param, "library_name", None)
+			)
+			if resolved_param_type is None:
 				return bail(
 					SemanticError(
 						f"Unknown type '{param.type}'.",
@@ -938,13 +955,12 @@ class SemanticAnalyzer:
 
 			var_symbol: VariableSymbol = VariableSymbol(
 				name=param.name,
-				type=Type(param.type, param.pointer_layers),
+				type=resolved_param_type,
 				address=offsets[i],
 				is_local=True,
 			)
 
-			struct_sym = self.scope.lookup(param.type)
-			if isinstance(struct_sym, StructSymbol):
+			if isinstance(struct_sym, (StructSymbol, ClassSymbol)):
 				var_symbol.struct_symbol = struct_sym
 
 			self.scope.symbols[param.name] = var_symbol
@@ -987,7 +1003,9 @@ class SemanticAnalyzer:
 
 		return_type = None
 		if not is_proc:
-			return_type = self._resolve_param_or_return_type(node.return_type, node.pointer_layers)
+			return_type, _ = self._resolve_param_or_return_type(
+				node.return_type, node.pointer_layers, getattr(node, "return_library", None)
+			)
 			if return_type is None:
 				return res.fail(
 					SemanticError(
@@ -1001,8 +1019,11 @@ class SemanticAnalyzer:
 			node.return_width = 0
 
 		param_list: list[Type] = []
+		param_struct_syms: list = []
 		for p in node.parameters:
-			param_type = self._resolve_param_or_return_type(p.type, p.pointer_layers)
+			param_type, struct_sym = self._resolve_param_or_return_type(
+				p.type, p.pointer_layers, getattr(p, "library_name", None)
+			)
 			if param_type is None:
 				return res.fail(
 					SemanticError(
@@ -1012,6 +1033,7 @@ class SemanticAnalyzer:
 					)
 				)
 			param_list.append(param_type)
+			param_struct_syms.append(struct_sym)
 
 		param_names = [p.name for p in node.parameters]
 
@@ -1080,7 +1102,7 @@ class SemanticAnalyzer:
 				is_local=True,
 			)
 
-			struct_sym = self.scope.lookup(param.type)
+			struct_sym = param_struct_syms[i]
 			if isinstance(struct_sym, (StructSymbol, ClassSymbol)):
 				var_symbol.struct_symbol = struct_sym
 
@@ -1862,7 +1884,10 @@ class SemanticAnalyzer:
 					field_type_name = member.element_type
 					pointer_layers = member.pointer_layers + 1
 
-				field_type = self._resolve_param_or_return_type(field_type_name, pointer_layers)
+				field_library_name = getattr(member, "library_name", None)
+				field_type, field_struct_sym = self._resolve_param_or_return_type(
+					field_type_name, pointer_layers, field_library_name
+				)
 				if field_type is None:
 					return res.fail(
 						SemanticError(
@@ -1872,12 +1897,16 @@ class SemanticAnalyzer:
 						)
 					)
 
-				class_sym.fields[field_name] = VariableSymbol(
+				field_symbol = VariableSymbol(
 					name=field_name,
 					type=field_type,
 					address=offset,
 				)
-				offset += self.sizeof(field_type) if field_type.pointer_layers == 0 else 1
+				if isinstance(field_struct_sym, (StructSymbol, ClassSymbol)):
+					field_symbol.struct_symbol = field_struct_sym
+
+				class_sym.fields[field_name] = field_symbol
+				offset += self.sizeof(field_type, field_struct_sym) if field_type.pointer_layers == 0 else 1
 
 			elif isinstance(member, (FunctionDefinition, ProcedureDefinition)):
 				is_proc = isinstance(member, ProcedureDefinition)
@@ -2084,7 +2113,6 @@ class SemanticAnalyzer:
 		if op_error:
 			return res.fail(op_error)
 
-		# Method calls work on both by-value instances and pointers-to-instance.
 		base_type_name = obj_type.base
 		class_sym = self.scope.lookup(base_type_name)
 
@@ -2139,7 +2167,8 @@ class SemanticAnalyzer:
 					)
 
 		node.arg_types = expected_params
-		node.mangled_name = method_sym.name
+		node.builtin_id = getattr(method_sym, "builtin_id", None)
+		node.mangled_name = method_sym.name if node.builtin_id is None else None
 		node.obj_is_pointer = obj_type.pointer_layers > 0
 		node.class_symbol = class_sym
 		node.type = (

@@ -17,7 +17,6 @@ def _truncate_toward_zero(value: float) -> int:
 	return int(value)
 
 
-BRANCH_OPCODES = {"CALL", "CALLIND", "BRZ", "BRNZ", "JMP", "JZ", "JNZ"}
 BINARY_FOLDABLE = {
 	"ADDI": lambda a, b: a + b,
 	"SUBI": lambda a, b: a - b,
@@ -50,27 +49,28 @@ def _opcode(instr: Instruction) -> str:
 
 
 def _referenced_labels(instructions: list[Instruction]) -> set[str]:
-	"""Collect every label name used as a branch/call target."""
 	refs: set[str] = set()
 	for instr in instructions:
-		if _opcode(instr) in BRANCH_OPCODES and len(instr) > 3:
-			target = instr[3]
-			if isinstance(target, str):
-				refs.add(target if target.startswith(":") else ":" + target)
+		if len(instr) <= 3:
+			continue
+
+		for operand in instr[3:]:
+			if isinstance(operand, str):
+				refs.add(operand if operand.startswith(":") else ":" + operand)
+
 	return refs
 
 
 def remove_nops(instructions: list[Instruction]) -> list[Instruction]:
-	"""Drop explicit NOP instructions (never touches labels/data/sections)."""
-	return [i for i in instructions if _opcode(i) not in NOOP_OPCODES]
+	instr = []
+	for i in instructions:
+		if _opcode(i) == "POP" and i[-1] == 0:
+			continue
+		instr.append(i)
+	return instr
 
 
 def fold_constants(instructions: list[Instruction]) -> list[Instruction]:
-	"""
-	Collapse `PUSH a, PUSH b, <binop>` into a single `PUSH (a op b)` when
-	both operands are literal ints. Only applies within a straight run of
-	instructions (stops at labels/sections/data, which are left untouched).
-	"""
 	out: list[Instruction] = []
 
 	for instr in instructions:
@@ -123,6 +123,39 @@ def fold_literal_casts(instructions: list[Instruction]) -> list[Instruction]:
 	return out
 
 
+def fold_inc_dec(instructions: list[Instruction]) -> list[Instruction]:
+	out: list[Instruction] = []
+	i = 0
+	while i < len(instructions):
+		cur = instructions[i]
+		nxt = instructions[i + 1] if i + 1 < len(instructions) else None
+
+		if nxt is not None:
+			if cur[2:] == ("PUSH", 1):
+				if _opcode(nxt) == "ADDI":
+					out.append((cur[0], cur[1], "INCI"))
+					i += 2
+					continue
+				if _opcode(nxt) == "SUBI":
+					out.append((cur[0], cur[1], "DECI"))
+					i += 2
+					continue
+			if cur[2:] == ("PUSH", 1065353216):
+				if _opcode(nxt) == "ADDF":
+					out.append((cur[0], cur[1], "INCF"))
+					i += 2
+					continue
+				if _opcode(nxt) == "SUBF":
+					out.append((cur[0], cur[1], "DECF"))
+					i += 2
+					continue
+
+		out.append(cur)
+		i += 1
+
+	return out
+
+
 def remove_redundant_loads(instructions: list[Instruction]) -> list[Instruction]:
 	out: list[Instruction] = []
 	i = 0
@@ -171,22 +204,28 @@ def remove_unreachable_after_halt(instructions: list[Instruction]) -> list[Instr
 
 
 def remove_unused_labels(instructions: list[Instruction]) -> list[Instruction]:
-	refs = _referenced_labels(instructions)
-	out = []
-	for instr in instructions:
-		if _is_label(instr) and not _is_section(instr) and instr[2] not in refs:
-			continue
-		out.append(instr)
-	return out
+	while True:
+		refs = _referenced_labels(instructions)
+		pruned = [
+			instr
+			for instr in instructions
+			if not (_is_label(instr) and not _is_section(instr) and instr[2] not in refs)
+		]
+
+		swept = remove_unreachable_after_halt(pruned)
+
+		if swept == instructions:
+			return swept
+
+		instructions = swept
 
 
 DEFAULT_PASSES = [
 	remove_nops,
 	fold_constants,
 	fold_literal_casts,
+	fold_inc_dec,
 	remove_redundant_loads,
-	remove_unreachable_after_halt,
-	remove_unused_labels,
 ]
 
 

@@ -15,17 +15,13 @@ class BuiltInID(Enum):
 	MATH_POW = auto()
 	MATH_LERP = auto()
 
-	WINDOW_OPEN = auto()
 	WINDOW_CLOSE = auto()
-	WINDOW_PRESENT = auto()
+	WINDOW_IS_FULLSCREEN = auto()
+	WINDOW_IS_MINIMIZED = auto()
 
-	GRAPHICS_CLEAR = auto()
-	GRAPHICS_PIXEL = auto()
-	GRAPHICS_LINE = auto()
-
-	OS_EXIT = auto()
-	OS_SLEEP = auto()
-	OS_CLOCK = auto()
+	STRING_CONCAT = auto()
+	STRING_GET_BUFFER_PTR = auto()
+	STRING_STRLEN = auto()
 
 
 class Scope:
@@ -172,6 +168,8 @@ class ClassSymbol(BaseSymbol):
 	methods: dict[str, BaseSymbol] = field(default_factory=dict)
 	base_class: Union["ClassSymbol", None] = None
 	size: int = 0
+	is_builtin: bool = False
+	used: bool = False
 
 	def __post_init__(self):
 		self.type = Type(self.name)
@@ -264,7 +262,7 @@ def init_libraries(scope: Scope):
 				builtin_id=BuiltInID.MATH_POW,
 			),
 			"lerp": BuiltInSubroutineSymbol(
-				"pow",
+				"lerp",
 				Type("function"),
 				parameters=[Type("float"), Type("float"), Type("float")],
 				return_type=Type("float"),
@@ -294,32 +292,53 @@ def init_libraries(scope: Scope):
 					"_height": VariableSymbol("_height", Type("int"), address=9),
 				},
 				size=10,
+				methods={
+					"close": BuiltInSubroutineSymbol(
+						"close",
+						Type("procedure"),
+						is_proc=True,
+						builtin_id=BuiltInID.WINDOW_CLOSE,
+					),
+					"is_fullscreen": BuiltInSubroutineSymbol(
+						"is_fullscreen",
+						Type("function"),
+						return_type=Type("bool"),
+						builtin_id=BuiltInID.WINDOW_IS_FULLSCREEN,
+					),
+					"is_minimized": BuiltInSubroutineSymbol(
+						"is_minimized",
+						Type("function"),
+						return_type=Type("bool"),
+						builtin_id=BuiltInID.WINDOW_IS_MINIMIZED,
+					),
+				},
 			)
 		}
 	)
 
-	scope.symbols["os"] = make_library(
-		"os",
+	scope.symbols["xestring"] = make_library(
+		"xestring",
 		members={
-			"exit": BuiltInSubroutineSymbol(
-				"exit",
-				Type("procedure"),
-				parameters=[Type("int")],
-				is_proc=True,
-				builtin_id=BuiltInID.OS_EXIT,
-			),
-			"sleep": BuiltInSubroutineSymbol(
-				"sleep",
-				Type("procedure"),
-				parameters=[Type("int")],
-				is_proc=True,
-				builtin_id=BuiltInID.OS_SLEEP,
-			),
-			"clock": BuiltInSubroutineSymbol(
-				"clock",
+			"concat": BuiltInSubroutineSymbol(
+				"concat",
 				Type("function"),
+				parameters=[Type("string"), Type("string")],
+				return_type=Type("string"),
+				builtin_id=BuiltInID.STRING_CONCAT,
+			),
+			"get_buffer_ptr": BuiltInSubroutineSymbol(
+				"get_buffer_ptr",
+				Type("function"),
+				parameters=[Type("string")],
+				return_type=Type("char", 1),
+				builtin_id=BuiltInID.STRING_GET_BUFFER_PTR,
+			),
+			"strlen": BuiltInSubroutineSymbol(
+				"strlen",
+				Type("function"),
+				parameters=[Type("string")],
 				return_type=Type("int"),
-				builtin_id=BuiltInID.OS_CLOCK,
+				builtin_id=BuiltInID.STRING_STRLEN,
 			),
 		},
 	)

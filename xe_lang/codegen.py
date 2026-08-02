@@ -26,7 +26,7 @@ func_name: str | None = None
 nodes_to_lookup: list[Node] = []
 
 # TODO:
-# - implement graphics via syscalls (dw about implementation we'll do that in r1)
+# - implement graphics via syscalls (dw about implementation we'll do that in r2)
 
 
 def emit_argument(arg: Node) -> Result:
@@ -139,12 +139,12 @@ def emit_string_literal_init(node: StringLiteral) -> Result:
 
 	instructions = [
 		# allocate descriptor
-		(node.start_pos, node.end_pos, "PUSH", 3),
+		(node.start_pos, node.end_pos, "PUSH", 2),
 		(node.start_pos, node.end_pos, "SYS", 21),
 		(node.start_pos, node.end_pos, "DUP", 0),
 		(node.start_pos, node.end_pos, "DUP", 0),
 		# allocate character buffer
-		(node.start_pos, node.end_pos, "PUSH", 16 * ceil((len(node.value) + 1) / 16)),
+		(node.start_pos, node.end_pos, "PUSH", len(node.value) + 1),
 		(node.start_pos, node.end_pos, "SYS", 21),
 		# store pointer to buffer[0] at descriptor[0]
 		(node.start_pos, node.end_pos, "STREIND"),
@@ -153,13 +153,7 @@ def emit_string_literal_init(node: StringLiteral) -> Result:
 		# store length including '\0' at descriptor[1]
 		(node.start_pos, node.end_pos, "PUSH", len(node.value) + 1),
 		(node.start_pos, node.end_pos, "STREIND"),
-		(node.start_pos, node.end_pos, "INCI"),
-		(node.start_pos, node.end_pos, "DUP", 0),
-		# store capacity of character buffer at descriptor[2]
-		(node.start_pos, node.end_pos, "PUSH", 16 * ceil((len(node.value) + 1) / 16)),
-		(node.start_pos, node.end_pos, "STREIND"),
 		# roll back to descriptor[0]
-		(node.start_pos, node.end_pos, "DECI"),
 		(node.start_pos, node.end_pos, "DECI"),
 		(node.start_pos, node.end_pos, "LOADIND"),  # buffer[0]
 		(node.start_pos, node.end_pos, "PUSH", f"STR_LIT_{string_labels}"),
@@ -236,20 +230,6 @@ def compile_ast(ast: Program, fn: str) -> Result:
 	instructions.append((None, None, f":SECTION_DATA_{name}"))
 
 	instructions.extend(data_lookup)
-
-	fn = Path(ast.start_pos.fn).stem
-
-	if not fn.startswith("<"):
-		asm_dir = Path("asm")
-		asm_dir.mkdir(exist_ok=True)
-
-		with open(
-			asm_dir / f"{fn}.xas",
-			"w",
-			encoding="utf-8",
-		) as file:
-			file.write(format_instructions(instructions))
-
 	return res.success(instructions)
 
 
@@ -1034,7 +1014,7 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 	return res.success(instructions)
 
 
-def emit_FunctionDefinition(node: FunctionDefinition) -> Result:
+def emit_FunctionDefinition(node: FunctionDefinition|ProcedureDefinition) -> Result:
 	global func_stack, func_name
 
 	res = Result()
@@ -1148,18 +1128,46 @@ def emit_ReturnStatement(node: ReturnStatement) -> Result:
 					)
 				)
 
-			base_address, is_local = resolve_struct_base_address(node.value)
+			base_address, _ = resolve_struct_base_address(node.value)
 			load_opcode = "LOADSP"
 
-			for slot in range(struct_sym.size):
-				instructions.append(
+			if isinstance(node.value, Identifier):
+				# returns a struct
+				for slot in range(struct_sym.size):
+					instructions.append(
+						(
+							node.start_pos,
+							node.end_pos,
+							load_opcode,
+							base_address - slot,
+						)
+					)
+			else:
+				# member access
+				instructions.extend([
 					(
 						node.start_pos,
 						node.end_pos,
 						load_opcode,
-						base_address - slot,
-					)
-				)
+						base_address - node.value.field_address, # $self
+					),
+					(
+						node.start_pos,
+						node.end_pos,
+						"PUSH",
+						node.value.field_address
+					),
+					(
+						node.start_pos,
+						node.end_pos,
+						"ADDI",
+					),
+					(
+						node.start_pos,
+						node.end_pos,
+						"LOADIND",
+					),
+				])
 		else:
 			value_instructions = res.register(emit(node.value))
 			if res.error:
@@ -1785,6 +1793,54 @@ def emit_method(node: FunctionDefinition | ProcedureDefinition) -> Result:
 		node.name = original_name
 
 
+def emit_builtin_method_call(node: MethodCall, instructions: list, builtin_id) -> Result:
+	res = Result()
+
+	if builtin_id == BuiltInID.WINDOW_CLOSE:
+		# Zero out all 10 contiguous slots. The address is already on the
+		# stack (pushed by emit_MethodCall above); DUP it once per slot so
+		# we can compute base+offset repeatedly without losing the base.
+		for offset in range(10):
+			instructions.append((node.start_pos, node.end_pos, "DUP", 0))
+			if offset:
+				instructions.append((node.start_pos, node.end_pos, "PUSH", offset))
+				instructions.append((node.start_pos, node.end_pos, "ADDI"))
+			instructions.append((node.start_pos, node.end_pos, "PUSH", 0))
+			instructions.append((node.start_pos, node.end_pos, "STREIND"))
+		# Discard the base address left over from the last DUP round
+		# procedures leave nothing on the stack.
+		instructions.append((node.start_pos, node.end_pos, "POP", 1))
+		return res.success(instructions)
+
+	if builtin_id == BuiltInID.WINDOW_IS_FULLSCREEN:
+		# win.state > 2  (state lives at offset 5)
+		instructions.append((node.start_pos, node.end_pos, "PUSH", 5))
+		instructions.append((node.start_pos, node.end_pos, "ADDI"))
+		instructions.append((node.start_pos, node.end_pos, "LOADIND"))
+		instructions.append((node.start_pos, node.end_pos, "PUSH", 2))
+		instructions.append((node.start_pos, node.end_pos, "IGT"))
+		return res.success(instructions)
+
+	if builtin_id == BuiltInID.WINDOW_IS_MINIMIZED:
+		# win.state % 3 == 2
+		instructions.append((node.start_pos, node.end_pos, "PUSH", 5))
+		instructions.append((node.start_pos, node.end_pos, "ADDI"))
+		instructions.append((node.start_pos, node.end_pos, "LOADIND"))
+		instructions.append((node.start_pos, node.end_pos, "PUSH", 3))
+		instructions.append((node.start_pos, node.end_pos, "MODI"))
+		instructions.append((node.start_pos, node.end_pos, "PUSH", 2))
+		instructions.append((node.start_pos, node.end_pos, "IEQ"))
+		return res.success(instructions)
+
+	return res.fail(
+		AssemblyError(
+			f"No codegen implemented for built-in method '{node.method_name}'.",
+			node.start_pos,
+			node.end_pos,
+		)
+	)
+
+
 def emit_ClassDefinition(node: ClassDefinition) -> Result:
 	res = Result()
 	instructions = []
@@ -1817,15 +1873,19 @@ def emit_MethodCall(node: MethodCall) -> Result:
 					node.obj.end_pos,
 				)
 			)
-		address = node.obj.address
-		instructions.append((node.start_pos, node.end_pos, "PUSH", address))
+		instructions.append((node.start_pos, node.end_pos, "PUSH", node.obj.address))
+
+	builtin_id = getattr(node, "builtin_id", None)
+
+	if builtin_id is not None:
+		return emit_builtin_method_call(node, instructions, builtin_id)
 
 	for arg, expected_type in zip(node.arguments, node.arg_types):
 		arg_instr = res.register(emit_argument(arg))
 		if res.error:
 			return res
 		if is_implicit_float_cast(arg.type, expected_type):
-			instructions.append(arg.end_pos, arg.end_pos, "I2F")
+			instructions.append((arg.end_pos, arg.end_pos, "I2F"))
 		instructions.extend(arg_instr)
 
 	instructions.append((node.start_pos, node.end_pos, "PUSHFP"))
@@ -1934,7 +1994,7 @@ def emit_LibraryCall(node: LibraryCall) -> Result:
 	instructions = []
 
 	for arg in node.arguments:
-		arg_instructions = res.register(emit(arg))
+		arg_instructions = res.register(emit_argument(arg))
 		if res.error:
 			return res
 		instructions.extend(arg_instructions)
@@ -1942,7 +2002,8 @@ def emit_LibraryCall(node: LibraryCall) -> Result:
 		if (
 			arg.type.base == "int"
 			and arg.type.pointer_layers == 0
-		):  # only works for math libraries, other libraries will have different logic
+			and node.library_name == "math"
+		):
 			instructions.append((arg.start_pos, arg.end_pos, "I2F"))
 
 	if node.builtin_id in MATH_BUILTIN_OPCODES:
@@ -1957,9 +2018,23 @@ def emit_LibraryCall(node: LibraryCall) -> Result:
 	if node.builtin_id == BuiltInID.MATH_POW:
 		instructions.append((node.start_pos, node.end_pos, "POWF"))
 		return res.success(instructions)
-	
+
 	if node.builtin_id == BuiltInID.MATH_LERP:
 		instructions.append((node.start_pos, node.end_pos, "LERPF"))
+		return res.success(instructions)
+
+	if node.builtin_id == BuiltInID.STRING_CONCAT:
+		instructions.append((node.start_pos, node.end_pos, "SYS", 10))
+		return res.success(instructions)
+
+	if node.builtin_id == BuiltInID.STRING_GET_BUFFER_PTR:
+		instructions.append((node.start_pos, node.end_pos, "LOADIND"))
+		return res.success(instructions)
+
+	if node.builtin_id == BuiltInID.STRING_STRLEN:
+		instructions.append((node.start_pos, node.end_pos, "INCI"))
+		instructions.append((node.start_pos, node.end_pos, "LOADIND"))
+		instructions.append((node.start_pos, node.end_pos, "DECI"))
 		return res.success(instructions)
 
 	return res.fail(
