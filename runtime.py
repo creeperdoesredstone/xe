@@ -6,16 +6,62 @@ from xe_lang.codegen import compile_ast, format_instructions
 from xe_lang.ir_optimize import optimize, DEFAULT_PASSES
 from xe_lang.assembler import assemble
 from xe_lang.vm import VM, MAGIC, VERSION
+from xe_lang.devices import OSDevice
 from xe_lang.helper import ANSI
 
 import traceback
+import threading
+from pathlib import Path
 
 
 class RuntimeContext:
-	def __init__(self) -> None:
+	def __init__(
+		self,
+		os_device: OSDevice | None = None,
+		frame_handler=None,
+		vm_ready_handler=None,
+		filesystem_root: str | Path | None = None,
+		input_handler=None,
+		request_handler=None,
+	) -> None:
 		self.semantic = SemanticAnalyzer()
-		self.vm = VM([MAGIC, VERSION, 0, 0], output_handler=None)
+		self.os_device = os_device or OSDevice()
+		self.frame_handler = frame_handler
+		self.vm_ready_handler = vm_ready_handler
+		self.input_handler = input_handler
+		self.request_handler = request_handler
+		self.filesystem_root = Path(filesystem_root or Path.cwd()).resolve()
+		self.cancel_event = threading.Event()
 		self.output_handler = None
+		self.vm = VM(
+			[MAGIC, VERSION, 0, 0],
+			output_handler=None,
+			os_device=self.os_device,
+			frame_handler=self.frame_handler,
+			cancel_event=self.cancel_event,
+			filesystem_root=self.filesystem_root,
+			input_handler=self.input_handler,
+			request_handler=self.request_handler,
+		)
+
+	def create_vm(self, program: list[int]) -> VM:
+		self.cancel_event.clear()
+		self.vm = VM(
+			program,
+			output_handler=self.output_handler,
+			os_device=self.os_device,
+			frame_handler=self.frame_handler,
+			cancel_event=self.cancel_event,
+			filesystem_root=self.filesystem_root,
+			input_handler=self.input_handler,
+			request_handler=self.request_handler,
+		)
+		if self.vm_ready_handler:
+			self.vm_ready_handler(self.vm)
+		return self.vm
+
+	def cancel(self) -> None:
+		self.cancel_event.set()
 
 
 def run(
@@ -31,7 +77,7 @@ def run(
 		if bytecode.error:
 			return None, bytecode.error, None
 		
-		context.vm = VM(bytecode.value, output_handler=context.output_handler)
+		context.create_vm(bytecode.value)
 		context.vm.ip = 0
 
 		result = context.vm.run()
@@ -61,7 +107,6 @@ def run(
 		assembly = compile_ast(optimized_ast, fn)
 		if assembly.error:
 			return None, assembly.error, None
-		print(ANSI.BOLD + ANSI.PURPLE + "\nLABELS" + ANSI.END)
 
 		optimized_asm = optimize(assembly.value, DEFAULT_PASSES)
 		formatted_asm = format_instructions(optimized_asm)
@@ -73,7 +118,7 @@ def run(
 
 	if __name__ == "__main__":
 		print(f"\n\n{ANSI.BOLD}{ANSI.PURPLE}STDOUT:{ANSI.END}")
-	context.vm = VM(bytecode.value, output_handler=context.output_handler)
+	context.create_vm(bytecode.value)
 	context.vm.ip = 0
 
 	result = context.vm.run()
