@@ -103,12 +103,22 @@ class SemanticAnalyzer:
 		self.push_scope()
 		init_libraries(self.scope)
 
+		# Global storage must be visible while subroutine bodies are analyzed,
+		# regardless of where the parser groups declarations in the program.
+		for stmt in node.statements:
+			if isinstance(stmt, VariableDeclaration):
+				res.register(self.analyze(stmt))
+				if res.error:
+					return res
+
 		for defn in node.sub_defs:
 			res.register(self.analyze(defn))
 			if res.error:
 				return res
 
 		for stmt in node.statements:
+			if isinstance(stmt, VariableDeclaration):
+				continue
 			res.register(self.analyze(stmt))
 			if res.error:
 				return res
@@ -856,7 +866,7 @@ class SemanticAnalyzer:
 					)
 				)
 			
-			param_type, _ = self._resolve_param_or_return_type(
+			param_type, resolved_param_symbol = self._resolve_param_or_return_type(
 				p.type, p.pointer_layers, getattr(p, "library_name", None)
 			)
 			if param_type is None:
@@ -870,6 +880,7 @@ class SemanticAnalyzer:
 			
 			param_names.append(p.name)
 			param_types.append(param_type)
+			p.struct_symbol = resolved_param_symbol
 
 		symbol = SubroutineSymbol(
 			name=node.name,
@@ -883,7 +894,9 @@ class SemanticAnalyzer:
 
 		param_widths: list[int] = []
 		for param, param_type in zip(node.parameters, symbol.parameters):
-			width = self.sizeof(param_type) if param_type.pointer_layers == 0 else 1
+			width = self.sizeof(
+				param_type, getattr(param, "struct_symbol", None)
+			) if param_type.pointer_layers == 0 else 1
 			param_widths.append(width)
 
 		symbol.param_width = sum(param_widths)
@@ -922,7 +935,9 @@ class SemanticAnalyzer:
 
 		param_widths: list[int] = []
 		for param, param_type in zip(node.parameters, declared_symbol.parameters):
-			width = self.sizeof(param_type) if param_type.pointer_layers == 0 else 1
+			width = self.sizeof(
+				param_type, getattr(param, "struct_symbol", None)
+			) if param_type.pointer_layers == 0 else 1
 			param_widths.append(width)
 
 		running_offset = 0
@@ -1296,6 +1311,14 @@ class SemanticAnalyzer:
 	def visit_InputStatement(self, node: InputStatement) -> Result:
 		res = Result()
 
+		if not isinstance(node.var, Identifier):
+			return res.fail(
+				SemanticError(
+					"Input currently requires a plain string variable.",
+					node.var.start_pos,
+					node.var.end_pos,
+				)
+			)
 		if isinstance(node.var, Identifier):
 			symbol = self.scope.lookup(node.var.value)
 			if symbol is None:
@@ -1309,10 +1332,14 @@ class SemanticAnalyzer:
 			node.var.address = symbol.address
 			node.var.is_local = symbol.is_local
 			node.var.type = symbol.type
-		else:
-			res.register(self.analyze(node.var))
-			if res.error:
-				return res
+		if node.var.type.base != "string" or node.var.type.pointer_layers != 0:
+			return res.fail(
+				SemanticError(
+					"Input target must be a string variable.",
+					node.var.start_pos,
+					node.var.end_pos,
+				)
+			)
 
 		return res.success(None)
 
@@ -1486,7 +1513,8 @@ class SemanticAnalyzer:
 		if res.error:
 			return res
 
-		if array_type.pointer_layers == 0:
+		is_string = array_type == Type("string")
+		if array_type.pointer_layers == 0 and not is_string:
 			return res.fail(
 				SemanticError(
 					f"Cannot index a non-array type '{array_type}'.",
@@ -1512,8 +1540,12 @@ class SemanticAnalyzer:
 		if res.error:
 			return res
 
-		# Element type
-		element_type = Type(array_type.base, array_type.pointer_layers - 1)
+		# Strings expose their character buffer as indexed char elements.
+		element_type = (
+			Type("char")
+			if is_string
+			else Type(array_type.base, array_type.pointer_layers - 1)
+		)
 		node.type = element_type
 
 		if node.operator._type == TT.ASGN:
@@ -2114,7 +2146,9 @@ class SemanticAnalyzer:
 			return res.fail(op_error)
 
 		base_type_name = obj_type.base
-		class_sym = self.scope.lookup(base_type_name)
+		class_sym = getattr(node.obj, "struct_symbol", None)
+		if not isinstance(class_sym, ClassSymbol):
+			class_sym = self.scope.lookup(base_type_name)
 
 		if not isinstance(class_sym, ClassSymbol):
 			return res.fail(
@@ -2168,6 +2202,14 @@ class SemanticAnalyzer:
 
 		node.arg_types = expected_params
 		node.builtin_id = getattr(method_sym, "builtin_id", None)
+		if node.builtin_id is not None and isinstance(node.obj, Identifier) and node.obj.is_local:
+			return res.fail(
+				SemanticError(
+					"Built-in resource methods currently require a global object variable.",
+					node.obj.start_pos,
+					node.obj.end_pos,
+				)
+			)
 		node.mangled_name = method_sym.name if node.builtin_id is None else None
 		node.obj_is_pointer = obj_type.pointer_layers > 0
 		node.class_symbol = class_sym
@@ -2211,7 +2253,62 @@ class SemanticAnalyzer:
 
 		node.type = member_sym.type
 		node.const_value = member_sym.const_value
+		node.builtin_getter = getattr(member_sym, "getter_id", None)
 		return res.success(member_sym.type)
+
+	def visit_LibraryAssign(self, node: LibraryAssign) -> Result:
+		res = Result()
+		lib_sym = self.scope.lookup(node.library_name)
+		if not isinstance(lib_sym, LibrarySymbol):
+			return res.fail(
+				SemanticError(
+					f"'{node.library_name}' is not a library.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		member_sym = lib_sym.lookup(node.member_name)
+		if not isinstance(member_sym, BuiltInPropertySymbol):
+			return res.fail(
+				SemanticError(
+					f"'{node.library_name}::{node.member_name}' is not an assignable property.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+		if member_sym.setter_id is None:
+			return res.fail(
+				SemanticError(
+					f"'{node.library_name}::{node.member_name}' is read-only.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+		if node.operator._type != TT.ASGN:
+			return res.fail(
+				SemanticError(
+					"Standard-library properties support plain assignment only.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		value_type = res.register(self.analyze(node.value))
+		if res.error:
+			return res
+		if value_type != member_sym.type:
+			return res.fail(
+				SemanticError(
+					f"Cannot assign '{value_type}' to '{node.library_name}::{node.member_name}' of type '{member_sym.type}'.",
+					node.value.start_pos,
+					node.value.end_pos,
+				)
+			)
+
+		node.type = member_sym.type
+		node.builtin_setter = member_sym.setter_id
+		return res.success(None)
 
 	def visit_LibraryCall(self, node: LibraryCall) -> Result:
 		res = Result()
@@ -2245,6 +2342,15 @@ class SemanticAnalyzer:
 				)
 			)
 
+		if node.is_procedure_call and not member_sym.is_proc:
+			return res.fail(
+				SemanticError(
+					f"'{node.library_name}::{node.member_name}' is a function; it cannot be called like a procedure.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
 		expected_params = member_sym.parameters
 		if len(node.arguments) != len(expected_params):
 			return res.fail(
@@ -2255,6 +2361,7 @@ class SemanticAnalyzer:
 				)
 			)
 
+		reference_parameters = member_sym.reference_parameters
 		for i, (arg, expected_type) in enumerate(zip(node.arguments, expected_params)):
 			arg_type = res.register(self.analyze(arg))
 			if res.error:
@@ -2276,10 +2383,24 @@ class SemanticAnalyzer:
 						)
 					)
 
+			if i in reference_parameters:
+				if not isinstance(arg, Identifier) or arg.is_local:
+					return res.fail(
+						SemanticError(
+							f"Argument {i + 1} to '{node.library_name}::{node.member_name}' must be a global resource variable.",
+							arg.start_pos,
+							arg.end_pos,
+						)
+					)
+
 		node.arg_types = expected_params
+		node.reference_parameters = reference_parameters
 		node.builtin_id = member_sym.builtin_id
 		node.type = member_sym.return_type if member_sym.return_type is not None else Type("none")
 		return res.success(node.type)
+
+	def visit_AsmBlock(self, node: AsmBlock) -> Result:
+		return Result().success(None)
 
 
 def analyze(ast: Node) -> Result:

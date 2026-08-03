@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from xe_lang.helper import Token, Position, ANSI
 
 
@@ -187,12 +189,14 @@ class VariableDeclaration(Node):
 		type: str,
 		pointer_layers: int,
 		is_variable: bool,
+		library_name: str | None = None,
 	):
 		super().__init__(start_pos, end_pos)
 		self.name: str = name
 		self.type: str = type
 		self.pointer_layers: int = pointer_layers
 		self.is_variable: bool = is_variable
+		self.library_name: str | None = library_name
 
 	def __repr__(self):
 		return f"DECLARE ({self.name}: {self.type})"
@@ -316,11 +320,13 @@ class Parameter(Node):
 		name: str,
 		type: str,
 		pointer_layers: int,
+		library_name: str | None = None,
 	):
 		super().__init__(start_pos, end_pos)
 		self.name: str = name
 		self.type: str = type
 		self.pointer_layers: int = pointer_layers
+		self.library_name: str | None = library_name
 
 
 class FunctionDefinition(Node):
@@ -618,12 +624,14 @@ class LibraryCall(Node):
 		library_name: str,
 		member_name: str,
 		arguments: list[Node],
+		is_procedure_call: bool = False,
 	):
 		super().__init__(start_pos, end_pos)
 		self.library_name: str = library_name
 		self.member_name: str = member_name
 		self.arguments: list[Node] = arguments
 		self.arg_types: list = []
+		self.is_procedure_call = is_procedure_call
 
 	def __repr__(self):
 		return f"LIB_CALL({self.library_name}::{self.member_name}({self.arguments}))"
@@ -637,3 +645,43 @@ class LibraryAccess(Node):
 
 	def __repr__(self):
 		return f"LIB_ACCESS({self.library_name}::{self.member_name})"
+
+
+class LibraryAssign(Node):
+	def __init__(
+		self,
+		start_pos,
+		end_pos,
+		library_name: str,
+		member_name: str,
+		value: Node,
+		operator: Token,
+	):
+		super().__init__(start_pos, end_pos)
+		self.library_name = library_name
+		self.member_name = member_name
+		self.value = value
+		self.operator = operator
+
+	def __repr__(self):
+		return f"LIB_ASSIGN({self.library_name}::{self.member_name} {self.operator} {self.value})"
+
+
+class AsmInstruction:
+	__slots__ = ("opcode", "operand", "label", "start_pos", "end_pos")
+
+	def __init__(self, start_pos, end_pos, opcode=None, operand=None, label=None):
+		self.start_pos = start_pos
+		self.end_pos = end_pos
+		self.opcode = opcode
+		self.operand = operand
+		self.label = label
+
+
+class AsmBlock(Node):
+	def __init__(self, start_pos: Position, end_pos: Position, instructions: list[AsmInstruction]):
+		super().__init__(start_pos, end_pos)
+		self.instructions: list[AsmInstruction] = instructions
+
+	def __repr__(self):
+		return f"ASM_BLOCK({len(self.instructions)} instructions)"

@@ -59,7 +59,7 @@ def parse(tokens: list[Token]) -> Result:
 		# parses a type name in type-position:
 		# a builtin TT.TYPE,
 		# a plain struct/class identifier,
-		# or a library-qualified name such as 'window::Window'
+		# or a library-qualified name such as 'graphics::Window'
 		res: Result = Result()
 
 		if current_tok._type == TT.TYPE:
@@ -206,6 +206,8 @@ def parse(tokens: list[Token]) -> Result:
 					return return_statement()
 				case "call":
 					return procedure_call()
+				case "asm":
+					return asm_block()
 
 		return expr()
 
@@ -237,7 +239,7 @@ def parse(tokens: list[Token]) -> Result:
 
 		# allow a builtin TYPE token (int, float, ...), a plain IDENT
 		# referring to a user-defined struct/class name (e.g. Vec2), or a
-		# library-qualified type name (e.g. window::Window)
+		# library-qualified type name (e.g. graphics::Window)
 		type_info = res.register(qualified_type_name())
 		if res.error:
 			return res
@@ -1018,19 +1020,10 @@ def parse(tokens: list[Token]) -> Result:
 					)
 				advance()
 
-				# type
-				if current_tok._type not in (TT.TYPE, TT.IDENT):
-					return res.fail(
-						InvalidSyntaxError(
-							f"Expected type for parameter '{param_name}'.",
-							current_tok.start_pos,
-							current_tok.end_pos,
-						)
-					)
-
-				type_name = current_tok.value
-				param_end = current_tok.end_pos.copy()
-				advance()
+				type_info = res.register(qualified_type_name())
+				if res.error:
+					return res
+				type_name, library_name, param_end = type_info
 
 				pointer_layers = 0
 				while current_tok._type in (TT.MUL, TT.POW):
@@ -1045,6 +1038,7 @@ def parse(tokens: list[Token]) -> Result:
 						param_name,
 						type_name,
 						pointer_layers,
+						library_name,
 					)
 				)
 
@@ -1157,19 +1151,10 @@ def parse(tokens: list[Token]) -> Result:
 					)
 				advance()
 
-				# type
-				if current_tok._type not in (TT.TYPE, TT.IDENT):
-					return res.fail(
-						InvalidSyntaxError(
-							f"Expected type for parameter '{param_name}'.",
-							current_tok.start_pos,
-							current_tok.end_pos,
-						)
-					)
-
-				type_name = current_tok.value
-				param_end = current_tok.end_pos.copy()
-				advance()
+				type_info = res.register(qualified_type_name())
+				if res.error:
+					return res
+				type_name, library_name, param_end = type_info
 
 				pointer_layers = 0
 				while current_tok._type in (TT.MUL, TT.POW):
@@ -1184,6 +1169,7 @@ def parse(tokens: list[Token]) -> Result:
 						param_name,
 						type_name,
 						pointer_layers,
+						library_name,
 					)
 				)
 
@@ -1596,6 +1582,22 @@ def parse(tokens: list[Token]) -> Result:
 			)
 		proc_name = current_tok.value
 		advance()
+		library_name = None
+
+		if current_tok._type == TT.SCOPE:
+			library_name = proc_name
+			advance()
+
+			if current_tok._type != TT.IDENT:
+				return res.fail(
+					InvalidSyntaxError(
+						"Expected procedure name after '::'.",
+						current_tok.start_pos,
+						current_tok.end_pos,
+					)
+				)
+			proc_name = current_tok.value
+			advance()
 
 		if current_tok._type != TT.LPR:
 			return res.fail(
@@ -1642,7 +1644,130 @@ def parse(tokens: list[Token]) -> Result:
 				)
 			)
 
+		if library_name is not None:
+			return res.success(
+				LibraryCall(
+					start_pos,
+					end_pos,
+					library_name,
+					proc_name,
+					args,
+					is_procedure_call=True,
+				)
+			)
+
 		return res.success(ProcedureCall(start_pos, end_pos, proc_name, args))
+
+	def asm_block() -> Result:
+		start_pos: Position = current_tok.start_pos.copy()
+		res: Result = Result()
+
+		advance()  # consume 'asm'
+
+		if current_tok._type != TT.LBR:
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected '{{' after 'asm', but found '{current_tok.value or current_tok._type.name}'.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+		advance()
+
+		instructions: list[AsmInstruction] = []
+
+		while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
+			advance()
+
+		while current_tok._type != TT.RBR:
+			if current_tok._type == TT.EOF:
+				return res.fail(
+					InvalidSyntaxError(
+						"Unexpected end of file inside 'asm' block; expected '}'.",
+						current_tok.start_pos,
+						current_tok.end_pos,
+					)
+				)
+
+			# label definition: :name
+			if current_tok._type == TT.COL:
+				label_start = current_tok.start_pos.copy()
+				advance()
+
+				if current_tok._type != TT.IDENT:
+					return res.fail(
+						InvalidSyntaxError(
+							f"Expected a label name after ':', but found '{current_tok.value or current_tok._type.name}'.",
+							current_tok.start_pos,
+							current_tok.end_pos,
+						)
+					)
+
+				label_name = current_tok.value
+				label_end = current_tok.end_pos.copy()
+				advance()
+
+				instructions.append(
+					AsmInstruction(label_start, label_end, label=label_name)
+				)
+
+			# instruction: OPCODE [operand]
+			elif current_tok._type == TT.IDENT:
+				opcode_tok = current_tok
+				opcode_name = current_tok.value
+				end_pos = current_tok.end_pos.copy()
+				advance()
+
+				operand = None
+
+				if current_tok._type in (TT.INT, TT.FLOAT, TT.IDENT):
+					operand = current_tok.value
+					end_pos = current_tok.end_pos.copy()
+					advance()
+				elif current_tok._type == TT.SUB:
+					# allow a negative integer literal operand, e.g. PUSH -1
+					advance()
+					if current_tok._type != TT.INT:
+						return res.fail(
+							InvalidSyntaxError(
+								f"Expected an integer after '-' in asm operand, but found '{current_tok.value or current_tok._type.name}'.",
+								current_tok.start_pos,
+								current_tok.end_pos,
+							)
+						)
+					operand = -current_tok.value
+					end_pos = current_tok.end_pos.copy()
+					advance()
+
+				if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.RBR, TT.EOF):
+					return res.fail(
+						InvalidSyntaxError(
+							f"Expected end of line after asm instruction '{opcode_name}', but found unexpected trailing token '{current_tok.value or current_tok._type.name}'.",
+							current_tok.start_pos,
+							current_tok.end_pos,
+						)
+					)
+
+				instructions.append(
+					AsmInstruction(opcode_tok.start_pos, end_pos, opcode=opcode_name, operand=operand)
+				)
+
+			else:
+				return res.fail(
+					InvalidSyntaxError(
+						f"Expected an opcode, a label (':name'), or '}}' inside 'asm' block, but found '{current_tok.value or current_tok._type.name}'.",
+						current_tok.start_pos,
+						current_tok.end_pos,
+					)
+				)
+
+			while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
+				advance()
+
+		end_pos = current_tok.end_pos.copy()
+		advance()  # consume '}'
+
+		return res.success(AsmBlock(start_pos, end_pos, instructions))
 
 	# other parse subroutines
 	def expr() -> Result:
@@ -1703,6 +1828,18 @@ def parse(tokens: list[Token]) -> Result:
 						rhs,
 						op_tok,
 						lhs.is_arrow,
+					)
+				)
+
+			elif isinstance(lhs, LibraryAccess):
+				return res.success(
+					LibraryAssign(
+						lhs.start_pos,
+						rhs.end_pos,
+						lhs.library_name,
+						lhs.member_name,
+						rhs,
+						op_tok,
 					)
 				)
 

@@ -4,6 +4,8 @@ import time
 import math
 import threading
 from xe_lang.helper import Result, VMError, Position
+from xe_lang.devices import DEFAULT_PALETTE, DeviceRuntime, FrameSnapshot, OSDevice
+from xe_lang.syscall_abi import SyscallID
 from disassemble import decode_instruction
 
 TRUE = 0xFFFFFFFF
@@ -11,24 +13,7 @@ FALSE = 0
 MAGIC = 0x58424E31  # "XBN1"
 VERSION = 1
 
-PALETTE = [
-	"#000000",
-	"#0000AA",
-	"#00AA00",
-	"#00AAAA",
-	"#AA0000",
-	"#AA00AA",
-	"#AA5500",
-	"#AAAAAA",
-	"#555555",
-	"#5555FF",
-	"#55FF55",
-	"#55FFFF",
-	"#FF5555",
-	"#FF55FF",
-	"#FFFF55",
-	"#FFFFFF",
-]
+PALETTE = list(DEFAULT_PALETTE)
 
 
 def u32_to_float(bits: int) -> float:
@@ -44,7 +29,17 @@ def to_u32(value: int) -> int:
 
 
 class VM:
-	def __init__(self, program: list[int], output_handler=None):
+	def __init__(
+		self,
+		program: list[int],
+		output_handler=None,
+		os_device: OSDevice | None = None,
+		frame_handler=None,
+		cancel_event: threading.Event | None = None,
+		filesystem_root=None,
+		input_handler=None,
+		request_handler=None,
+	):
 		if len(program) < 4:
 			raise ValueError("Executable too small")
 
@@ -78,22 +73,28 @@ class VM:
 		self.bp: int = 0
 
 		self.labels = {}
-		self.start_time = time.time()
+		self.start_time = time.monotonic()
 		self.output_handler = output_handler  # for ide
+		self.input_handler = input_handler or input
+		self.request_handler = request_handler
+		self.cancel_event = cancel_event or threading.Event()
+		self._external_frame_handler = frame_handler
+		self._last_snapshot: FrameSnapshot | None = None
 
-		self.width = 240
-		self.height = 180
-		self.back_buffer = [[0 for _ in range(self.width)] for _ in range(self.height)]
-		self.front_buffer = [[0 for _ in range(self.width)] for _ in range(self.height)]
+		self.devices = DeviceRuntime(
+			os_device, self._frame_presented, filesystem_root=filesystem_root
+		)
+		self.exit_code = 0
+		self.width = self.devices.graphics.width
+		self.height = self.devices.graphics.height
+		self.back_buffer = self.devices.graphics.back_buffer
+		self.front_buffer = self.devices.graphics.front_buffer
 
-		self.clip_rect = (0, 0, self.width, self.height)
+		self.clip_rect = self.devices.graphics.clip_rect
 
-		self.mouse_x = 0
-		self.mouse_y = 0
-		self.mouse_btn = 0
-		self.key_queue = []
-		self.keys_down = set()
-		self.modifiers = 0
+		self._legacy_mouse_btn = 0
+		self.key_queue = self.devices.input.key_queue
+		self.keys_down = self.devices.input.keys_down
 
 		# for standalone execution
 		self.root = None
@@ -102,6 +103,44 @@ class VM:
 		self.canvas_image_id = None
 		self.display_img = None
 		self.heap_pointer = 0x2000
+
+	@property
+	def mouse_x(self) -> int:
+		return self.devices.input.pointer_position()[0]
+
+	@mouse_x.setter
+	def mouse_x(self, value: int) -> None:
+		_, y = self.devices.input.pointer_position()
+		self.devices.input.move_pointer(value, y)
+
+	@property
+	def mouse_y(self) -> int:
+		return self.devices.input.pointer_position()[1]
+
+	@mouse_y.setter
+	def mouse_y(self, value: int) -> None:
+		x, _ = self.devices.input.pointer_position()
+		self.devices.input.move_pointer(x, value)
+
+	@property
+	def mouse_btn(self) -> int:
+		return self._legacy_mouse_btn
+
+	@mouse_btn.setter
+	def mouse_btn(self, value: int) -> None:
+		value = int(value)
+		mapping = {1: 1, 2: 2, 3: 4}
+		old_button = mapping.get(self._legacy_mouse_btn)
+		new_button = mapping.get(value)
+		if old_button and old_button != new_button:
+			self.devices.input.set_button(old_button, False)
+		if new_button and new_button != old_button:
+			self.devices.input.set_button(new_button, True)
+		self._legacy_mouse_btn = value
+
+	@property
+	def modifiers(self) -> int:
+		return self.devices.input.modifiers
 
 	def init_graphics_window(self):
 		if self.root is not None:
@@ -135,36 +174,38 @@ class VM:
 			self.canvas.bind("<ButtonRelease>", self._on_mouse_release)
 			self.root.bind("<KeyPress>", self._on_key_press)
 			self.root.bind("<KeyRelease>", self._on_key_release)
+			self.root.bind("<FocusOut>", lambda _event: self.devices.input.release_all())
+			self.root.protocol("WM_DELETE_WINDOW", self.cancel_event.set)
+			self.canvas.focus_set()
 
 			self.root.update()
 		except Exception:
 			self.root = None
 
 	def _on_mouse_move(self, event):
-		self.mouse_x = max(0, min(self.width - 1, event.x // 3))
-		self.mouse_y = max(0, min(self.height - 1, event.y // 3))
+		self.devices.input.move_pointer(event.x // 3, event.y // 3)
 
 	def _on_mouse_press(self, event):
-		self.mouse_btn = event.num
+		self.devices.input.move_pointer(event.x // 3, event.y // 3)
+		button = {1: 1, 2: 4, 3: 2}.get(event.num)
+		if button:
+			self.devices.input.set_button(button, True)
 
 	def _on_mouse_release(self, event):
-		self.mouse_btn = 0
+		self.devices.input.move_pointer(event.x // 3, event.y // 3)
+		button = {1: 1, 2: 4, 3: 2}.get(event.num)
+		if button:
+			self.devices.input.set_button(button, False)
 
 	def _on_key_press(self, event):
 		code = event.keycode
 		mod = self._get_mod_state(event.state)
-		self.modifiers = mod
-		if code not in self.keys_down:
-			self.keys_down.add(code)
-			self.key_queue.append((1, code, mod))
+		self.devices.input.set_key(code, True, mod)
 
 	def _on_key_release(self, event):
 		code = event.keycode
 		mod = self._get_mod_state(event.state)
-		self.modifiers = mod
-		if code in self.keys_down:
-			self.keys_down.discard(code)
-			self.key_queue.append((2, code, mod))
+		self.devices.input.set_key(code, False, mod)
 
 	def _get_mod_state(self, state):
 		mask = 0
@@ -176,17 +217,38 @@ class VM:
 			mask |= 4
 		return mask
 
-	def render_front_buffer(self):
+	def _frame_presented(self, snapshot: FrameSnapshot) -> None:
+		self._last_snapshot = snapshot
+		if self._external_frame_handler:
+			self._external_frame_handler(snapshot)
+		elif threading.current_thread() is threading.main_thread():
+			self.init_graphics_window()
+			self.render_front_buffer(snapshot)
+
+	def render_front_buffer(self, snapshot: FrameSnapshot | None = None):
+		snapshot = snapshot or self._last_snapshot
+		if snapshot is None:
+			indices = bytes(pixel for row in self.front_buffer for pixel in row)
+			snapshot = FrameSnapshot(
+				self.width,
+				self.height,
+				indices,
+				self.devices.os.palette,
+				0,
+			)
 		if not self.img or not self.root:
 			return
 		try:
 			pixel_data = " ".join(
 				"{"
 				+ " ".join(
-					PALETTE[self.front_buffer[y][x] % 16] for x in range(self.width)
+					snapshot.palette[
+						snapshot.indices[y * snapshot.width + x] % len(snapshot.palette)
+					]
+					for x in range(snapshot.width)
 				)
 				+ "}"
-				for y in range(self.height)
+				for y in range(snapshot.height)
 			)
 			self.img.put(pixel_data)
 
@@ -199,11 +261,7 @@ class VM:
 			pass
 
 	def write_pixel(self, x: int, y: int, color_idx: int):
-		if (
-			self.clip_rect[0] <= x < self.clip_rect[2]
-			and self.clip_rect[1] <= y < self.clip_rect[3]
-		):
-			self.back_buffer[y][x] = color_idx % 16
+		self.devices.graphics.set_pixel(x, y, color_idx)
 
 	def _output(self, text: str):
 		if self.output_handler:
@@ -211,24 +269,88 @@ class VM:
 		else:
 			print(text, end="")
 
-	def read_mem_string(self, address: int) -> str:
+	def read_mem_string(self, address: int, maximum_words: int | None = None) -> str:
+		if not 0 <= address < len(self.data_memory):
+			raise ValueError("Invalid string address")
 		chars = []
-		while True:
-			val = self.data_memory[address]
+		limit = len(self.data_memory) - address
+		if maximum_words is not None:
+			limit = min(limit, max(0, int(maximum_words)))
+		for offset in range(limit):
+			val = self.data_memory[address + offset]
 			if val == 0:
-				break
+				return "".join(chars)
 			chars.append(chr(val & 0xFF))
-			address += 1
-		return "".join(chars)
+		raise ValueError("Unterminated string")
 
 	def write_mem_string(self, address: int, string: str):
-		for char in string:
-			self.data_memory[address] = ord(char)
-			address += 1
-		self.data_memory[address] = 0
+		words = len(string) + 1
+		if not 0 <= address <= len(self.data_memory) - words:
+			raise ValueError("String write extends beyond memory")
+		for offset, char in enumerate(string):
+			self.data_memory[address + offset] = ord(char) & 0xFF
+		self.data_memory[address + len(string)] = 0
+
+	def read_string_descriptor(self, descriptor: int) -> str:
+		if not 0 <= descriptor <= len(self.data_memory) - 3:
+			raise ValueError("Invalid string descriptor")
+		address = self.data_memory[descriptor]
+		length = self.data_memory[descriptor + 1]
+		capacity = self.data_memory[descriptor + 2]
+		if length < 1 or capacity < length:
+			raise ValueError("Invalid string descriptor length or capacity")
+		if not 0 <= address <= len(self.data_memory) - capacity:
+			raise ValueError("String descriptor points outside memory")
+		value = self.read_mem_string(address, length)
+		if len(value) + 1 != length:
+			raise ValueError("String descriptor length is stale")
+		return value
+
+	def allocate_string(self, value: str, result: Result) -> int | None:
+		result.register(self.malloc(3))
+		if result.error:
+			return None
+		descriptor = result.register(self.pop())
+		result.register(self.malloc(len(value) + 1))
+		if result.error:
+			self.free(descriptor, result)
+			return None
+		chars = result.register(self.pop())
+		self.data_memory[descriptor] = chars
+		self.data_memory[descriptor + 1] = len(value) + 1
+		self.data_memory[descriptor + 2] = len(value) + 1
+		self.write_mem_string(chars, value)
+		return descriptor
+
+	def write_string_descriptor(self, descriptor: int, value: str, result: Result) -> bool:
+		if not 0 <= descriptor <= len(self.data_memory) - 3:
+			result.fail(self._error("Invalid string descriptor"))
+			return False
+		old_chars = self.data_memory[descriptor]
+		capacity = self.data_memory[descriptor + 2]
+		required = len(value) + 1
+		if capacity < required or not 0 <= old_chars <= len(self.data_memory) - max(1, capacity):
+			result.register(self.malloc(required))
+			if result.error:
+				return False
+			chars = result.register(self.pop())
+			if old_chars in self.allocations:
+				self.free(old_chars, Result())
+			self.data_memory[descriptor] = chars
+			self.data_memory[descriptor + 2] = required
+		else:
+			chars = old_chars
+		self.data_memory[descriptor + 1] = required
+		self.write_mem_string(chars, value)
+		return True
+
+	def _error(self, message: str) -> VMError:
+		position = Position(0, 0, 0, "<bin>", "")
+		return VMError(message, position.copy(), position.copy())
 
 	def run(self) -> Result:
 		res = Result()
+		self.start_time = time.monotonic()
 		self.stack = [0] * 65536
 		self.call_stack.clear()
 		self.cr = 0
@@ -237,11 +359,14 @@ class VM:
 		self.ip = 0
 		self.heap_pointer = 0x2000
 		self.sp = 0
+		self.exit_code = 0
 
 		self.free_list = [(0x2000, 0xE000)]
 		self.allocations = {}
 
 		while self.ip < len(self.instructions):
+			if self.cancel_event.is_set():
+				break
 			exec_res = self.execute(self.instructions[self.ip])
 			# print(self.stack[: self.sp][:32])
 			# print(self.data_memory[8192 : 8192 + 16])
@@ -249,6 +374,7 @@ class VM:
 			# print("FP:", self.fp)
 
 			if exec_res.error:
+				self.devices.files.close_all()
 				if self.root:
 					try:
 						self.root.destroy()
@@ -275,17 +401,20 @@ class VM:
 				self.root.destroy()
 			except Exception:
 				pass
+		self.devices.files.close_all()
 
 		return res.success(self.stack[:self.sp])
 
 	def push(self, value) -> None:
+		if self.sp >= len(self.stack):
+			raise RuntimeError("VM stack overflow")
 		self.stack[self.sp] = value
 		self.sp += 1
 
 	def pop(self) -> Result:
 		res = Result()
 		pos = Position(0, 0, 0, "<bin>", "")
-		if not self.stack:
+		if self.sp <= 0:
 			return res.fail(VMError("Stack underflow", pos.copy(), pos.copy()))
 
 		self.sp -= 1
@@ -293,7 +422,7 @@ class VM:
 
 	def check_stack(self, n: int) -> Result:
 		pos = Position(0, 0, 0, "<bin>", "")
-		if len(self.stack) < n:
+		if n < 0 or self.sp < n:
 			return Result().fail(VMError("Stack underflow", pos.copy(), pos.copy()))
 		return Result().success(None)
 
@@ -318,6 +447,31 @@ class VM:
 				return res.success(True)
 		else:
 			return res.fail(VMError("Out of memory", pos.copy(), pos.copy()))
+
+	def free(self, pointer: int, result: Result) -> bool:
+		words = self.allocations.pop(pointer, None)
+		if words is None:
+			result.fail(self._error("Invalid free"))
+			return False
+
+		i = 0
+		while i < len(self.free_list) and self.free_list[i][0] < pointer:
+			i += 1
+		self.free_list.insert(i, (pointer, words))
+		if i > 0:
+			previous_start, previous_size = self.free_list[i - 1]
+			current_start, current_size = self.free_list[i]
+			if previous_start + previous_size == current_start:
+				self.free_list[i - 1] = (previous_start, previous_size + current_size)
+				self.free_list.pop(i)
+				i -= 1
+		if i + 1 < len(self.free_list):
+			current_start, current_size = self.free_list[i]
+			next_start, next_size = self.free_list[i + 1]
+			if current_start + current_size == next_start:
+				self.free_list[i] = (current_start, current_size + next_size)
+				self.free_list.pop(i + 1)
+		return True
 
 	def execute(self, instruction: int) -> Result:
 		res = Result()
@@ -463,7 +617,7 @@ class VM:
 				val = 0
 
 				match ins_arg:
-					case 0: # ADDI/ADDF
+					case 0:
 						val = a + b
 						self.cr = TRUE if not is_float_op and a + b > TRUE else FALSE
 					case 1:
@@ -626,26 +780,42 @@ class VM:
 				# no interrupt handling yet
 				case 7:  # SYS
 					match ins_arg:
-						case 1:  # OUTPUT_CHARS
+						case SyscallID.OUTPUT_CHARS:
 							addr = res.register(self.pop())
 							if res.error:
 								return res
-							self._output(self.read_mem_string(addr))
-						case 2:  # READ_CHARS
-							...
-						case 3:  # CHARS2INT
+							try:
+								self._output(self.read_mem_string(addr))
+							except ValueError as error:
+								return res.fail(self._error(str(error)))
+						case SyscallID.READ_STRING:
+							try:
+								value = self.input_handler()
+							except (EOFError, KeyboardInterrupt):
+								value = ""
+							except Exception as error:
+								return res.fail(self._error(f"Input failed: {error}"))
+							descriptor = self.allocate_string(str(value), res)
+							if res.error:
+								return res
+							self.push(descriptor)
+						case SyscallID.CHARS_TO_INT:
 							addr = res.register(self.pop())
 							if res.error:
 								return res
-							string = self.read_mem_string(addr)
-							self.push(int(string))
-						case 4:  # CHARS2FLOAT
+							try:
+								self.push(int(self.read_mem_string(addr)) & TRUE)
+							except (ValueError, OverflowError) as error:
+								return res.fail(self._error(f"Cannot convert characters to int: {error}"))
+						case SyscallID.CHARS_TO_FLOAT:
 							addr = res.register(self.pop())
 							if res.error:
 								return res
-							string = self.read_mem_string(addr)
-							self.push(float_to_u32(float(string)))
-						case 5:  # INT2CHARS
+							try:
+								self.push(float_to_u32(float(self.read_mem_string(addr))))
+							except (ValueError, OverflowError) as error:
+								return res.fail(self._error(f"Cannot convert characters to float: {error}"))
+						case SyscallID.INT_TO_CHARS:
 							value = res.register(self.pop())
 							addr = res.register(self.pop())
 							if res.error:
@@ -654,128 +824,138 @@ class VM:
 							if value > 0x7fffffff:
 								value -= 0x100000000
 
-							self.write_mem_string(addr, str(value))
-						case 6:  # FLOAT2CHARS
+							try:
+								self.write_mem_string(addr, str(value))
+							except ValueError as error:
+								return res.fail(self._error(str(error)))
+						case SyscallID.FLOAT_TO_CHARS:
 							value = res.register(self.pop())
 							value = u32_to_float(value)
 							addr = res.register(self.pop())
 							if res.error:
 								return res
 
-							self.write_mem_string(addr, f"{value:.6f}")
-						case 7:  # BOOL2CHARS
+							try:
+								self.write_mem_string(addr, f"{value:.6f}")
+							except ValueError as error:
+								return res.fail(self._error(str(error)))
+						case SyscallID.BOOL_TO_CHARS:
 							value = bool(res.register(self.pop()))
 							addr = res.register(self.pop())
 							if res.error:
 								return res
 
-							self.write_mem_string(addr, str(value).lower())
-						case 8:  # INT2HEX
+							try:
+								self.write_mem_string(addr, str(value).lower())
+							except ValueError as error:
+								return res.fail(self._error(str(error)))
+						case SyscallID.INT_TO_HEX:
 							value = res.register(self.pop())
 							addr = res.register(self.pop())
 							if res.error:
 								return res
 
-							self.write_mem_string(addr, f"0x{value:08x}")
-						case 9:  # PUT_CHAR
+							try:
+								self.write_mem_string(addr, f"0x{value:08x}")
+							except ValueError as error:
+								return res.fail(self._error(str(error)))
+						case SyscallID.PUT_CHAR:
 							value = res.register(self.pop())
 							if res.error:
 								return res
 
-							self._output(chr(value))
-						case 10:  # STR_CONCAT
+							self._output(chr(value & 0xFF))
+						case SyscallID.STRING_CONCAT:
 							str2_addr = res.register(self.pop())
 							str1_addr = res.register(self.pop())
 							if res.error:
 								return res
-
-							str1 = self.read_mem_string(self.data_memory[str1_addr])
-							str2 = self.read_mem_string(self.data_memory[str2_addr])
-
-							result_str = str1 + str2
-							str_len = len(result_str)
-
-							required_chars_len = str_len + 1
-
-							# allocate 2 words for string metadata: [ptr_to_chars, length]
-							res.register(self.malloc(2))
+							try:
+								value = self.read_string_descriptor(str1_addr) + self.read_string_descriptor(str2_addr)
+							except ValueError as error:
+								return res.fail(self._error(str(error)))
+							descriptor = self.allocate_string(value, res)
 							if res.error:
 								return res
-							metadata_ptr = res.register(self.pop())
-
-							res.register(self.malloc(required_chars_len))
-							if res.error:
-								return res
-							chars_ptr = res.register(self.pop())
-
-							self.data_memory[metadata_ptr] = (
-								chars_ptr  # string.descriptor[0] = ptr_to_chars
-							)
-							self.data_memory[metadata_ptr + 1] = (
-								required_chars_len  # string.descriptor[1] = len + 1
-							)
-
-							self.write_mem_string(chars_ptr, result_str)
-
-							self.push(metadata_ptr)
-						case 11:  # STR_COMPARE
+							self.push(descriptor)
+						case SyscallID.STRING_COMPARE:
 							str2_addr = res.register(self.pop())
 							str1_addr = res.register(self.pop())
 							if res.error:
 								return res
-
-							str1 = self.read_mem_string(self.data_memory[str1_addr])
-							str2 = self.read_mem_string(self.data_memory[str2_addr])
-
+							try:
+								str1 = self.read_string_descriptor(str1_addr)
+								str2 = self.read_string_descriptor(str2_addr)
+							except ValueError as error:
+								return res.fail(self._error(str(error)))
 							self.push(TRUE if str1 == str2 else FALSE)
-						case 21:  # MALLOC
+						case SyscallID.STRING_UPDATE_LENGTH:
+							descriptor = res.register(self.pop())
+							if res.error:
+								return res
+							if not 0 <= descriptor <= len(self.data_memory) - 3:
+								return res.fail(self._error("Invalid string descriptor"))
+							chars = self.data_memory[descriptor]
+							capacity = self.data_memory[descriptor + 2]
+							if capacity < 1 or not 0 <= chars <= len(self.data_memory) - capacity:
+								return res.fail(self._error("Invalid string descriptor capacity"))
+							try:
+								value = self.read_mem_string(chars, capacity)
+							except ValueError as error:
+								return res.fail(self._error(str(error)))
+							self.data_memory[descriptor + 1] = len(value) + 1
+							self.push(descriptor)
+						case SyscallID.GET_TIME:
+							self.push(int((time.monotonic() - self.start_time) * 1000) & TRUE)
+						case SyscallID.MALLOC:
 							words = res.register(self.pop())
 							if res.error:
 								return res
 
 							return self.malloc(words)
-						case 22:  # FREE
+						case SyscallID.FREE:
 							ptr = res.register(self.pop())
 							if res.error:
 								return res
-							# print(ptr)
-
-							words = self.allocations.pop(ptr, None)
-							if words is None:
+							self.free(ptr, res)
+							if res.error:
+								return res
+						case SyscallID.EXIT:
+							code = res.register(self.pop())
+							if res.error:
+								return res
+							self.exit_code = code - 0x100000000 if code > 0x7FFFFFFF else code
+							return res.success(False)
+						case SyscallID.SLEEP:
+							duration = res.register(self.pop())
+							if res.error:
+								return res
+							if duration > 0x7FFFFFFF:
+								duration -= 0x100000000
+							self.cancel_event.wait(max(0, duration) / 1000.0)
+						case SyscallID.REQUEST:
+							destination = res.register(self.pop())
+							backend_id = res.register(self.pop())
+							if res.error:
+								return res
+							try:
+								value = "" if self.request_handler is None else self.request_handler(backend_id)
+							except Exception as error:
+								return res.fail(self._error(f"Request failed: {error}"))
+							if not self.write_string_descriptor(destination, str(value), res):
+								return res
+							self.push(destination)
+						case _:
+							if not self.devices.dispatch(ins_arg, self, res):
 								return res.fail(
-									VMError("Invalid free", pos.copy(), pos.copy())
+									VMError(
+										f"Unknown system call {ins_arg}",
+										pos.copy(),
+										pos.copy(),
+									)
 								)
-
-							i = 0
-							while (
-								i < len(self.free_list) and self.free_list[i][0] < ptr
-							):
-								i += 1
-
-							self.free_list.insert(i, (ptr, words))
-
-							if i > 0:
-								prev_start, prev_size = self.free_list[i - 1]
-								curr_start, curr_size = self.free_list[i]
-
-								if prev_start + prev_size == curr_start:
-									self.free_list[i - 1] = (
-										prev_start,
-										prev_size + curr_size,
-									)
-									self.free_list.pop(i)
-									i -= 1
-
-							if i + 1 < len(self.free_list):
-								curr_start, curr_size = self.free_list[i]
-								next_start, next_size = self.free_list[i + 1]
-
-								if curr_start + curr_size == next_start:
-									self.free_list[i] = (
-										curr_start,
-										curr_size + next_size,
-									)
-									self.free_list.pop(i + 1)
+							if res.error:
+								return res
 
 		if ins_type == 8:  # Other
 			match ins_mod:
@@ -813,5 +993,14 @@ class VM:
 
 					for i in range(ins_arg):
 						self.program_memory[dst + i] = self.data_memory[src + i]
+				case 3:  # MEMSET
+					size = res.register(self.pop())
+					src = res.register(self.pop())
+		
+					if res.error:
+						return res
+		
+					for i in range(size):
+						self.data_memory[src + i] = ins_arg
 
 		return res.success(True)
