@@ -9,10 +9,18 @@ BINARY_RULES = {
 	(TT.ADD, "float", "float"): "float",
 	(TT.ADD, "string", "string"): "string",
 
+	(TT.ADD, "int", "char"): "int",
+    (TT.ADD, "char", "int"): "int",
+    (TT.ADD, "char", "char"): "int",
+
 	(TT.SUB, "int", "int"): "int",
 	(TT.SUB, "int", "float"): "float",
 	(TT.SUB, "float", "int"): "float",
 	(TT.SUB, "float", "float"): "float",
+
+	(TT.SUB, "int", "char"): "int",
+	(TT.SUB, "char", "int"): "int",
+	(TT.SUB, "char", "char"): "int",
 
 	(TT.MUL, "int", "int"): "int",
 	(TT.MUL, "int", "float"): "float",
