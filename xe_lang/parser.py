@@ -902,7 +902,7 @@ def parse(tokens: list[Token]) -> Result:
 			values.append(value)
 			end_pos: Position = current_tok.end_pos.copy()
 
-		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
+		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF, TT.RBR):
 			return res.fail(
 				InvalidSyntaxError(
 					f"Expected EOL or '<<', found {current_tok.value or current_tok._type.name} instead.",
@@ -951,7 +951,7 @@ def parse(tokens: list[Token]) -> Result:
 				)
 			)
 
-		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
+		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF, TT.RBR):
 			return res.fail(
 				InvalidSyntaxError(
 					f"Expected EOL, found {current_tok.value or current_tok._type.name} instead.",
@@ -1261,7 +1261,7 @@ def parse(tokens: list[Token]) -> Result:
 
 		advance()  # consume 'return'
 
-		if current_tok._type in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
+		if current_tok._type in (TT.NEWLINE, TT.SEMICOL, TT.EOF, TT.RBR):
 			end_pos = current_tok.end_pos.copy()
 			return res.success(ReturnStatement(start_pos, end_pos, None))
 
@@ -1635,7 +1635,7 @@ def parse(tokens: list[Token]) -> Result:
 		end_pos = current_tok.end_pos.copy()
 		advance()
 
-		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
+		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF, TT.RBR):
 			return res.fail(
 				InvalidSyntaxError(
 					"Expected end of line after procedure call.",
