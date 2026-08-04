@@ -509,8 +509,9 @@ class VMGraphicsWidget(QWidget):
 
 	def _key_code(self, event: QKeyEvent) -> int:
 		key = event.key()
-		return {
+		special = {
 			Qt.Key.Key_Backspace: 8,
+			Qt.Key.Key_Tab: 9,
 			Qt.Key.Key_Return: 13,
 			Qt.Key.Key_Enter: 13,
 			Qt.Key.Key_Escape: 27,
@@ -520,7 +521,13 @@ class VMGraphicsWidget(QWidget):
 			Qt.Key.Key_Right: 39,
 			Qt.Key.Key_Down: 40,
 			Qt.Key.Key_Delete: 46,
-		}.get(key, int(key))
+		}.get(key)
+		if special is not None:
+			return special
+		text = event.text()
+		if len(text) == 1 and ord(text) <= 0xFF:
+			return ord(text)
+		return int(key)
 
 	def mouseMoveEvent(self, event: QMouseEvent):
 		self._update_pointer(event)

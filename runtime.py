@@ -107,6 +107,7 @@ def run(
 		assembly = compile_ast(optimized_ast, fn)
 		if assembly.error:
 			return None, assembly.error, None
+		print(ANSI.BOLD + ANSI.PURPLE + "\nLABELS" + ANSI.END)
 
 		optimized_asm = optimize(assembly.value, DEFAULT_PASSES)
 		formatted_asm = format_instructions(optimized_asm)
