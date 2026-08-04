@@ -7,6 +7,7 @@ from xe_lang.helper import Result, VMError, Position
 from xe_lang.devices import DEFAULT_PALETTE, DeviceRuntime, FrameSnapshot, OSDevice
 from xe_lang.syscall_abi import SyscallID
 from disassemble import decode_instruction
+from random import random
 
 TRUE = 0xFFFFFFFF
 FALSE = 0
@@ -727,7 +728,7 @@ class VM:
 
 		if ins_type == 4:  # Branching
 			addr = ins_arg
-			if ins_mod % 3 != 0:
+			if ins_mod % 4 > 0:
 				res.register(self.check_stack(1))
 				if res.error:
 					return res
@@ -742,25 +743,33 @@ class VM:
 				case 2:  # BRNZ
 					if value != 0:
 						self.ip = addr - 1
-				case 3:  # CALL
+				case 3:  # JUMPIND
+					addr = res.register(self.pop())
+					if res.error: return res
+					self.ip = addr - 1
+				case 4:  # CALL
 					self.call_stack.append(self.ip)
 					self.ip = addr - 1
-				case 4:  # CALZ
+				case 5:  # CALZ
 					if value == 0:
 						self.call_stack.append(self.ip)
 						self.ip = addr - 1
-				case 5:  # CALN
+				case 6:  # CALN
 					if value != 0:
 						self.call_stack.append(self.ip)
 						self.ip = addr - 1
-				case 6:  # RET
+				case 7:  # CALLIND
+					addr = res.register(self.pop())
+					if res.error: return res
+					self.ip = addr - 1
+				case 8:  # RET
 					self.ip = self.call_stack[-1]
 					self.call_stack.pop()
-				case 7:  # RETZ
+				case 9:  # RETZ
 					if value == 0:
 						self.ip = self.call_stack[-1]
 						self.call_stack.pop()
-				case 8:  # RETN
+				case 10:  # RETN
 					if value != 0:
 						self.ip = self.call_stack[-1]
 						self.call_stack.pop()
@@ -896,11 +905,8 @@ class VM:
 							if not 0 <= descriptor <= len(self.data_memory) - 3:
 								return res.fail(self._error("Invalid string descriptor"))
 							chars = self.data_memory[descriptor]
-							capacity = self.data_memory[descriptor + 2]
-							if capacity < 1 or not 0 <= chars <= len(self.data_memory) - capacity:
-								return res.fail(self._error("Invalid string descriptor capacity"))
 							try:
-								value = self.read_mem_string(chars, capacity)
+								value = self.read_mem_string(chars)
 							except ValueError as error:
 								return res.fail(self._error(str(error)))
 							self.data_memory[descriptor + 1] = len(value) + 1
@@ -933,6 +939,9 @@ class VM:
 							if duration > 0x7FFFFFFF:
 								duration -= 0x100000000
 							self.cancel_event.wait(max(0, duration) / 1000.0)
+						case SyscallID.RAND:
+							rand_value: float = random()
+							self.push(float_to_u32(rand_value))
 						case SyscallID.REQUEST:
 							destination = res.register(self.pop())
 							backend_id = res.register(self.pop())
