@@ -206,8 +206,6 @@ def parse(tokens: list[Token]) -> Result:
 					return return_statement()
 				case "call":
 					return procedure_call()
-				case "asm":
-					return asm_block()
 
 		return expr()
 
@@ -902,7 +900,7 @@ def parse(tokens: list[Token]) -> Result:
 			values.append(value)
 			end_pos: Position = current_tok.end_pos.copy()
 
-		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF, TT.RBR):
+		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
 			return res.fail(
 				InvalidSyntaxError(
 					f"Expected EOL or '<<', found {current_tok.value or current_tok._type.name} instead.",
@@ -951,7 +949,7 @@ def parse(tokens: list[Token]) -> Result:
 				)
 			)
 
-		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF, TT.RBR):
+		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
 			return res.fail(
 				InvalidSyntaxError(
 					f"Expected EOL, found {current_tok.value or current_tok._type.name} instead.",
@@ -1261,7 +1259,7 @@ def parse(tokens: list[Token]) -> Result:
 
 		advance()  # consume 'return'
 
-		if current_tok._type in (TT.NEWLINE, TT.SEMICOL, TT.EOF, TT.RBR):
+		if current_tok._type in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
 			end_pos = current_tok.end_pos.copy()
 			return res.success(ReturnStatement(start_pos, end_pos, None))
 
@@ -1635,7 +1633,7 @@ def parse(tokens: list[Token]) -> Result:
 		end_pos = current_tok.end_pos.copy()
 		advance()
 
-		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF, TT.RBR):
+		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
 			return res.fail(
 				InvalidSyntaxError(
 					"Expected end of line after procedure call.",
@@ -1657,117 +1655,6 @@ def parse(tokens: list[Token]) -> Result:
 			)
 
 		return res.success(ProcedureCall(start_pos, end_pos, proc_name, args))
-
-	def asm_block() -> Result:
-		start_pos: Position = current_tok.start_pos.copy()
-		res: Result = Result()
-
-		advance()  # consume 'asm'
-
-		if current_tok._type != TT.LBR:
-			return res.fail(
-				InvalidSyntaxError(
-					f"Expected '{{' after 'asm', but found '{current_tok.value or current_tok._type.name}'.",
-					current_tok.start_pos,
-					current_tok.end_pos,
-				)
-			)
-		advance()
-
-		instructions: list[AsmInstruction] = []
-
-		while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
-			advance()
-
-		while current_tok._type != TT.RBR:
-			if current_tok._type == TT.EOF:
-				return res.fail(
-					InvalidSyntaxError(
-						"Unexpected end of file inside 'asm' block; expected '}'.",
-						current_tok.start_pos,
-						current_tok.end_pos,
-					)
-				)
-
-			# label definition: :name
-			if current_tok._type == TT.COL:
-				label_start = current_tok.start_pos.copy()
-				advance()
-
-				if current_tok._type != TT.IDENT:
-					return res.fail(
-						InvalidSyntaxError(
-							f"Expected a label name after ':', but found '{current_tok.value or current_tok._type.name}'.",
-							current_tok.start_pos,
-							current_tok.end_pos,
-						)
-					)
-
-				label_name = current_tok.value
-				label_end = current_tok.end_pos.copy()
-				advance()
-
-				instructions.append(
-					AsmInstruction(label_start, label_end, label=label_name)
-				)
-
-			# instruction: OPCODE [operand]
-			elif current_tok._type == TT.IDENT:
-				opcode_tok = current_tok
-				opcode_name = current_tok.value
-				end_pos = current_tok.end_pos.copy()
-				advance()
-
-				operand = None
-
-				if current_tok._type in (TT.INT, TT.FLOAT, TT.IDENT):
-					operand = current_tok.value
-					end_pos = current_tok.end_pos.copy()
-					advance()
-				elif current_tok._type == TT.SUB:
-					# allow a negative integer literal operand, e.g. PUSH -1
-					advance()
-					if current_tok._type != TT.INT:
-						return res.fail(
-							InvalidSyntaxError(
-								f"Expected an integer after '-' in asm operand, but found '{current_tok.value or current_tok._type.name}'.",
-								current_tok.start_pos,
-								current_tok.end_pos,
-							)
-						)
-					operand = -current_tok.value
-					end_pos = current_tok.end_pos.copy()
-					advance()
-
-				if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.RBR, TT.EOF):
-					return res.fail(
-						InvalidSyntaxError(
-							f"Expected end of line after asm instruction '{opcode_name}', but found unexpected trailing token '{current_tok.value or current_tok._type.name}'.",
-							current_tok.start_pos,
-							current_tok.end_pos,
-						)
-					)
-
-				instructions.append(
-					AsmInstruction(opcode_tok.start_pos, end_pos, opcode=opcode_name, operand=operand)
-				)
-
-			else:
-				return res.fail(
-					InvalidSyntaxError(
-						f"Expected an opcode, a label (':name'), or '}}' inside 'asm' block, but found '{current_tok.value or current_tok._type.name}'.",
-						current_tok.start_pos,
-						current_tok.end_pos,
-					)
-				)
-
-			while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
-				advance()
-
-		end_pos = current_tok.end_pos.copy()
-		advance()  # consume '}'
-
-		return res.success(AsmBlock(start_pos, end_pos, instructions))
 
 	# other parse subroutines
 	def expr() -> Result:

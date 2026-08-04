@@ -231,6 +231,8 @@ def init_libraries(scope: Scope):
 	declared_libraries = {
 		spec.name: make_declared_library(spec) for spec in STANDARD_LIBRARY_SPECS
 	}
+	for library_name, library_symbol in declared_libraries.items():
+		scope.symbols[library_name] = library_symbol
 
 	scope.symbols["math"] = make_library(
 		"math",
@@ -305,42 +307,42 @@ def init_libraries(scope: Scope):
 
 	graphics_library = declared_libraries["graphics"]
 	graphics_library.members["Window"] = ClassSymbol(
-		"Window",
-		Type("Window"),
-		fields={
-			"x": VariableSymbol("x", Type("int"), address=0),
-			"y": VariableSymbol("y", Type("int"), address=1),
-			"width": VariableSymbol("width", Type("int"), address=2),
-			"height": VariableSymbol("height", Type("int"), address=3),
-			"title": VariableSymbol("title", Type("string"), address=4),
-			"state": VariableSymbol("state", Type("int"), address=5),
-			"_handle": VariableSymbol("_handle", Type("int"), address=6),
-			"_reserved0": VariableSymbol("_reserved0", Type("int"), address=7),
-			"_reserved1": VariableSymbol("_reserved1", Type("int"), address=8),
-			"_reserved2": VariableSymbol("_reserved2", Type("int"), address=9),
-		},
-		size=10,
-		methods={
-			"close": BuiltInSubroutineSymbol(
-				"close",
-				Type("procedure"),
-				is_proc=True,
-				builtin_id=BuiltInID.GRAPHICS_WINDOW_CLOSE,
-			),
-			"is_fullscreen": BuiltInSubroutineSymbol(
-				"is_fullscreen",
-				Type("function"),
-				return_type=Type("bool"),
-				builtin_id=BuiltInID.GRAPHICS_WINDOW_IS_FULLSCREEN,
-			),
-			"is_minimized": BuiltInSubroutineSymbol(
-				"is_minimized",
-				Type("function"),
-				return_type=Type("bool"),
-				builtin_id=BuiltInID.GRAPHICS_WINDOW_IS_MINIMIZED,
-			),
-		},
-	)
+				"Window",
+				Type("Window"),
+				fields={
+					"x": VariableSymbol("x", Type("int"), address=0),
+					"y": VariableSymbol("y", Type("int"), address=1),
+					"width": VariableSymbol("width", Type("int"), address=2),
+					"height": VariableSymbol("height", Type("int"), address=3),
+					"title": VariableSymbol("title", Type("string"), address=4),
+					"state": VariableSymbol("state", Type("int"), address=5),
+					"_handle": VariableSymbol("_handle", Type("int"), address=6),
+					"_reserved0": VariableSymbol("_reserved0", Type("int"), address=7),
+					"_reserved1": VariableSymbol("_reserved1", Type("int"), address=8),
+					"_reserved2": VariableSymbol("_reserved2", Type("int"), address=9),
+				},
+				size=10,
+				methods={
+					"close": BuiltInSubroutineSymbol(
+						"close",
+						Type("procedure"),
+						is_proc=True,
+						builtin_id=BuiltInID.GRAPHICS_WINDOW_CLOSE,
+					),
+					"is_fullscreen": BuiltInSubroutineSymbol(
+						"is_fullscreen",
+						Type("function"),
+						return_type=Type("bool"),
+						builtin_id=BuiltInID.GRAPHICS_WINDOW_IS_FULLSCREEN,
+					),
+					"is_minimized": BuiltInSubroutineSymbol(
+						"is_minimized",
+						Type("function"),
+						return_type=Type("bool"),
+						builtin_id=BuiltInID.GRAPHICS_WINDOW_IS_MINIMIZED,
+					),
+				},
+			)
 	os_library = declared_libraries["os"]
 	os_library.members["File"] = ClassSymbol(
 		"File",
@@ -390,33 +392,12 @@ def init_libraries(scope: Scope):
 				builtin_id=BuiltInID.STRING_APPEND,
 				is_proc=True,
 			),
-			"to_int": BuiltInSubroutineSymbol(
-				"to_int",
-				Type("function"),
-				parameters=[Type("string")],
-				return_type=Type("int"),
-				builtin_id=BuiltInID.STRING_TO_INT
-			),
-			"to_float": BuiltInSubroutineSymbol(
-				"to_float",
-				Type("function"),
-				parameters=[Type("string")],
-				return_type=Type("float"),
-				builtin_id=BuiltInID.STRING_TO_FLOAT
-			),
-			"from_int": BuiltInSubroutineSymbol(
-				"from_int",
-				Type("function"),
-				parameters=[Type("int")],
-				return_type=Type("string"),
-				builtin_id=BuiltInID.STRING_FROM_INT
-			),
-			"from_float": BuiltInSubroutineSymbol(
-				"from_float",
-				Type("function"),
-				parameters=[Type("float")],
-				return_type=Type("string"),
-				builtin_id=BuiltInID.STRING_FROM_FLOAT
+			"append_char": BuiltInSubroutineSymbol(
+				"append_char",
+				Type("procedure"),
+				parameters=[Type("string"), Type("char")],
+				builtin_id=BuiltInID.STRING_APPEND_CHAR,
+				is_proc=True,
 			),
 		},
 	)

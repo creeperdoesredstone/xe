@@ -91,7 +91,14 @@ GRAPHICS_SPEC = LibrarySpec(
 		_builtin("content_width", BuiltInID.GRAPHICS_CONTENT_WIDTH, ("Window",), "int", SyscallID.APP_GRAPHICS_CONTENT_WIDTH, WINDOW_REF),
 		_builtin("content_height", BuiltInID.GRAPHICS_CONTENT_HEIGHT, ("Window",), "int", SyscallID.APP_GRAPHICS_CONTENT_HEIGHT, WINDOW_REF),
 		_builtin("draw_char", BuiltInID.GRAPHICS_DRAW_CHAR, ("Window", "int", "int", "char", "int"), None, SyscallID.APP_GRAPHICS_DRAW_CHAR, WINDOW_REF),
-		# _builtin("button_tone", BuiltInID.GRAPHICS_BUTTON_TONE, ("Window", "int", "int", "int", "int", "string", "int"), "bool", SyscallID.APP_GRAPHICS_BUTTON_TONE, WINDOW_REF),
+		_builtin("button_tone", BuiltInID.GRAPHICS_BUTTON_TONE, ("Window", "int", "int", "int", "int", "string", "int"), "bool", SyscallID.APP_GRAPHICS_BUTTON_TONE, WINDOW_REF),
+		_builtin("pointer_x", BuiltInID.GRAPHICS_POINTER_X, ("Window",), "int", SyscallID.APP_GRAPHICS_POINTER_X, WINDOW_REF),
+		_builtin("pointer_y", BuiltInID.GRAPHICS_POINTER_Y, ("Window",), "int", SyscallID.APP_GRAPHICS_POINTER_Y, WINDOW_REF),
+		_builtin("draw_text_small", BuiltInID.GRAPHICS_DRAW_TEXT_SMALL, ("Window", "int", "int", "string", "int"), None, SyscallID.APP_GRAPHICS_DRAW_TEXT_SMALL, WINDOW_REF),
+		_builtin("draw_char_small", BuiltInID.GRAPHICS_DRAW_CHAR_SMALL, ("Window", "int", "int", "char", "int"), None, SyscallID.APP_GRAPHICS_DRAW_CHAR_SMALL, WINDOW_REF),
+		_builtin("draw_int_small", BuiltInID.GRAPHICS_DRAW_INT_SMALL, ("Window", "int", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_DRAW_INT_SMALL, WINDOW_REF),
+		_builtin("draw_float_small", BuiltInID.GRAPHICS_DRAW_FLOAT_SMALL, ("Window", "int", "int", "float", "int"), None, SyscallID.APP_GRAPHICS_DRAW_FLOAT_SMALL, WINDOW_REF),
+		_builtin("button_flat", BuiltInID.GRAPHICS_BUTTON_FLAT, ("Window", "int", "int", "int", "int", "string", "int"), "bool", SyscallID.APP_GRAPHICS_BUTTON_FLAT, WINDOW_REF),
 	),
 	(
 		ConstantSpec("SCREEN_WIDTH", 480),
@@ -110,11 +117,11 @@ GRAPHICS_SPEC = LibrarySpec(
 		ConstantSpec("KEY_ENTER", 13),
 		ConstantSpec("KEY_ESCAPE", 27),
 		ConstantSpec("KEY_SPACE", 32),
-		ConstantSpec("KEY_LEFT", 3),
-		ConstantSpec("KEY_UP", 4),
-		ConstantSpec("KEY_RIGHT", 5),
-		ConstantSpec("KEY_DOWN", 6),
-		ConstantSpec("KEY_DELETE", 127),
+		ConstantSpec("KEY_LEFT", 37),
+		ConstantSpec("KEY_UP", 38),
+		ConstantSpec("KEY_RIGHT", 39),
+		ConstantSpec("KEY_DOWN", 40),
+		ConstantSpec("KEY_DELETE", 46),
 	),
 )
 
@@ -133,20 +140,71 @@ OS_SPEC = LibrarySpec(
 		_builtin("read", BuiltInID.OS_READ, ("File",), "string", SyscallID.APP_OS_READ),
 		_builtin("write", BuiltInID.OS_WRITE, ("File", "string"), "bool", SyscallID.APP_OS_WRITE),
 		_builtin("close", BuiltInID.OS_CLOSE, ("string",), None, SyscallID.APP_OS_CLOSE),
+		_builtin(
+			"apply_preferences",
+			BuiltInID.OS_APPLY_PREFERENCES,
+			("int", "int", "int", "int", "int", "int", "int", "int", "int", "int", "bool"),
+			"bool",
+			SyscallID.APP_OS_APPLY_PREFERENCES,
+		),
 	),
 	(
 		ConstantSpec("VOLUME_MIN", 0),
 		ConstantSpec("VOLUME_MAX", 100),
+		ConstantSpec("THEME_DARK", 0),
+		ConstantSpec("THEME_LIGHT", 1),
+		ConstantSpec("CORNER_SQUARE", 0),
+		ConstantSpec("CORNER_ROUNDED", 1),
+		ConstantSpec("CORNER_SOFT", 2),
+		ConstantSpec("ICON_SMALL", 0),
+		ConstantSpec("ICON_MEDIUM", 1),
+		ConstantSpec("ICON_LARGE", 2),
+		ConstantSpec("CLOCK_12_HOUR", 0),
+		ConstantSpec("CLOCK_24_HOUR", 1),
 	),
 	(
 		PropertySpec("volume", "int", BuiltInID.OS_GET_VOLUME, BuiltInID.OS_SET_VOLUME, SyscallID.APP_OS_GET_VOLUME, SyscallID.APP_OS_SET_VOLUME),
 		PropertySpec("background_id", "int", BuiltInID.OS_GET_BACKGROUND, BuiltInID.OS_SET_BACKGROUND, SyscallID.APP_OS_GET_BACKGROUND, SyscallID.APP_OS_SET_BACKGROUND),
 		PropertySpec("palette", "int", BuiltInID.OS_GET_PALETTE, BuiltInID.OS_SET_PALETTE, SyscallID.APP_OS_GET_PALETTE, SyscallID.APP_OS_SET_PALETTE),
+		PropertySpec("music_volume", "int", BuiltInID.OS_GET_MUSIC_VOLUME, BuiltInID.OS_SET_MUSIC_VOLUME, SyscallID.APP_OS_GET_MUSIC_VOLUME, SyscallID.APP_OS_SET_MUSIC_VOLUME),
+		PropertySpec("sound_effect_volume", "int", BuiltInID.OS_GET_SOUND_EFFECT_VOLUME, BuiltInID.OS_SET_SOUND_EFFECT_VOLUME, SyscallID.APP_OS_GET_SOUND_EFFECT_VOLUME, SyscallID.APP_OS_SET_SOUND_EFFECT_VOLUME),
+		PropertySpec("theme_mode", "int", BuiltInID.OS_GET_THEME_MODE, BuiltInID.OS_SET_THEME_MODE, SyscallID.APP_OS_GET_THEME_MODE, SyscallID.APP_OS_SET_THEME_MODE),
+		PropertySpec("window_transparency", "int", BuiltInID.OS_GET_WINDOW_TRANSPARENCY, BuiltInID.OS_SET_WINDOW_TRANSPARENCY, SyscallID.APP_OS_GET_WINDOW_TRANSPARENCY, SyscallID.APP_OS_SET_WINDOW_TRANSPARENCY),
+		PropertySpec("window_corner_style", "int", BuiltInID.OS_GET_WINDOW_CORNER_STYLE, BuiltInID.OS_SET_WINDOW_CORNER_STYLE, SyscallID.APP_OS_GET_WINDOW_CORNER_STYLE, SyscallID.APP_OS_SET_WINDOW_CORNER_STYLE),
+		PropertySpec("icon_size", "int", BuiltInID.OS_GET_ICON_SIZE, BuiltInID.OS_SET_ICON_SIZE, SyscallID.APP_OS_GET_ICON_SIZE, SyscallID.APP_OS_SET_ICON_SIZE),
+		PropertySpec("clock_format", "int", BuiltInID.OS_GET_CLOCK_FORMAT, BuiltInID.OS_SET_CLOCK_FORMAT, SyscallID.APP_OS_GET_CLOCK_FORMAT, SyscallID.APP_OS_SET_CLOCK_FORMAT),
+		PropertySpec("settings_enabled", "bool", BuiltInID.OS_GET_SETTINGS_ENABLED, BuiltInID.OS_SET_SETTINGS_ENABLED, SyscallID.APP_OS_GET_SETTINGS_ENABLED, SyscallID.APP_OS_SET_SETTINGS_ENABLED),
 	),
 )
 
 
-STANDARD_LIBRARY_SPECS = (GRAPHICS_SPEC, OS_SPEC)
+CURRENCY_SPEC = LibrarySpec(
+	"currency",
+	(
+		_builtin("count", BuiltInID.CURRENCY_COUNT, (), "int", SyscallID.APP_CURRENCY_COUNT),
+		_builtin("code", BuiltInID.CURRENCY_CODE, ("int",), "string", SyscallID.APP_CURRENCY_CODE),
+		_builtin("load", BuiltInID.CURRENCY_LOAD, ("int", "int", "int"), "bool", SyscallID.APP_CURRENCY_LOAD),
+		_builtin("status", BuiltInID.CURRENCY_STATUS, (), "int", SyscallID.APP_CURRENCY_STATUS),
+		_builtin("rate", BuiltInID.CURRENCY_RATE, (), "float", SyscallID.APP_CURRENCY_RATE),
+		_builtin("point_count", BuiltInID.CURRENCY_POINT_COUNT, (), "int", SyscallID.APP_CURRENCY_POINT_COUNT),
+		_builtin("point", BuiltInID.CURRENCY_POINT, ("int",), "float", SyscallID.APP_CURRENCY_POINT),
+	),
+	(
+		ConstantSpec("RANGE_1D", 0),
+		ConstantSpec("RANGE_5D", 1),
+		ConstantSpec("RANGE_1W", 2),
+		ConstantSpec("RANGE_1M", 3),
+		ConstantSpec("RANGE_YTD", 4),
+		ConstantSpec("RANGE_5Y", 5),
+		ConstantSpec("STATUS_IDLE", 0),
+		ConstantSpec("STATUS_LOADING", 1),
+		ConstantSpec("STATUS_READY", 2),
+		ConstantSpec("STATUS_ERROR", 3),
+	),
+)
+
+
+STANDARD_LIBRARY_SPECS = (GRAPHICS_SPEC, OS_SPEC, CURRENCY_SPEC)
 
 BUILTIN_SYSCALLS = {
 	builtin.builtin_id: builtin.syscall

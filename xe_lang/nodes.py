@@ -665,23 +665,3 @@ class LibraryAssign(Node):
 
 	def __repr__(self):
 		return f"LIB_ASSIGN({self.library_name}::{self.member_name} {self.operator} {self.value})"
-
-
-class AsmInstruction:
-	__slots__ = ("opcode", "operand", "label", "start_pos", "end_pos")
-
-	def __init__(self, start_pos, end_pos, opcode=None, operand=None, label=None):
-		self.start_pos = start_pos
-		self.end_pos = end_pos
-		self.opcode = opcode
-		self.operand = operand
-		self.label = label
-
-
-class AsmBlock(Node):
-	def __init__(self, start_pos: Position, end_pos: Position, instructions: list[AsmInstruction]):
-		super().__init__(start_pos, end_pos)
-		self.instructions: list[AsmInstruction] = instructions
-
-	def __repr__(self):
-		return f"ASM_BLOCK({len(self.instructions)} instructions)"

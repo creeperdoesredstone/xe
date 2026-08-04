@@ -103,12 +103,22 @@ class SemanticAnalyzer:
 		self.push_scope()
 		init_libraries(self.scope)
 
+		# Global storage must be visible while subroutine bodies are analyzed,
+		# regardless of where the parser groups declarations in the program.
+		for stmt in node.statements:
+			if isinstance(stmt, (VariableDeclaration, ArrayDeclaration)):
+				res.register(self.analyze(stmt))
+				if res.error:
+					return res
+
 		for defn in node.sub_defs:
 			res.register(self.analyze(defn))
 			if res.error:
 				return res
 
 		for stmt in node.statements:
+			if isinstance(stmt, (VariableDeclaration, ArrayDeclaration)):
+				continue
 			res.register(self.analyze(stmt))
 			if res.error:
 				return res
@@ -775,11 +785,6 @@ class SemanticAnalyzer:
 	def visit_SwitchStatement(self, node: SwitchStatement) -> Result:
 		res = Result()
 
-		ACCEPTED_MATCH_TYPES = [
-			("int", "char"),
-			("char", "int"),
-		]
-
 		match_type: Type = res.register(self.analyze(node.match_expr))
 		if res.error:
 			return res
@@ -790,17 +795,13 @@ class SemanticAnalyzer:
 				return res
 
 			if case_type != match_type:
-				if not (
-					match_type.pointer_layers == 0 and \
-					(match_type.base, case_type.base) in ACCEPTED_MATCH_TYPES
-				):
-					return res.fail(
-						SemanticError(
-							f"Case expression type '{case_type}' does not match switch expression type '{match_type}'.",
-							case_expr.start_pos,
-							case_expr.end_pos,
-						)
+				return res.fail(
+					SemanticError(
+						f"Case expression type '{case_type}' does not match switch expression type '{match_type}'.",
+						case_expr.start_pos,
+						case_expr.end_pos,
 					)
+				)
 
 			self.push_scope()
 			res.register(self.analyze(body))
@@ -2397,9 +2398,6 @@ class SemanticAnalyzer:
 		node.builtin_id = member_sym.builtin_id
 		node.type = member_sym.return_type if member_sym.return_type is not None else Type("none")
 		return res.success(node.type)
-
-	def visit_AsmBlock(self, node: AsmBlock) -> Result:
-		return Result().success(None)
 
 
 def analyze(ast: Node) -> Result:

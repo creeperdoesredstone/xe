@@ -7,7 +7,6 @@ from xe_lang.helper import Result, VMError, Position
 from xe_lang.devices import DEFAULT_PALETTE, DeviceRuntime, FrameSnapshot, OSDevice
 from xe_lang.syscall_abi import SyscallID
 from disassemble import decode_instruction
-from random import random
 
 TRUE = 0xFFFFFFFF
 FALSE = 0
@@ -728,11 +727,17 @@ class VM:
 
 		if ins_type == 4:  # Branching
 			addr = ins_arg
-			if ins_mod % 4 > 0:
+			value = 0
+			if ins_mod in (1, 2, 5, 6, 9, 10):
 				res.register(self.check_stack(1))
 				if res.error:
 					return res
 				value = res.register(self.pop())
+			elif ins_mod in (3, 7):
+				res.register(self.check_stack(1))
+				if res.error:
+					return res
+				addr = res.register(self.pop())
 
 			match ins_mod:
 				case 0:  # JUMP
@@ -744,8 +749,6 @@ class VM:
 					if value != 0:
 						self.ip = addr - 1
 				case 3:  # JUMPIND
-					addr = res.register(self.pop())
-					if res.error: return res
 					self.ip = addr - 1
 				case 4:  # CALL
 					self.call_stack.append(self.ip)
@@ -759,8 +762,7 @@ class VM:
 						self.call_stack.append(self.ip)
 						self.ip = addr - 1
 				case 7:  # CALLIND
-					addr = res.register(self.pop())
-					if res.error: return res
+					self.call_stack.append(self.ip)
 					self.ip = addr - 1
 				case 8:  # RET
 					self.ip = self.call_stack[-1]
@@ -905,8 +907,11 @@ class VM:
 							if not 0 <= descriptor <= len(self.data_memory) - 3:
 								return res.fail(self._error("Invalid string descriptor"))
 							chars = self.data_memory[descriptor]
+							capacity = self.data_memory[descriptor + 2]
+							if capacity < 1 or not 0 <= chars <= len(self.data_memory) - capacity:
+								return res.fail(self._error("Invalid string descriptor capacity"))
 							try:
-								value = self.read_mem_string(chars)
+								value = self.read_mem_string(chars, capacity)
 							except ValueError as error:
 								return res.fail(self._error(str(error)))
 							self.data_memory[descriptor + 1] = len(value) + 1
@@ -939,9 +944,6 @@ class VM:
 							if duration > 0x7FFFFFFF:
 								duration -= 0x100000000
 							self.cancel_event.wait(max(0, duration) / 1000.0)
-						case SyscallID.RAND:
-							rand_value: float = random()
-							self.push(float_to_u32(rand_value))
 						case SyscallID.REQUEST:
 							destination = res.register(self.pop())
 							backend_id = res.register(self.pop())
@@ -1002,14 +1004,5 @@ class VM:
 
 					for i in range(ins_arg):
 						self.program_memory[dst + i] = self.data_memory[src + i]
-				case 3:  # MEMSET
-					size = res.register(self.pop())
-					src = res.register(self.pop())
-		
-					if res.error:
-						return res
-		
-					for i in range(size):
-						self.data_memory[src + i] = ins_arg
 
 		return res.success(True)

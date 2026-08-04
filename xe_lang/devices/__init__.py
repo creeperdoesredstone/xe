@@ -1,3 +1,4 @@
+from .currency import CURRENCY_CODES, CurrencyDevice, CurrencySnapshot
 from .graphics import DEFAULT_PALETTE, FrameSnapshot, GraphicsDevice
 from .filesystem import FileSystemDevice
 from .input import InputDevice, InputFrame
@@ -8,6 +9,9 @@ from .windows import WindowManager, WindowState
 
 __all__ = (
 	"BACKGROUND_NAMES",
+	"CURRENCY_CODES",
+	"CurrencyDevice",
+	"CurrencySnapshot",
 	"DEFAULT_PALETTE",
 	"SCREEN_HEIGHT",
 	"SCREEN_WIDTH",
