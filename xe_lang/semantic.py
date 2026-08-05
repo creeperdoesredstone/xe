@@ -103,19 +103,28 @@ class SemanticAnalyzer:
 		self.push_scope()
 		init_libraries(self.scope)
 
-		# Global storage must be visible while subroutine bodies are analyzed,
-		# regardless of where the parser groups declarations in the program.
+		# Define structs & classes
+		for defn in node.sub_defs:
+			if isinstance(defn, (StructDefinition, ClassDefinition)):
+				res.register(self.analyze(defn))
+				if res.error:
+					return res
+
+		# Define global storage
 		for stmt in node.statements:
 			if isinstance(stmt, (VariableDeclaration, ArrayDeclaration)):
 				res.register(self.analyze(stmt))
 				if res.error:
 					return res
 
+		# Define subroutines
 		for defn in node.sub_defs:
-			res.register(self.analyze(defn))
-			if res.error:
-				return res
+			if not isinstance(defn, (StructDefinition, ClassDefinition)):
+				res.register(self.analyze(defn))
+				if res.error:
+					return res
 
+		# Define rest of program
 		for stmt in node.statements:
 			if isinstance(stmt, (VariableDeclaration, ArrayDeclaration)):
 				continue
