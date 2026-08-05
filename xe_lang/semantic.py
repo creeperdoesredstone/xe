@@ -798,19 +798,25 @@ class SemanticAnalyzer:
 		if res.error:
 			return res
 
+		ALLOWED_MATCH_TYPES = (
+			("int","char"),
+			("char","int")
+		)
+
 		for case_expr, body in node.cases:
 			case_type: Type = res.register(self.analyze(case_expr))
 			if res.error:
 				return res
 
 			if case_type != match_type:
-				return res.fail(
-					SemanticError(
-						f"Case expression type '{case_type}' does not match switch expression type '{match_type}'.",
-						case_expr.start_pos,
-						case_expr.end_pos,
+				if match_type.pointer_layers != 0 or (match_type.base, case_type.base) not in ALLOWED_MATCH_TYPES:
+					return res.fail(
+						SemanticError(
+							f"Case expression type '{case_type}' does not match switch expression type '{match_type}'.",
+							case_expr.start_pos,
+							case_expr.end_pos,
+						)
 					)
-				)
 
 			self.push_scope()
 			res.register(self.analyze(body))

@@ -955,6 +955,8 @@ class VMGraphicsWidget(QWidget):
 			if self.active_vm and hasattr(self.active_vm, "devices"):
 				palette = self.active_vm.devices.os.palette
 			colors = [QColor(color) for color in palette]
+			if not hasattr(self, "image") or self.image.format() == QImage.Format.Format_Indexed8:
+				self.image = QImage(self.width_px, self.height_px, QImage.Format.Format_ARGB32)
 			for y in range(min(self.height_px, len(frame))):
 				for x in range(min(self.width_px, len(frame[y]))):
 					self.image.setPixelColor(x, y, colors[frame[y][x] % len(colors)])

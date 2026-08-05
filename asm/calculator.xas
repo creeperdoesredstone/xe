@@ -5856,66 +5856,55 @@ JUMP endif(2)
 HALT
 :is_whitespace
 SETFP
-PUSH 0
 LOADSP 1
-STORESP -1
-LOADSP -1
 PUSH 32
 IEQ
-LOADSP -1
+LOADSP 1
 PUSH 9
 IEQ
 OR
-LOADSP -1
+LOADSP 1
 PUSH 10
 IEQ
 OR
-LOADSP -1
+LOADSP 1
 PUSH 13
 IEQ
 OR
 JUMP cleanup(is_whitespace)
 :cleanup(is_whitespace)
 STORESP 1
-POP 1
 POPFP
 POP 1
 RET
 :is_digit
 SETFP
-PUSH 0
 LOADSP 1
-STORESP -1
-LOADSP -1
 PUSH 48
 IGE
-LOADSP -1
+LOADSP 1
 PUSH 57
 ILE
 AND
 JUMP cleanup(is_digit)
 :cleanup(is_digit)
 STORESP 1
-POP 1
 POPFP
 POP 1
 RET
 :is_letter
 SETFP
-PUSH 0
 LOADSP 1
-STORESP -1
-LOADSP -1
 PUSH 65
 IGE
-LOADSP -1
+LOADSP 1
 PUSH 90
 ILE
 AND
-LOADSP -1
+LOADSP 1
 PUSH 97
 IGE
-LOADSP -1
+LOADSP 1
 PUSH 122
 ILE
 AND
@@ -5923,15 +5912,11 @@ OR
 JUMP cleanup(is_letter)
 :cleanup(is_letter)
 STORESP 1
-POP 1
 POPFP
 POP 1
 RET
 :is_identifier_char
 SETFP
-PUSH 0
-LOADSP 1
-STORESP -1
 LOADSP 1
 PUSHFP
 CALL is_letter
@@ -5939,14 +5924,13 @@ LOADSP 1
 PUSHFP
 CALL is_digit
 OR
-LOADSP -1
+LOADSP 1
 PUSH 95
 IEQ
 OR
 JUMP cleanup(is_identifier_char)
 :cleanup(is_identifier_char)
 STORESP 1
-POP 1
 POPFP
 POP 1
 RET
@@ -6183,25 +6167,29 @@ PUSHFP
 CALL peek_code
 STORESP -1
 LOADSP -1
+DUP 0
 PUSH 43
 IEQ
-BRZ branch(34_0)
+BRZ case(0_1)
+POP 1
 PUSH 1
 JUMP cleanup(read_operator_code)
-JUMP endif(34)
-:branch(34_0)
-LOADSP -1
+JUMP endswitch(0)
+:case(0_1)
+DUP 0
 PUSH 45
 IEQ
-BRZ branch(34_1)
+BRZ case(0_2)
+POP 1
 PUSH 2
 JUMP cleanup(read_operator_code)
-JUMP endif(34)
-:branch(34_1)
-LOADSP -1
+JUMP endswitch(0)
+:case(0_2)
+DUP 0
 PUSH 42
 IEQ
-BRZ branch(34_2)
+BRZ case(0_3)
+POP 1
 LOADSP 2
 LOADSP 1
 INCI
@@ -6209,33 +6197,38 @@ PUSHFP
 CALL peek_code
 PUSH 42
 IEQ
-BRZ else(35)
-PUSH 6
-JUMP cleanup(read_operator_code)
-JUMP endif(35)
-:else(35)
-:endif(35)
-PUSH 3
-JUMP cleanup(read_operator_code)
-JUMP endif(34)
-:branch(34_2)
-LOADSP -1
-PUSH 47
-IEQ
-BRZ branch(34_3)
-PUSH 4
-JUMP cleanup(read_operator_code)
-JUMP endif(34)
-:branch(34_3)
-LOADSP -1
-PUSH 37
-IEQ
 BRZ else(34)
-PUSH 5
+PUSH 6
 JUMP cleanup(read_operator_code)
 JUMP endif(34)
 :else(34)
 :endif(34)
+PUSH 3
+JUMP cleanup(read_operator_code)
+JUMP endswitch(0)
+:case(0_3)
+DUP 0
+PUSH 47
+IEQ
+BRZ case(0_4)
+POP 1
+PUSH 4
+JUMP cleanup(read_operator_code)
+JUMP endswitch(0)
+:case(0_4)
+DUP 0
+PUSH 37
+IEQ
+BRZ default(0)
+POP 1
+PUSH 5
+JUMP cleanup(read_operator_code)
+JUMP endswitch(0)
+:default(0)
+POP 1
+PUSH 0
+JUMP cleanup(read_operator_code)
+:endswitch(0)
 PUSH 0
 JUMP cleanup(read_operator_code)
 :cleanup(read_operator_code)
@@ -6253,11 +6246,11 @@ LOADSP 1
 PUSH 2
 IEQ
 OR
-BRZ branch(36_0)
+BRZ branch(35_0)
 PUSH 10
 JUMP cleanup(operator_precedence)
-JUMP endif(36)
-:branch(36_0)
+JUMP endif(35)
+:branch(35_0)
 LOADSP 1
 PUSH 3
 IEQ
@@ -6269,20 +6262,20 @@ LOADSP 1
 PUSH 5
 IEQ
 OR
-BRZ branch(36_1)
+BRZ branch(35_1)
 PUSH 20
 JUMP cleanup(operator_precedence)
-JUMP endif(36)
-:branch(36_1)
+JUMP endif(35)
+:branch(35_1)
 LOADSP 1
 PUSH 6
 IEQ
-BRZ else(36)
+BRZ else(35)
 PUSH 30
 JUMP cleanup(operator_precedence)
-JUMP endif(36)
-:else(36)
-:endif(36)
+JUMP endif(35)
+:else(35)
+:endif(35)
 PUSH 0
 JUMP cleanup(operator_precedence)
 :cleanup(operator_precedence)
@@ -6298,43 +6291,43 @@ LOADSP 6
 STORESP -1
 LOADSP 4
 NOT
-BRZ else(37)
+BRZ else(36)
 LOADSP 6
 PUSH 1127481344
 MULF
 PUSH 1078530011
 DIVF
 STORESP -1
-JUMP endif(37)
-:else(37)
-:endif(37)
+JUMP endif(36)
+:else(36)
+:endif(36)
 LOADSP 7
 PUSH 1
 IEQ
-BRZ branch(38_0)
+BRZ branch(37_0)
 LOADSP -1
 SINF
 JUMP cleanup(apply_function)
-JUMP endif(38)
-:branch(38_0)
+JUMP endif(37)
+:branch(37_0)
 LOADSP 7
 PUSH 2
 IEQ
-BRZ branch(38_1)
+BRZ branch(37_1)
 LOADSP -1
 COSF
 JUMP cleanup(apply_function)
-JUMP endif(38)
-:branch(38_1)
+JUMP endif(37)
+:branch(37_1)
 LOADSP 7
 PUSH 3
 IEQ
-BRZ branch(38_2)
+BRZ branch(37_2)
 LOADSP -1
 TANF
 JUMP cleanup(apply_function)
-JUMP endif(38)
-:branch(38_2)
+JUMP endif(37)
+:branch(37_2)
 LOADSP 7
 PUSH 4
 IEQ
@@ -6342,7 +6335,7 @@ LOADSP 7
 PUSH 5
 IEQ
 OR
-BRZ branch(38_3)
+BRZ branch(37_3)
 LOADSP 6
 PUSH 1065353216
 NEGF
@@ -6351,7 +6344,7 @@ LOADSP 6
 PUSH 1065353216
 FGT
 OR
-BRZ else(39)
+BRZ else(38)
 LOADSP 3
 LOADSP 2
 PUSH 6
@@ -6360,22 +6353,45 @@ PUSHFP
 CALL set_error
 PUSH 0
 JUMP cleanup(apply_function)
-JUMP endif(39)
-:else(39)
-:endif(39)
+JUMP endif(38)
+:else(38)
+:endif(38)
 LOADSP 7
 PUSH 4
 IEQ
-BRZ else(40)
+BRZ else(39)
 LOADSP 6
 ASINF
 STORESP -2
-JUMP endif(40)
-:else(40)
+JUMP endif(39)
+:else(39)
 LOADSP 6
 ACOSF
 STORESP -2
+:endif(39)
+LOADSP 4
+NOT
+BRZ else(40)
+LOADSP -2
+PUSH 1078530011
+MULF
+PUSH 1127481344
+DIVF
+STORESP -2
+JUMP endif(40)
+:else(40)
 :endif(40)
+LOADSP -2
+JUMP cleanup(apply_function)
+JUMP endif(37)
+:branch(37_3)
+LOADSP 7
+PUSH 6
+IEQ
+BRZ branch(37_4)
+LOADSP 6
+ATANF
+STORESP -2
 LOADSP 4
 NOT
 BRZ else(41)
@@ -6390,38 +6406,43 @@ JUMP endif(41)
 :endif(41)
 LOADSP -2
 JUMP cleanup(apply_function)
-JUMP endif(38)
-:branch(38_3)
-LOADSP 7
-PUSH 6
-IEQ
-BRZ branch(38_4)
-LOADSP 6
-ATANF
-STORESP -2
-LOADSP 4
-NOT
-BRZ else(42)
-LOADSP -2
-PUSH 1078530011
-MULF
-PUSH 1127481344
-DIVF
-STORESP -2
-JUMP endif(42)
-:else(42)
-:endif(42)
-LOADSP -2
-JUMP cleanup(apply_function)
-JUMP endif(38)
-:branch(38_4)
+JUMP endif(37)
+:branch(37_4)
 LOADSP 7
 PUSH 7
 IEQ
-BRZ branch(38_5)
+BRZ branch(37_5)
 LOADSP 6
 PUSH 0
 FLT
+BRZ else(42)
+LOADSP 3
+LOADSP 2
+PUSH 6
+LOADSP 1
+PUSHFP
+CALL set_error
+PUSH 0
+JUMP cleanup(apply_function)
+JUMP endif(42)
+:else(42)
+:endif(42)
+LOADSP 6
+SQRTF
+JUMP cleanup(apply_function)
+JUMP endif(37)
+:branch(37_5)
+LOADSP 7
+PUSH 8
+IEQ
+BRZ else(37)
+LOADSP 6
+PUSH 0
+FEQ
+LOADSP 5
+PUSH 0
+FLT
+AND
 BRZ else(43)
 LOADSP 3
 LOADSP 2
@@ -6435,20 +6456,12 @@ JUMP endif(43)
 :else(43)
 :endif(43)
 LOADSP 6
-SQRTF
-JUMP cleanup(apply_function)
-JUMP endif(38)
-:branch(38_5)
-LOADSP 7
-PUSH 8
-IEQ
-BRZ else(38)
-LOADSP 6
-PUSH 0
-FEQ
-LOADSP 5
 PUSH 0
 FLT
+LOADSP 5
+PUSHFP
+CALL is_integral
+NOT
 AND
 BRZ else(44)
 LOADSP 3
@@ -6463,32 +6476,12 @@ JUMP endif(44)
 :else(44)
 :endif(44)
 LOADSP 6
-PUSH 0
-FLT
-LOADSP 5
-PUSHFP
-CALL is_integral
-NOT
-AND
-BRZ else(45)
-LOADSP 3
-LOADSP 2
-PUSH 6
-LOADSP 1
-PUSHFP
-CALL set_error
-PUSH 0
-JUMP cleanup(apply_function)
-JUMP endif(45)
-:else(45)
-:endif(45)
-LOADSP 6
 LOADSP 5
 POWF
 JUMP cleanup(apply_function)
-JUMP endif(38)
-:else(38)
-:endif(38)
+JUMP endif(37)
+:else(37)
+:endif(37)
 LOADSP 3
 LOADSP 2
 PUSH 3
@@ -6543,7 +6536,7 @@ STORESP -8
 LOADSP -8
 PUSH 0
 IEQ
-BRZ else(46)
+BRZ else(45)
 LOADSP 2
 LOADSP 1
 PUSH 1
@@ -6553,9 +6546,9 @@ PUSHFP
 CALL set_error
 PUSH 0
 JUMP cleanup(parse_expression)
-JUMP endif(46)
-:else(46)
-:endif(46)
+JUMP endif(45)
+:else(45)
+:endif(45)
 LOADSP -8
 PUSH 43
 IEQ
@@ -6563,7 +6556,7 @@ LOADSP -8
 PUSH 45
 IEQ
 OR
-BRZ branch(47_0)
+BRZ branch(46_0)
 LOADSP -8
 STORESP -13
 LOADSP 5
@@ -6583,15 +6576,15 @@ STORESP -1
 LOADSP -13
 PUSH 45
 IEQ
-BRZ else(48)
+BRZ else(47)
 LOADSP -1
 NEGF
 STORESP -1
-JUMP endif(48)
-:else(48)
-:endif(48)
 JUMP endif(47)
-:branch(47_0)
+:else(47)
+:endif(47)
+JUMP endif(46)
+:branch(46_0)
 LOADSP -8
 PUSH 48
 IGE
@@ -6600,10 +6593,10 @@ PUSH 57
 ILE
 AND
 LOADSP -8
-PUSH 46
+PUSH 45
 IEQ
 OR
-BRZ branch(47_1)
+BRZ branch(46_1)
 PUSH 0
 STORESP -1
 PUSH 1065353216
@@ -6630,11 +6623,11 @@ LOADSP -8
 PUSH 57
 ILE
 AND
-BRZ branch(49_0)
+BRZ branch(48_0)
 PUSH 4294967295
 STORESP -14
 LOADSP -15
-BRZ else(50)
+BRZ else(49)
 LOADSP -5
 PUSH 1092616192
 MULF
@@ -6648,8 +6641,8 @@ LOADSP -5
 DIVF
 ADDF
 STORESP -1
-JUMP endif(50)
-:else(50)
+JUMP endif(49)
+:else(49)
 LOADSP -1
 PUSH 1092616192
 MULF
@@ -6659,20 +6652,20 @@ SUBI
 I2F
 ADDF
 STORESP -1
-:endif(50)
+:endif(49)
 LOADSP 5
 LOADSP 5
 LOADIND
 INCI
 STREIND
-JUMP endif(49)
-:branch(49_0)
+JUMP endif(48)
+:branch(48_0)
 LOADSP -8
 PUSH 46
 IEQ
-BRZ else(49)
+BRZ else(48)
 LOADSP -15
-BRZ else(51)
+BRZ else(50)
 LOADSP 2
 LOADSP 1
 PUSH 2
@@ -6682,9 +6675,9 @@ PUSHFP
 CALL set_error
 PUSH 0
 JUMP cleanup(parse_expression)
-JUMP endif(51)
-:else(51)
-:endif(51)
+JUMP endif(50)
+:else(50)
+:endif(50)
 PUSH 4294967295
 STORESP -15
 LOADSP 5
@@ -6692,16 +6685,16 @@ LOADSP 5
 LOADIND
 INCI
 STREIND
-JUMP endif(49)
-:else(49)
+JUMP endif(48)
+:else(48)
 PUSH 0
 STORESP -16
-:endif(49)
+:endif(48)
 JUMP beginwhile(4)
 :endwhile(4)
 LOADSP -14
 NOT
-BRZ else(52)
+BRZ else(51)
 LOADSP 2
 LOADSP 1
 PUSH 2
@@ -6710,15 +6703,15 @@ PUSHFP
 CALL set_error
 PUSH 0
 JUMP cleanup(parse_expression)
-JUMP endif(52)
-:else(52)
-:endif(52)
-JUMP endif(47)
-:branch(47_1)
+JUMP endif(51)
+:else(51)
+:endif(51)
+JUMP endif(46)
+:branch(46_1)
 LOADSP -8
 PUSH 40
 IEQ
-BRZ branch(47_2)
+BRZ branch(46_2)
 LOADSP 5
 LOADSP 5
 LOADIND
@@ -6737,12 +6730,12 @@ LOADSP 2
 LOADIND
 PUSH 0
 INE
-BRZ else(53)
+BRZ else(52)
 PUSH 0
 JUMP cleanup(parse_expression)
-JUMP endif(53)
-:else(53)
-:endif(53)
+JUMP endif(52)
+:else(52)
+:endif(52)
 LOADSP 6
 LOADSP 5
 PUSHFP
@@ -6754,7 +6747,7 @@ PUSHFP
 CALL peek_code
 PUSH 41
 INE
-BRZ else(54)
+BRZ else(53)
 LOADSP 2
 LOADSP 1
 PUSH 4
@@ -6764,16 +6757,16 @@ PUSHFP
 CALL set_error
 PUSH 0
 JUMP cleanup(parse_expression)
-JUMP endif(54)
-:else(54)
-:endif(54)
+JUMP endif(53)
+:else(53)
+:endif(53)
 LOADSP 5
 LOADSP 5
 LOADIND
 INCI
 STREIND
-JUMP endif(47)
-:branch(47_2)
+JUMP endif(46)
+:branch(46_2)
 LOADSP 5
 LOADIND
 LOADSP 6
@@ -6782,7 +6775,7 @@ ADDI
 LOADIND
 PUSHFP
 CALL is_letter
-BRZ else(47)
+BRZ else(46)
 PUSH 0
 STORESP -12
 PUSH 0
@@ -6792,105 +6785,105 @@ LOADSP 5
 LOAD 46
 PUSHFP
 CALL match_name
-BRZ branch(55_0)
+BRZ branch(54_0)
 PUSH 1078530011
 STORESP -1
 PUSH 4294967295
 STORESP -19
-JUMP endif(55)
-:branch(55_0)
+JUMP endif(54)
+:branch(54_0)
 LOADSP 6
 LOADSP 5
 LOAD 47
 PUSHFP
 CALL match_name
-BRZ branch(55_1)
+BRZ branch(54_1)
 PUSH 1076754516
 STORESP -1
 PUSH 4294967295
 STORESP -19
-JUMP endif(55)
-:branch(55_1)
+JUMP endif(54)
+:branch(54_1)
 LOADSP 6
 LOADSP 5
 LOAD 48
 PUSHFP
 CALL match_name
-BRZ branch(55_2)
+BRZ branch(54_2)
 PUSH 1
 STORESP -12
-JUMP endif(55)
-:branch(55_2)
+JUMP endif(54)
+:branch(54_2)
 LOADSP 6
 LOADSP 5
 LOAD 49
 PUSHFP
 CALL match_name
-BRZ branch(55_3)
+BRZ branch(54_3)
 PUSH 2
 STORESP -12
-JUMP endif(55)
-:branch(55_3)
+JUMP endif(54)
+:branch(54_3)
 LOADSP 6
 LOADSP 5
 LOAD 50
 PUSHFP
 CALL match_name
-BRZ branch(55_4)
+BRZ branch(54_4)
 PUSH 3
 STORESP -12
-JUMP endif(55)
-:branch(55_4)
+JUMP endif(54)
+:branch(54_4)
 LOADSP 6
 LOADSP 5
 LOAD 51
 PUSHFP
 CALL match_name
-BRZ branch(55_5)
+BRZ branch(54_5)
 PUSH 4
 STORESP -12
-JUMP endif(55)
-:branch(55_5)
+JUMP endif(54)
+:branch(54_5)
 LOADSP 6
 LOADSP 5
 LOAD 52
 PUSHFP
 CALL match_name
-BRZ branch(55_6)
+BRZ branch(54_6)
 PUSH 5
 STORESP -12
-JUMP endif(55)
-:branch(55_6)
+JUMP endif(54)
+:branch(54_6)
 LOADSP 6
 LOADSP 5
 LOAD 53
 PUSHFP
 CALL match_name
-BRZ branch(55_7)
+BRZ branch(54_7)
 PUSH 6
 STORESP -12
-JUMP endif(55)
-:branch(55_7)
+JUMP endif(54)
+:branch(54_7)
 LOADSP 6
 LOADSP 5
 LOAD 54
 PUSHFP
 CALL match_name
-BRZ branch(55_8)
+BRZ branch(54_8)
 PUSH 7
 STORESP -12
-JUMP endif(55)
-:branch(55_8)
+JUMP endif(54)
+:branch(54_8)
 LOADSP 6
 LOADSP 5
 LOAD 55
 PUSHFP
 CALL match_name
-BRZ else(55)
+BRZ else(54)
 PUSH 8
 STORESP -12
-JUMP endif(55)
-:else(55)
+JUMP endif(54)
+:else(54)
 PUSH 4294967295
 STORESP -17
 :beginwhile(5)
@@ -6903,11 +6896,11 @@ PUSHFP
 CALL peek_code
 PUSH 0
 IEQ
-BRZ else(56)
+BRZ else(55)
 PUSH 0
 STORESP -17
-JUMP endif(56)
-:else(56)
+JUMP endif(55)
+:else(55)
 LOADSP 5
 LOADIND
 LOADSP 6
@@ -6916,18 +6909,18 @@ ADDI
 LOADIND
 PUSHFP
 CALL is_identifier_char
-BRZ else(57)
+BRZ else(56)
 LOADSP 5
 LOADSP 5
 LOADIND
 INCI
 STREIND
-JUMP endif(57)
-:else(57)
+JUMP endif(56)
+:else(56)
 PUSH 0
 STORESP -17
-:endif(57)
 :endif(56)
+:endif(55)
 JUMP beginwhile(5)
 :endwhile(5)
 LOADSP 2
@@ -6938,10 +6931,10 @@ PUSHFP
 CALL set_error
 PUSH 0
 JUMP cleanup(parse_expression)
-:endif(55)
+:endif(54)
 LOADSP -19
 NOT
-BRZ else(58)
+BRZ else(57)
 LOADSP 6
 LOADSP 5
 PUSHFP
@@ -6953,7 +6946,7 @@ PUSHFP
 CALL peek_code
 PUSH 40
 INE
-BRZ else(59)
+BRZ else(58)
 LOADSP 2
 LOADSP 1
 PUSH 4
@@ -6963,9 +6956,9 @@ PUSHFP
 CALL set_error
 PUSH 0
 JUMP cleanup(parse_expression)
-JUMP endif(59)
-:else(59)
-:endif(59)
+JUMP endif(58)
+:else(58)
+:endif(58)
 LOADSP 5
 LOADSP 5
 LOADIND
@@ -6984,18 +6977,18 @@ LOADSP 2
 LOADIND
 PUSH 0
 INE
-BRZ else(60)
+BRZ else(59)
 PUSH 0
 JUMP cleanup(parse_expression)
-JUMP endif(60)
-:else(60)
-:endif(60)
+JUMP endif(59)
+:else(59)
+:endif(59)
 PUSH 0
 STORESP -4
 LOADSP -12
 PUSH 8
 IEQ
-BRZ else(61)
+BRZ else(60)
 LOADSP 6
 LOADSP 5
 PUSHFP
@@ -7007,7 +7000,7 @@ PUSHFP
 CALL peek_code
 PUSH 44
 INE
-BRZ else(62)
+BRZ else(61)
 LOADSP 2
 LOADSP 1
 PUSH 4
@@ -7017,9 +7010,9 @@ PUSHFP
 CALL set_error
 PUSH 0
 JUMP cleanup(parse_expression)
-JUMP endif(62)
-:else(62)
-:endif(62)
+JUMP endif(61)
+:else(61)
+:endif(61)
 LOADSP 5
 LOADSP 5
 LOADIND
@@ -7038,15 +7031,15 @@ LOADSP 2
 LOADIND
 PUSH 0
 INE
-BRZ else(63)
+BRZ else(62)
 PUSH 0
 JUMP cleanup(parse_expression)
-JUMP endif(63)
-:else(63)
-:endif(63)
-JUMP endif(61)
-:else(61)
-:endif(61)
+JUMP endif(62)
+:else(62)
+:endif(62)
+JUMP endif(60)
+:else(60)
+:endif(60)
 LOADSP 6
 LOADSP 5
 PUSHFP
@@ -7058,7 +7051,7 @@ PUSHFP
 CALL peek_code
 PUSH 41
 INE
-BRZ else(64)
+BRZ else(63)
 LOADSP 2
 LOADSP 1
 PUSH 4
@@ -7068,9 +7061,9 @@ PUSHFP
 CALL set_error
 PUSH 0
 JUMP cleanup(parse_expression)
-JUMP endif(64)
-:else(64)
-:endif(64)
+JUMP endif(63)
+:else(63)
+:endif(63)
 LOADSP 5
 LOADSP 5
 LOADIND
@@ -7086,11 +7079,11 @@ LOADSP -6
 PUSHFP
 CALL apply_function
 STORESP -1
-JUMP endif(58)
-:else(58)
-:endif(58)
-JUMP endif(47)
-:else(47)
+JUMP endif(57)
+:else(57)
+:endif(57)
+JUMP endif(46)
+:else(46)
 LOADSP 2
 LOADSP 1
 PUSH 1
@@ -7099,17 +7092,17 @@ PUSHFP
 CALL set_error
 PUSH 0
 JUMP cleanup(parse_expression)
-:endif(47)
+:endif(46)
 LOADSP 2
 LOADIND
 PUSH 0
 INE
-BRZ else(65)
+BRZ else(64)
 PUSH 0
 JUMP cleanup(parse_expression)
-JUMP endif(65)
-:else(65)
-:endif(65)
+JUMP endif(64)
+:else(64)
+:endif(64)
 PUSH 4294967295
 STORESP -18
 :beginwhile(6)
@@ -7131,7 +7124,7 @@ PUSHFP
 CALL peek_code
 PUSH 37
 IEQ
-BRZ else(66)
+BRZ else(65)
 LOADSP 5
 LOADIND
 INCI
@@ -7186,7 +7179,7 @@ ILE
 AND
 OR
 NOT
-BRZ else(67)
+BRZ else(66)
 LOADSP -1
 PUSH 1120403456
 DIVF
@@ -7198,15 +7191,15 @@ INCI
 STREIND
 PUSH 4294967295
 STORESP -20
-JUMP endif(67)
-:else(67)
-:endif(67)
 JUMP endif(66)
 :else(66)
 :endif(66)
+JUMP endif(65)
+:else(65)
+:endif(65)
 LOADSP -20
 NOT
-BRZ else(68)
+BRZ else(67)
 LOADSP 6
 LOADSP 5
 LOADIND
@@ -7224,15 +7217,15 @@ LOADSP -10
 LOADSP 4
 ILT
 OR
-BRZ else(69)
+BRZ else(68)
 PUSH 0
 STORESP -18
-JUMP endif(69)
-:else(69)
+JUMP endif(68)
+:else(68)
 LOADSP -9
 PUSH 6
 IEQ
-BRZ else(70)
+BRZ else(69)
 LOADSP 5
 LOADSP 5
 LOADIND
@@ -7241,8 +7234,8 @@ ADDI
 STREIND
 LOADSP -10
 STORESP -11
-JUMP endif(70)
-:else(70)
+JUMP endif(69)
+:else(69)
 LOADSP 5
 LOADSP 5
 LOADIND
@@ -7251,7 +7244,7 @@ STREIND
 LOADSP -10
 INCI
 STORESP -11
-:endif(70)
+:endif(69)
 LOADSP 6
 LOADSP 5
 LOADSP -11
@@ -7265,42 +7258,42 @@ LOADSP 2
 LOADIND
 PUSH 0
 INE
-BRZ else(71)
+BRZ else(70)
 PUSH 0
 JUMP cleanup(parse_expression)
-JUMP endif(71)
-:else(71)
-:endif(71)
+JUMP endif(70)
+:else(70)
+:endif(70)
 LOADSP -9
 PUSH 1
 IEQ
-BRZ branch(72_0)
+BRZ branch(71_0)
 LOADSP -1
 LOADSP -2
 ADDF
 STORESP -1
-JUMP endif(72)
-:branch(72_0)
+JUMP endif(71)
+:branch(71_0)
 LOADSP -9
 PUSH 2
 IEQ
-BRZ branch(72_1)
+BRZ branch(71_1)
 LOADSP -1
 LOADSP -2
 SUBF
 STORESP -1
-JUMP endif(72)
-:branch(72_1)
+JUMP endif(71)
+:branch(71_1)
 LOADSP -9
 PUSH 3
 IEQ
-BRZ branch(72_2)
+BRZ branch(71_2)
 LOADSP -1
 LOADSP -2
 MULF
 STORESP -1
-JUMP endif(72)
-:branch(72_2)
+JUMP endif(71)
+:branch(71_2)
 LOADSP -9
 PUSH 4
 IEQ
@@ -7308,11 +7301,11 @@ LOADSP -9
 PUSH 5
 IEQ
 OR
-BRZ else(72)
+BRZ else(71)
 LOADSP -2
 PUSH 0
 FEQ
-BRZ else(73)
+BRZ else(72)
 LOADSP 2
 LOADSP 1
 PUSH 5
@@ -7321,32 +7314,52 @@ PUSHFP
 CALL set_error
 PUSH 0
 JUMP cleanup(parse_expression)
-JUMP endif(73)
-:else(73)
-:endif(73)
+JUMP endif(72)
+:else(72)
+:endif(72)
 LOADSP -9
 PUSH 4
 IEQ
-BRZ else(74)
+BRZ else(73)
 LOADSP -1
 LOADSP -2
 DIVF
 STORESP -1
-JUMP endif(74)
-:else(74)
+JUMP endif(73)
+:else(73)
 LOADSP -1
 LOADSP -2
 MODF
 STORESP -1
-:endif(74)
-JUMP endif(72)
-:else(72)
+:endif(73)
+JUMP endif(71)
+:else(71)
 LOADSP -1
 PUSH 0
 FEQ
 LOADSP -2
 PUSH 0
 FLT
+AND
+BRZ else(74)
+LOADSP 2
+LOADSP 1
+PUSH 6
+LOADSP -7
+PUSHFP
+CALL set_error
+PUSH 0
+JUMP cleanup(parse_expression)
+JUMP endif(74)
+:else(74)
+:endif(74)
+LOADSP -1
+PUSH 0
+FLT
+LOADSP -2
+PUSHFP
+CALL is_integral
+NOT
 AND
 BRZ else(75)
 LOADSP 2
@@ -7361,34 +7374,14 @@ JUMP endif(75)
 :else(75)
 :endif(75)
 LOADSP -1
-PUSH 0
-FLT
-LOADSP -2
-PUSHFP
-CALL is_integral
-NOT
-AND
-BRZ else(76)
-LOADSP 2
-LOADSP 1
-PUSH 6
-LOADSP -7
-PUSHFP
-CALL set_error
-PUSH 0
-JUMP cleanup(parse_expression)
-JUMP endif(76)
-:else(76)
-:endif(76)
-LOADSP -1
 LOADSP -2
 POWF
 STORESP -1
-:endif(72)
-:endif(69)
-JUMP endif(68)
-:else(68)
+:endif(71)
 :endif(68)
+JUMP endif(67)
+:else(67)
+:endif(67)
 JUMP beginwhile(6)
 :endwhile(6)
 LOADSP -1
@@ -7419,7 +7412,7 @@ INCI
 LOADIND
 DECI
 IGE
-BRZ else(77)
+BRZ else(76)
 LOADSP 2
 LOADSP 1
 PUSH 1
@@ -7429,9 +7422,9 @@ PUSHFP
 CALL set_error
 PUSH 0
 JUMP cleanup(evaluate_expression)
-JUMP endif(77)
-:else(77)
-:endif(77)
+JUMP endif(76)
+:else(76)
+:endif(76)
 LOADSP 4
 LOADSP 1
 PUSH 0
@@ -7445,12 +7438,12 @@ LOADSP 2
 LOADIND
 PUSH 0
 INE
-BRZ else(78)
+BRZ else(77)
 PUSH 0
 JUMP cleanup(evaluate_expression)
-JUMP endif(78)
-:else(78)
-:endif(78)
+JUMP endif(77)
+:else(77)
+:endif(77)
 LOADSP 4
 LOADSP 1
 PUSHFP
@@ -7462,7 +7455,7 @@ INCI
 LOADIND
 DECI
 INE
-BRZ else(79)
+BRZ else(78)
 LOADSP 2
 LOADSP 1
 PUSH 7
@@ -7472,9 +7465,9 @@ PUSHFP
 CALL set_error
 PUSH 0
 JUMP cleanup(evaluate_expression)
-JUMP endif(79)
-:else(79)
-:endif(79)
+JUMP endif(78)
+:else(78)
+:endif(78)
 LOADSP -1
 JUMP cleanup(evaluate_expression)
 :cleanup(evaluate_expression)
@@ -7503,70 +7496,70 @@ SYS 1
 LOADSP 2
 PUSH 1
 IEQ
-BRZ branch(80_0)
+BRZ branch(79_0)
 LOAD 58
 LOADIND
 SYS 1
-JUMP endif(80)
-:branch(80_0)
+JUMP endif(79)
+:branch(79_0)
 LOADSP 2
 PUSH 2
 IEQ
-BRZ branch(80_1)
+BRZ branch(79_1)
 LOAD 59
 LOADIND
 SYS 1
-JUMP endif(80)
-:branch(80_1)
+JUMP endif(79)
+:branch(79_1)
 LOADSP 2
 PUSH 3
 IEQ
-BRZ branch(80_2)
+BRZ branch(79_2)
 LOAD 60
 LOADIND
 SYS 1
-JUMP endif(80)
-:branch(80_2)
+JUMP endif(79)
+:branch(79_2)
 LOADSP 2
 PUSH 4
 IEQ
-BRZ branch(80_3)
+BRZ branch(79_3)
 LOAD 61
 LOADIND
 SYS 1
-JUMP endif(80)
-:branch(80_3)
+JUMP endif(79)
+:branch(79_3)
 LOADSP 2
 PUSH 5
 IEQ
-BRZ branch(80_4)
+BRZ branch(79_4)
 LOAD 62
 LOADIND
 SYS 1
-JUMP endif(80)
-:branch(80_4)
+JUMP endif(79)
+:branch(79_4)
 LOADSP 2
 PUSH 6
 IEQ
-BRZ branch(80_5)
+BRZ branch(79_5)
 LOAD 63
 LOADIND
 SYS 1
-JUMP endif(80)
-:branch(80_5)
+JUMP endif(79)
+:branch(79_5)
 LOADSP 2
 PUSH 7
 IEQ
-BRZ else(80)
+BRZ else(79)
 LOAD 64
 LOADIND
 SYS 1
-JUMP endif(80)
-:else(80)
+JUMP endif(79)
+:else(79)
 LOAD 65
 LOADIND
 SYS 1
-:endif(80)
+:endif(79)
 PUSH 10
 SYS 9
 :cleanup(print_calculator_error)
@@ -7578,7 +7571,7 @@ SETFP
 LOADSP 1
 PUSHFP
 CALL is_integral
-BRZ else(81)
+BRZ else(80)
 PUSH 16
 SYS 21
 DUP 0
@@ -7588,8 +7581,8 @@ F2I
 SYS 5
 SYS 1
 SYS 22
-JUMP endif(81)
-:else(81)
+JUMP endif(80)
+:else(80)
 PUSH 16
 SYS 21
 DUP 0
@@ -7598,7 +7591,7 @@ LOADSP 1
 SYS 6
 SYS 1
 SYS 22
-:endif(81)
+:endif(80)
 PUSH 10
 SYS 9
 :cleanup(print_calculator_result)
@@ -7613,11 +7606,11 @@ LOADIND
 DECI
 PUSH 0
 IGT
-BRZ else(82)
+BRZ else(81)
 LOADSP 3
 PUSH 0
 INE
-BRZ branch(83_0)
+BRZ branch(82_0)
 PUSH 0
 LOADSP 7
 LOADSP 6
@@ -7633,11 +7626,11 @@ LOADSP 2
 INCI
 PUSH 12
 SYS 143
-JUMP endif(83)
-:branch(83_0)
+JUMP endif(82)
+:branch(82_0)
 LOADSP 1
 NOT
-BRZ else(83)
+BRZ else(82)
 PUSH 0
 LOADSP 7
 LOADSP 6
@@ -7647,7 +7640,7 @@ SYS 129
 LOADSP 4
 PUSHFP
 CALL is_integral
-BRZ else(84)
+BRZ else(83)
 PUSH 0
 LOADSP 7
 PUSH 7
@@ -7657,8 +7650,8 @@ LOADSP 4
 F2I
 PUSH 15
 SYS 143
-JUMP endif(84)
-:else(84)
+JUMP endif(83)
+:else(83)
 PUSH 0
 LOADSP 7
 PUSH 7
@@ -7667,13 +7660,13 @@ LOADSP 6
 LOADSP 4
 PUSH 15
 SYS 144
-:endif(84)
-JUMP endif(83)
-:else(83)
 :endif(83)
 JUMP endif(82)
 :else(82)
 :endif(82)
+JUMP endif(81)
+:else(81)
+:endif(81)
 :cleanup(draw_calculator_status)
 POPFP
 POP 8
@@ -7683,183 +7676,183 @@ SETFP
 LOADSP 1
 PUSH 48
 IEQ
-BRZ branch(85_0)
+BRZ branch(84_0)
 LOADSP 2
 LOAD 68
 SYS 170
-JUMP endif(85)
-:branch(85_0)
+JUMP endif(84)
+:branch(84_0)
 LOADSP 1
 PUSH 49
 IEQ
-BRZ branch(85_1)
+BRZ branch(84_1)
 LOADSP 2
 LOAD 69
 SYS 170
-JUMP endif(85)
-:branch(85_1)
+JUMP endif(84)
+:branch(84_1)
 LOADSP 1
 PUSH 50
 IEQ
-BRZ branch(85_2)
+BRZ branch(84_2)
 LOADSP 2
 LOAD 70
 SYS 170
-JUMP endif(85)
-:branch(85_2)
+JUMP endif(84)
+:branch(84_2)
 LOADSP 1
 PUSH 51
 IEQ
-BRZ branch(85_3)
+BRZ branch(84_3)
 LOADSP 2
 LOAD 71
 SYS 170
-JUMP endif(85)
-:branch(85_3)
+JUMP endif(84)
+:branch(84_3)
 LOADSP 1
 PUSH 52
 IEQ
-BRZ branch(85_4)
+BRZ branch(84_4)
 LOADSP 2
 LOAD 72
 SYS 170
-JUMP endif(85)
-:branch(85_4)
+JUMP endif(84)
+:branch(84_4)
 LOADSP 1
 PUSH 53
 IEQ
-BRZ branch(85_5)
+BRZ branch(84_5)
 LOADSP 2
 LOAD 73
 SYS 170
-JUMP endif(85)
-:branch(85_5)
+JUMP endif(84)
+:branch(84_5)
 LOADSP 1
 PUSH 54
 IEQ
-BRZ branch(85_6)
+BRZ branch(84_6)
 LOADSP 2
 LOAD 74
 SYS 170
-JUMP endif(85)
-:branch(85_6)
+JUMP endif(84)
+:branch(84_6)
 LOADSP 1
 PUSH 55
 IEQ
-BRZ branch(85_7)
+BRZ branch(84_7)
 LOADSP 2
 LOAD 75
 SYS 170
-JUMP endif(85)
-:branch(85_7)
+JUMP endif(84)
+:branch(84_7)
 LOADSP 1
 PUSH 56
 IEQ
-BRZ branch(85_8)
+BRZ branch(84_8)
 LOADSP 2
 LOAD 76
 SYS 170
-JUMP endif(85)
-:branch(85_8)
+JUMP endif(84)
+:branch(84_8)
 LOADSP 1
 PUSH 57
 IEQ
-BRZ branch(85_9)
+BRZ branch(84_9)
 LOADSP 2
 LOAD 77
 SYS 170
-JUMP endif(85)
-:branch(85_9)
+JUMP endif(84)
+:branch(84_9)
 LOADSP 1
 PUSH 32
 IEQ
-BRZ branch(85_10)
+BRZ branch(84_10)
 LOADSP 2
 LOAD 78
 SYS 170
-JUMP endif(85)
-:branch(85_10)
+JUMP endif(84)
+:branch(84_10)
 LOADSP 1
 PUSH 37
 IEQ
-BRZ branch(85_11)
+BRZ branch(84_11)
 LOADSP 2
 LOAD 79
 SYS 170
-JUMP endif(85)
-:branch(85_11)
+JUMP endif(84)
+:branch(84_11)
 LOADSP 1
 PUSH 40
 IEQ
-BRZ branch(85_12)
+BRZ branch(84_12)
 LOADSP 2
 LOAD 80
 SYS 170
-JUMP endif(85)
-:branch(85_12)
+JUMP endif(84)
+:branch(84_12)
 LOADSP 1
 PUSH 41
 IEQ
-BRZ branch(85_13)
+BRZ branch(84_13)
 LOADSP 2
 LOAD 81
 SYS 170
-JUMP endif(85)
-:branch(85_13)
+JUMP endif(84)
+:branch(84_13)
 LOADSP 1
 PUSH 42
 IEQ
-BRZ branch(85_14)
+BRZ branch(84_14)
 LOADSP 2
 LOAD 82
 SYS 170
-JUMP endif(85)
-:branch(85_14)
+JUMP endif(84)
+:branch(84_14)
 LOADSP 1
 PUSH 43
 IEQ
-BRZ branch(85_15)
+BRZ branch(84_15)
 LOADSP 2
 LOAD 83
 SYS 170
-JUMP endif(85)
-:branch(85_15)
+JUMP endif(84)
+:branch(84_15)
 LOADSP 1
 PUSH 44
 IEQ
-BRZ branch(85_16)
+BRZ branch(84_16)
 LOADSP 2
 LOAD 84
 SYS 170
-JUMP endif(85)
-:branch(85_16)
+JUMP endif(84)
+:branch(84_16)
 LOADSP 1
 PUSH 45
 IEQ
-BRZ branch(85_17)
+BRZ branch(84_17)
 LOADSP 2
 LOAD 85
 SYS 170
-JUMP endif(85)
-:branch(85_17)
+JUMP endif(84)
+:branch(84_17)
 LOADSP 1
 PUSH 46
 IEQ
-BRZ branch(85_18)
+BRZ branch(84_18)
 LOADSP 2
 LOAD 86
 SYS 170
-JUMP endif(85)
-:branch(85_18)
+JUMP endif(84)
+:branch(84_18)
 LOADSP 1
 PUSH 47
 IEQ
-BRZ branch(85_19)
+BRZ branch(84_19)
 LOADSP 2
 LOAD 87
 SYS 170
-JUMP endif(85)
-:branch(85_19)
+JUMP endif(84)
+:branch(84_19)
 LOADSP 1
 PUSH 65
 IEQ
@@ -7867,25 +7860,25 @@ LOADSP 1
 PUSH 97
 IEQ
 OR
-BRZ branch(85_20)
+BRZ branch(84_20)
 LOADSP 2
 LOAD 88
 SYS 170
-JUMP endif(85)
-:branch(85_20)
+JUMP endif(84)
+:branch(84_20)
 LOADSP 1
-PUSH 67
+PUSH 66
 IEQ
 LOADSP 1
 PUSH 99
 IEQ
 OR
-BRZ branch(85_21)
+BRZ branch(84_21)
 LOADSP 2
 LOAD 89
 SYS 170
-JUMP endif(85)
-:branch(85_21)
+JUMP endif(84)
+:branch(84_21)
 LOADSP 1
 PUSH 69
 IEQ
@@ -7893,12 +7886,12 @@ LOADSP 1
 PUSH 101
 IEQ
 OR
-BRZ branch(85_22)
+BRZ branch(84_22)
 LOADSP 2
 LOAD 90
 SYS 170
-JUMP endif(85)
-:branch(85_22)
+JUMP endif(84)
+:branch(84_22)
 LOADSP 1
 PUSH 73
 IEQ
@@ -7906,12 +7899,12 @@ LOADSP 1
 PUSH 105
 IEQ
 OR
-BRZ branch(85_23)
+BRZ branch(84_23)
 LOADSP 2
 LOAD 91
 SYS 170
-JUMP endif(85)
-:branch(85_23)
+JUMP endif(84)
+:branch(84_23)
 LOADSP 1
 PUSH 78
 IEQ
@@ -7919,12 +7912,12 @@ LOADSP 1
 PUSH 110
 IEQ
 OR
-BRZ branch(85_24)
+BRZ branch(84_24)
 LOADSP 2
 LOAD 92
 SYS 170
-JUMP endif(85)
-:branch(85_24)
+JUMP endif(84)
+:branch(84_24)
 LOADSP 1
 PUSH 79
 IEQ
@@ -7932,12 +7925,12 @@ LOADSP 1
 PUSH 111
 IEQ
 OR
-BRZ branch(85_25)
+BRZ branch(84_25)
 LOADSP 2
 LOAD 93
 SYS 170
-JUMP endif(85)
-:branch(85_25)
+JUMP endif(84)
+:branch(84_25)
 LOADSP 1
 PUSH 80
 IEQ
@@ -7945,12 +7938,12 @@ LOADSP 1
 PUSH 112
 IEQ
 OR
-BRZ branch(85_26)
+BRZ branch(84_26)
 LOADSP 2
 LOAD 94
 SYS 170
-JUMP endif(85)
-:branch(85_26)
+JUMP endif(84)
+:branch(84_26)
 LOADSP 1
 PUSH 81
 IEQ
@@ -7958,12 +7951,12 @@ LOADSP 1
 PUSH 113
 IEQ
 OR
-BRZ branch(85_27)
+BRZ branch(84_27)
 LOADSP 2
 LOAD 95
 SYS 170
-JUMP endif(85)
-:branch(85_27)
+JUMP endif(84)
+:branch(84_27)
 LOADSP 1
 PUSH 82
 IEQ
@@ -7971,12 +7964,12 @@ LOADSP 1
 PUSH 114
 IEQ
 OR
-BRZ branch(85_28)
+BRZ branch(84_28)
 LOADSP 2
 LOAD 96
 SYS 170
-JUMP endif(85)
-:branch(85_28)
+JUMP endif(84)
+:branch(84_28)
 LOADSP 1
 PUSH 83
 IEQ
@@ -7984,12 +7977,12 @@ LOADSP 1
 PUSH 115
 IEQ
 OR
-BRZ branch(85_29)
+BRZ branch(84_29)
 LOADSP 2
 LOAD 97
 SYS 170
-JUMP endif(85)
-:branch(85_29)
+JUMP endif(84)
+:branch(84_29)
 LOADSP 1
 PUSH 84
 IEQ
@@ -7997,12 +7990,12 @@ LOADSP 1
 PUSH 116
 IEQ
 OR
-BRZ branch(85_30)
+BRZ branch(84_30)
 LOADSP 2
 LOAD 98
 SYS 170
-JUMP endif(85)
-:branch(85_30)
+JUMP endif(84)
+:branch(84_30)
 LOADSP 1
 PUSH 87
 IEQ
@@ -8010,121 +8003,121 @@ LOADSP 1
 PUSH 119
 IEQ
 OR
-BRZ branch(85_31)
+BRZ branch(84_31)
 LOADSP 2
 LOAD 99
 SYS 170
-JUMP endif(85)
-:branch(85_31)
+JUMP endif(84)
+:branch(84_31)
 LOADSP 1
 PUSH 94
 IEQ
-BRZ branch(85_32)
+BRZ branch(84_32)
 LOADSP 2
 LOAD 100
 SYS 170
-JUMP endif(85)
-:branch(85_32)
+JUMP endif(84)
+:branch(84_32)
 LOADSP 1
 PUSH 1001
 IEQ
-BRZ branch(85_33)
+BRZ branch(84_33)
 LOADSP 2
 LOAD 101
 SYS 170
-JUMP endif(85)
-:branch(85_33)
+JUMP endif(84)
+:branch(84_33)
 LOADSP 1
 PUSH 1002
 IEQ
-BRZ branch(85_34)
+BRZ branch(84_34)
 LOADSP 2
 LOAD 102
 SYS 170
-JUMP endif(85)
-:branch(85_34)
+JUMP endif(84)
+:branch(84_34)
 LOADSP 1
 PUSH 1003
 IEQ
-BRZ branch(85_35)
+BRZ branch(84_35)
 LOADSP 2
 LOAD 103
 SYS 170
-JUMP endif(85)
-:branch(85_35)
+JUMP endif(84)
+:branch(84_35)
 LOADSP 1
 PUSH 1004
 IEQ
-BRZ branch(85_36)
+BRZ branch(84_36)
 LOADSP 2
 LOAD 104
 SYS 170
-JUMP endif(85)
-:branch(85_36)
+JUMP endif(84)
+:branch(84_36)
 LOADSP 1
 PUSH 1005
 IEQ
-BRZ branch(85_37)
+BRZ branch(84_37)
 LOADSP 2
 LOAD 105
 SYS 170
-JUMP endif(85)
-:branch(85_37)
+JUMP endif(84)
+:branch(84_37)
 LOADSP 1
 PUSH 1006
 IEQ
-BRZ branch(85_38)
+BRZ branch(84_38)
 LOADSP 2
 LOAD 106
 SYS 170
-JUMP endif(85)
-:branch(85_38)
+JUMP endif(84)
+:branch(84_38)
 LOADSP 1
 PUSH 1007
 IEQ
-BRZ branch(85_39)
+BRZ branch(84_39)
 LOADSP 2
 LOAD 107
 SYS 170
-JUMP endif(85)
-:branch(85_39)
+JUMP endif(84)
+:branch(84_39)
 LOADSP 1
 PUSH 1008
 IEQ
-BRZ branch(85_40)
+BRZ branch(84_40)
 LOADSP 2
 LOAD 108
 SYS 170
-JUMP endif(85)
-:branch(85_40)
+JUMP endif(84)
+:branch(84_40)
 LOADSP 1
 PUSH 1009
 IEQ
-BRZ branch(85_41)
+BRZ branch(84_41)
 LOADSP 2
 LOAD 109
 SYS 170
-JUMP endif(85)
-:branch(85_41)
+JUMP endif(84)
+:branch(84_41)
 LOADSP 1
 PUSH 1010
 IEQ
-BRZ branch(85_42)
+BRZ branch(84_42)
 LOADSP 2
 LOAD 110
 SYS 170
-JUMP endif(85)
-:branch(85_42)
+JUMP endif(84)
+:branch(84_42)
 LOADSP 1
 PUSH 1011
 IEQ
-BRZ else(85)
+BRZ else(84)
 LOADSP 2
 LOAD 111
 SYS 170
-JUMP endif(85)
-:else(85)
-:endif(85)
+JUMP endif(84)
+:else(84)
+:endif(84)
 :cleanup(append_editor_key)
 POPFP
 POP 3
@@ -8136,6 +8129,34 @@ LOADSP 9
 LOADSP 8
 LOADSP 7
 PUSH 11
+LOADSP 6
+LOADSP 5
+SYS 126
+BRZ else(85)
+LOADSP 3
+LOADSP 4
+PUSHFP
+CALL append_editor_key
+LOADSP 2
+PUSH 4294967295
+STREIND
+LOADSP 1
+PUSH 0
+STREIND
+JUMP endif(85)
+:else(85)
+:endif(85)
+:cleanup(draw_editor_key)
+POPFP
+POP 10
+RET
+:draw_editor_key_compact
+SETFP
+PUSH 0
+LOADSP 9
+LOADSP 8
+LOADSP 7
+PUSH 5
 LOADSP 6
 LOADSP 5
 SYS 126
@@ -8153,34 +8174,6 @@ STREIND
 JUMP endif(86)
 :else(86)
 :endif(86)
-:cleanup(draw_editor_key)
-POPFP
-POP 10
-RET
-:draw_editor_key_compact
-SETFP
-PUSH 0
-LOADSP 9
-LOADSP 8
-LOADSP 7
-PUSH 5
-LOADSP 6
-LOADSP 5
-SYS 126
-BRZ else(87)
-LOADSP 3
-LOADSP 4
-PUSHFP
-CALL append_editor_key
-LOADSP 2
-PUSH 4294967295
-STREIND
-LOADSP 1
-PUSH 0
-STREIND
-JUMP endif(87)
-:else(87)
-:endif(87)
 :cleanup(draw_editor_key_compact)
 POPFP
 POP 10
@@ -8195,7 +8188,7 @@ PUSH 11
 LOADSP 6
 PUSH 13
 SYS 126
-BRZ else(88)
+BRZ else(87)
 LOADSP 4
 LOADSP 5
 PUSHFP
@@ -8209,9 +8202,9 @@ STREIND
 LOADSP 1
 PUSH 0
 STREIND
-JUMP endif(88)
-:else(88)
-:endif(88)
+JUMP endif(87)
+:else(87)
+:endif(87)
 :cleanup(draw_shift_editor_key)
 POPFP
 POP 10
@@ -8227,7 +8220,7 @@ STORESP -1
 LOADSP -1
 PUSH 0
 IGT
-BRZ else(89)
+BRZ else(88)
 LOADSP 1
 LOADIND
 LOADSP -1
@@ -8238,9 +8231,9 @@ STREIND
 LOADSP 1
 SYS 12
 POP 1
-JUMP endif(89)
-:else(89)
-:endif(89)
+JUMP endif(88)
+:else(88)
+:endif(88)
 :cleanup(erase_last_editor_key)
 POP 1
 POPFP
@@ -8254,7 +8247,7 @@ LOADIND
 DECI
 PUSH 0
 IGT
-BRZ else(90)
+BRZ else(89)
 LOADSP 1
 LOADIND
 PUSH 0
@@ -8264,9 +8257,9 @@ STREIND
 LOADSP 1
 SYS 12
 POP 1
-JUMP endif(90)
-:else(90)
-:endif(90)
+JUMP endif(89)
+:else(89)
+:endif(89)
 :cleanup(clear_editor)
 POPFP
 POP 2
@@ -8294,14 +8287,14 @@ STORESP -3
 LOADSP -1
 LOADSP -2
 IGT
-BRZ else(91)
+BRZ else(90)
 LOADSP -1
 LOADSP -2
 SUBI
 STORESP -3
-JUMP endif(91)
-:else(91)
-:endif(91)
+JUMP endif(90)
+:else(90)
+:endif(90)
 LOADSP -3
 STORESP -4
 :beginwhile(8)
@@ -8326,7 +8319,7 @@ LOADSP -4
 LOADSP 1
 IEQ
 AND
-BRZ else(92)
+BRZ else(91)
 PUSH 0
 LOADSP -5
 LOADSP 5
@@ -8337,8 +8330,8 @@ ADDI
 LOADIND
 PUSH 12
 SYS 142
-JUMP endif(92)
-:else(92)
+JUMP endif(91)
+:else(91)
 PUSH 0
 LOADSP -5
 LOADSP 5
@@ -8349,7 +8342,7 @@ ADDI
 LOADIND
 PUSH 15
 SYS 142
-:endif(92)
+:endif(91)
 LOADSP -4
 INCI
 STORESP -4
@@ -8372,7 +8365,7 @@ ADDI
 PUSH 2
 SUBI
 ILT
-BRZ else(93)
+BRZ else(92)
 PUSH 0
 LOADSP -5
 LOADSP 5
@@ -8386,9 +8379,9 @@ PUSH 5
 ADDI
 PUSH 11
 SYS 107
-JUMP endif(93)
-:else(93)
-:endif(93)
+JUMP endif(92)
+:else(92)
+:endif(92)
 :cleanup(draw_expression_editor)
 POP 5
 POPFP
@@ -8408,7 +8401,7 @@ LOADSP 2
 LOADIND
 PUSH 0
 IEQ
-BRZ else(94)
+BRZ else(93)
 LOAD 44
 STORE 45
 LOAD 43
@@ -8421,16 +8414,16 @@ STORE 42
 LOAD 41
 PUSH 4
 ILT
-BRZ else(95)
+BRZ else(94)
 LOAD 41
 INCI
 STORE 41
-JUMP endif(95)
-:else(95)
-:endif(95)
 JUMP endif(94)
 :else(94)
 :endif(94)
+JUMP endif(93)
+:else(93)
+:endif(93)
 :cleanup(evaluate_editor)
 POPFP
 POP 6
@@ -8692,7 +8685,7 @@ PUSH 11
 LOAD 128
 PUSH 4
 SYS 126
-BRZ else(96)
+BRZ else(95)
 LOADSP 6
 PUSHFP
 CALL erase_last_editor_key
@@ -8702,9 +8695,9 @@ STREIND
 LOADSP 5
 PUSH 4294967295
 STREIND
-JUMP endif(96)
-:else(96)
-:endif(96)
+JUMP endif(95)
+:else(95)
+:endif(95)
 PUSH 0
 LOADSP 8
 LOADSP -1
@@ -8717,7 +8710,7 @@ PUSH 11
 LOAD 129
 PUSH 4
 SYS 126
-BRZ else(97)
+BRZ else(96)
 LOADSP 6
 PUSHFP
 CALL clear_editor
@@ -8727,9 +8720,9 @@ STREIND
 LOADSP 5
 PUSH 4294967295
 STREIND
-JUMP endif(97)
-:else(97)
-:endif(97)
+JUMP endif(96)
+:else(96)
+:endif(96)
 PUSH 0
 LOADSP 8
 LOADSP -1
@@ -8748,7 +8741,7 @@ PUSH 11
 LOAD 130
 PUSH 13
 SYS 126
-BRZ else(98)
+BRZ else(97)
 LOADSP 6
 LOADSP 1
 LOADSP 3
@@ -8759,9 +8752,9 @@ CALL evaluate_editor
 LOADSP 5
 PUSH 0
 STREIND
-JUMP endif(98)
-:else(98)
-:endif(98)
+JUMP endif(97)
+:else(97)
+:endif(97)
 :cleanup(draw_standard_keypad)
 POP 1
 POPFP
@@ -8781,7 +8774,7 @@ LOADSP 9
 PUSH 5
 ADDI
 IGE
-BRZ else(99)
+BRZ else(98)
 LOADSP 10
 LOADSP 9
 LOADSP -1
@@ -8856,7 +8849,7 @@ PUSH 5
 LOAD 135
 PUSH 4
 SYS 126
-BRZ else(100)
+BRZ else(99)
 LOADSP 6
 PUSHFP
 CALL erase_last_editor_key
@@ -8866,18 +8859,18 @@ STREIND
 LOADSP 5
 PUSH 4294967295
 STREIND
-JUMP endif(100)
-:else(100)
-:endif(100)
 JUMP endif(99)
 :else(99)
 :endif(99)
+JUMP endif(98)
+:else(98)
+:endif(98)
 LOADSP 7
 LOADSP 9
 PUSH 11
 ADDI
 IGE
-BRZ else(101)
+BRZ else(100)
 LOADSP 10
 LOADSP 9
 PUSH 6
@@ -8962,7 +8955,7 @@ PUSH 5
 LOAD 140
 PUSH 4
 SYS 126
-BRZ else(102)
+BRZ else(101)
 LOADSP 6
 PUSHFP
 CALL clear_editor
@@ -8972,18 +8965,18 @@ STREIND
 LOADSP 5
 PUSH 4294967295
 STREIND
-JUMP endif(102)
-:else(102)
-:endif(102)
 JUMP endif(101)
 :else(101)
 :endif(101)
+JUMP endif(100)
+:else(100)
+:endif(100)
 LOADSP 7
 LOADSP 9
 PUSH 17
 ADDI
 IGE
-BRZ else(103)
+BRZ else(102)
 LOADSP 10
 LOADSP 9
 PUSH 12
@@ -9071,15 +9064,15 @@ LOADSP 5
 LOADSP 4
 PUSHFP
 CALL draw_editor_key_compact
-JUMP endif(103)
-:else(103)
-:endif(103)
+JUMP endif(102)
+:else(102)
+:endif(102)
 LOADSP 7
 LOADSP 9
 PUSH 23
 ADDI
 IGE
-BRZ else(104)
+BRZ else(103)
 LOADSP 10
 LOADSP 9
 PUSH 18
@@ -9164,7 +9157,7 @@ PUSH 5
 LOAD 150
 PUSH 13
 SYS 126
-BRZ else(105)
+BRZ else(104)
 LOADSP 6
 LOADSP 1
 LOADSP 3
@@ -9175,12 +9168,12 @@ CALL evaluate_editor
 LOADSP 5
 PUSH 0
 STREIND
-JUMP endif(105)
-:else(105)
-:endif(105)
 JUMP endif(104)
 :else(104)
 :endif(104)
+JUMP endif(103)
+:else(103)
+:endif(103)
 :cleanup(draw_compact_keypad)
 POP 1
 POPFP
@@ -9191,14 +9184,14 @@ SETFP
 LOADSP 1
 PUSH 10
 ILT
-BRZ else(106)
+BRZ else(105)
 PUSH 48
 LOADSP 1
 ADDI
 JUMP cleanup(hex_character)
-JUMP endif(106)
-:else(106)
-:endif(106)
+JUMP endif(105)
+:else(105)
+:endif(105)
 PUSH 55
 LOADSP 1
 ADDI
@@ -9217,7 +9210,7 @@ PUSH 0
 LOADSP 2
 PUSH 0
 ILT
-BRZ else(107)
+BRZ else(106)
 PUSH 0
 LOADSP 4
 LOADSP 3
@@ -9231,25 +9224,25 @@ STORESP 4
 LOADSP 2
 NEGI
 STORESP 2
-JUMP endif(107)
-:else(107)
-:endif(107)
+JUMP endif(106)
+:else(106)
+:endif(106)
 LOADSP 1
 PUSH 10
 IEQ
-BRZ branch(108_0)
+BRZ branch(107_0)
 PUSH 0
 LOADSP 4
 LOADSP 3
 LOADSP 2
 PUSH 15
 SYS 111
-JUMP endif(108)
-:branch(108_0)
+JUMP endif(107)
+:branch(107_0)
 LOADSP 1
 PUSH 16
 IEQ
-BRZ else(108)
+BRZ else(107)
 PUSH 0
 LOADSP 4
 LOADSP 3
@@ -9284,7 +9277,7 @@ LOADSP -1
 PUSH 1
 IEQ
 OR
-BRZ else(109)
+BRZ else(108)
 PUSH 0
 LOADSP -3
 LOADSP 3
@@ -9299,17 +9292,17 @@ ADDI
 STORESP -3
 PUSH 4294967295
 STORESP -4
-JUMP endif(109)
-:else(109)
-:endif(109)
+JUMP endif(108)
+:else(108)
+:endif(108)
 LOADSP -1
 PUSH 16
 DIVI
 STORESP -1
 JUMP beginwhile(9)
 :endwhile(9)
-JUMP endif(108)
-:else(108)
+JUMP endif(107)
+:else(107)
 PUSH 0
 LOADSP 4
 LOADSP 3
@@ -9344,7 +9337,7 @@ LOADSP -1
 PUSH 1
 IEQ
 OR
-BRZ else(110)
+BRZ else(109)
 PUSH 0
 LOADSP -3
 LOADSP 3
@@ -9359,16 +9352,16 @@ ADDI
 STORESP -3
 PUSH 4294967295
 STORESP -4
-JUMP endif(110)
-:else(110)
-:endif(110)
+JUMP endif(109)
+:else(109)
+:endif(109)
 LOADSP -1
 PUSH 2
 DIVI
 STORESP -1
 JUMP beginwhile(10)
 :endwhile(10)
-:endif(108)
+:endif(107)
 :cleanup(draw_programmer_number)
 POP 4
 POPFP
@@ -9389,13 +9382,13 @@ PUSH 42
 PUSH 11
 LOAD 154
 SYS 113
-BRZ else(111)
+BRZ else(110)
 LOADSP 1
 PUSH 10
 STREIND
-JUMP endif(111)
-:else(111)
-:endif(111)
+JUMP endif(110)
+:else(110)
+:endif(110)
 PUSH 0
 LOADSP 4
 PUSH 45
@@ -9405,13 +9398,13 @@ PUSH 42
 PUSH 11
 LOAD 155
 SYS 113
-BRZ else(112)
+BRZ else(111)
 LOADSP 1
 PUSH 16
 STREIND
-JUMP endif(112)
-:else(112)
-:endif(112)
+JUMP endif(111)
+:else(111)
+:endif(111)
 PUSH 0
 LOADSP 4
 PUSH 90
@@ -9421,13 +9414,13 @@ PUSH 42
 PUSH 11
 LOAD 156
 SYS 113
-BRZ else(113)
+BRZ else(112)
 LOADSP 1
 PUSH 2
 STREIND
-JUMP endif(113)
-:else(113)
-:endif(113)
+JUMP endif(112)
+:else(112)
+:endif(112)
 PUSH 0
 LOADSP 4
 PUSH 72
@@ -9476,13 +9469,13 @@ PUSH 42
 PUSH 9
 LOAD 158
 SYS 113
-BRZ else(114)
+BRZ else(113)
 LOADSP 1
 PUSH 0
 STREIND
-JUMP endif(114)
-:else(114)
-:endif(114)
+JUMP endif(113)
+:else(113)
+:endif(113)
 PUSH 0
 LOADSP 3
 PUSH 45
@@ -9492,13 +9485,13 @@ PUSH 42
 PUSH 9
 LOAD 159
 SYS 113
-BRZ else(115)
+BRZ else(114)
 LOADSP 1
 PUSH 1
 STREIND
-JUMP endif(115)
-:else(115)
-:endif(115)
+JUMP endif(114)
+:else(114)
+:endif(114)
 PUSH 0
 LOADSP 3
 PUSH 90
@@ -9508,13 +9501,13 @@ PUSH 42
 PUSH 9
 LOAD 160
 SYS 113
-BRZ else(116)
+BRZ else(115)
 LOADSP 1
 PUSH 2
 STREIND
-JUMP endif(116)
-:else(116)
-:endif(116)
+JUMP endif(115)
+:else(115)
+:endif(115)
 PUSH 0
 LOADSP 3
 PUSH 55
@@ -9567,46 +9560,46 @@ LOADSP 1
 LOADIND
 PUSH 0
 IEQ
-BRZ branch(117_0)
+BRZ branch(116_0)
 LOADSP -4
 SINF
 STORESP -5
-JUMP endif(117)
-:branch(117_0)
+JUMP endif(116)
+:branch(116_0)
 LOADSP 1
 LOADIND
 PUSH 1
 IEQ
-BRZ else(117)
+BRZ else(116)
 LOADSP -4
 COSF
 STORESP -5
-JUMP endif(117)
-:else(117)
+JUMP endif(116)
+:else(116)
 LOADSP -4
 TANF
 STORESP -5
 LOADSP -5
 PUSH 1065353216
 FGT
-BRZ else(118)
+BRZ else(117)
 PUSH 1065353216
 STORESP -5
-JUMP endif(118)
-:else(118)
-:endif(118)
+JUMP endif(117)
+:else(117)
+:endif(117)
 LOADSP -5
 PUSH 1065353216
 NEGF
 FLT
-BRZ else(119)
+BRZ else(118)
 PUSH 1065353216
 NEGF
 STORESP -5
-JUMP endif(119)
-:else(119)
-:endif(119)
-:endif(117)
+JUMP endif(118)
+:else(118)
+:endif(118)
+:endif(116)
 PUSH 97
 LOADSP -5
 PUSH 1108344832
@@ -9617,7 +9610,7 @@ STORESP -3
 LOADSP -1
 PUSH 0
 IGT
-BRZ else(120)
+BRZ else(119)
 PUSH 0
 LOADSP 3
 LOADSP -1
@@ -9632,9 +9625,9 @@ ADDI
 LOADSP -3
 PUSH 11
 SYS 107
-JUMP endif(120)
-:else(120)
-:endif(120)
+JUMP endif(119)
+:else(119)
+:endif(119)
 LOADSP -3
 STORESP -2
 LOADSP -1
@@ -9671,13 +9664,13 @@ PUSH 5
 LOAD 161
 PUSH 8
 SYS 145
-BRZ else(121)
+BRZ else(120)
 LOADSP 1
 PUSH 0
 STREIND
-JUMP endif(121)
-:else(121)
-:endif(121)
+JUMP endif(120)
+:else(120)
+:endif(120)
 PUSH 0
 LOADSP 5
 LOADSP -1
@@ -9690,13 +9683,13 @@ PUSH 5
 LOAD 162
 PUSH 8
 SYS 145
-BRZ else(122)
+BRZ else(121)
 LOADSP 1
 PUSH 1
 STREIND
-JUMP endif(122)
-:else(122)
-:endif(122)
+JUMP endif(121)
+:else(121)
+:endif(121)
 PUSH 0
 LOADSP 5
 LOADSP -1
@@ -9711,13 +9704,13 @@ PUSH 5
 LOAD 163
 PUSH 8
 SYS 145
-BRZ else(123)
+BRZ else(122)
 LOADSP 1
 PUSH 2
 STREIND
-JUMP endif(123)
-:else(123)
-:endif(123)
+JUMP endif(122)
+:else(122)
+:endif(122)
 LOADSP 4
 PUSH 6
 ADDI
@@ -9729,7 +9722,7 @@ STORESP -3
 LOADSP -3
 PUSH 4
 IGE
-BRZ else(124)
+BRZ else(123)
 PUSH 0
 LOADSP 5
 LOADSP -2
@@ -9766,46 +9759,46 @@ LOADSP 1
 LOADIND
 PUSH 0
 IEQ
-BRZ branch(125_0)
+BRZ branch(124_0)
 LOADSP -7
 SINF
 STORESP -8
-JUMP endif(125)
-:branch(125_0)
+JUMP endif(124)
+:branch(124_0)
 LOADSP 1
 LOADIND
 PUSH 1
 IEQ
-BRZ else(125)
+BRZ else(124)
 LOADSP -7
 COSF
 STORESP -8
-JUMP endif(125)
-:else(125)
+JUMP endif(124)
+:else(124)
 LOADSP -7
 TANF
 STORESP -8
 LOADSP -8
 PUSH 1065353216
 FGT
-BRZ else(126)
+BRZ else(125)
 PUSH 1065353216
 STORESP -8
-JUMP endif(126)
-:else(126)
-:endif(126)
+JUMP endif(125)
+:else(125)
+:endif(125)
 LOADSP -8
 PUSH 1065353216
 NEGF
 FLT
-BRZ else(127)
+BRZ else(126)
 PUSH 1065353216
 NEGF
 STORESP -8
-JUMP endif(127)
-:else(127)
-:endif(127)
-:endif(125)
+JUMP endif(126)
+:else(126)
+:endif(126)
+:endif(124)
 LOADSP -2
 LOADSP -3
 PUSH 2
@@ -9825,7 +9818,7 @@ STORESP -6
 LOADSP -4
 PUSH 0
 IGT
-BRZ else(128)
+BRZ else(127)
 PUSH 0
 LOADSP 5
 LOADSP -4
@@ -9838,9 +9831,9 @@ INCI
 LOADSP -6
 PUSH 11
 SYS 107
-JUMP endif(128)
-:else(128)
-:endif(128)
+JUMP endif(127)
+:else(127)
+:endif(127)
 LOADSP -6
 STORESP -5
 LOADSP -4
@@ -9848,9 +9841,9 @@ INCI
 STORESP -4
 JUMP beginwhile(12)
 :endwhile(12)
-JUMP endif(124)
-:else(124)
-:endif(124)
+JUMP endif(123)
+:else(123)
+:endif(123)
 :cleanup(draw_compact_graph_view)
 POP 8
 POPFP
@@ -9937,7 +9930,7 @@ LOADIND
 SYS 201
 PUSH 8
 SYS 145
-BRZ else(129)
+BRZ else(128)
 LOADSP 3
 LOADSP 3
 LOADIND
@@ -9947,16 +9940,16 @@ LOADSP 3
 LOADIND
 LOADSP -3
 IGE
-BRZ else(130)
+BRZ else(129)
 LOADSP 3
 PUSH 0
 STREIND
-JUMP endif(130)
-:else(130)
-:endif(130)
 JUMP endif(129)
 :else(129)
 :endif(129)
+JUMP endif(128)
+:else(128)
+:endif(128)
 LOADSP 8
 LOADSP -1
 ADDI
@@ -9969,7 +9962,7 @@ PUSHFP
 CALL draw_swap_button
 STORESP -7
 LOADSP -7
-BRZ else(131)
+BRZ else(130)
 LOADSP 3
 LOADIND
 STORESP -3
@@ -9980,9 +9973,9 @@ STREIND
 LOADSP 2
 LOADSP -3
 STREIND
-JUMP endif(131)
-:else(131)
-:endif(131)
+JUMP endif(130)
+:else(130)
+:endif(130)
 PUSH 0
 LOADSP 8
 LOADSP -1
@@ -9997,7 +9990,7 @@ LOADIND
 SYS 201
 PUSH 8
 SYS 145
-BRZ else(132)
+BRZ else(131)
 LOADSP 2
 LOADSP 2
 LOADIND
@@ -10007,16 +10000,16 @@ LOADSP 2
 LOADIND
 SYS 200
 IGE
-BRZ else(133)
+BRZ else(132)
 LOADSP 2
 PUSH 0
 STREIND
-JUMP endif(133)
-:else(133)
-:endif(133)
 JUMP endif(132)
 :else(132)
 :endif(132)
+JUMP endif(131)
+:else(131)
+:endif(131)
 LOADSP 6
 PUSH 5
 SUBI
@@ -10029,12 +10022,12 @@ LOADSP 1
 LOADIND
 PUSH 0
 IEQ
-BRZ else(134)
+BRZ else(133)
 PUSH 13
 STORESP -8
-JUMP endif(134)
-:else(134)
-:endif(134)
+JUMP endif(133)
+:else(133)
+:endif(133)
 PUSH 0
 LOADSP 8
 LOADSP 7
@@ -10045,25 +10038,25 @@ PUSH 6
 LOAD 167
 LOADSP -8
 SYS 145
-BRZ else(135)
+BRZ else(134)
 LOADSP 1
 PUSH 0
 STREIND
-JUMP endif(135)
-:else(135)
-:endif(135)
+JUMP endif(134)
+:else(134)
+:endif(134)
 PUSH 8
 STORESP -8
 LOADSP 1
 LOADIND
 PUSH 1
 IEQ
-BRZ else(136)
+BRZ else(135)
 PUSH 13
 STORESP -8
-JUMP endif(136)
-:else(136)
-:endif(136)
+JUMP endif(135)
+:else(135)
+:endif(135)
 PUSH 0
 LOADSP 8
 LOADSP -2
@@ -10077,25 +10070,25 @@ PUSH 6
 LOAD 168
 LOADSP -8
 SYS 145
-BRZ else(137)
+BRZ else(136)
 LOADSP 1
 PUSH 1
 STREIND
-JUMP endif(137)
-:else(137)
-:endif(137)
+JUMP endif(136)
+:else(136)
+:endif(136)
 PUSH 8
 STORESP -8
 LOADSP 1
 LOADIND
 PUSH 2
 IEQ
-BRZ else(138)
+BRZ else(137)
 PUSH 13
 STORESP -8
-JUMP endif(138)
-:else(138)
-:endif(138)
+JUMP endif(137)
+:else(137)
+:endif(137)
 PUSH 0
 LOADSP 8
 LOADSP -2
@@ -10111,25 +10104,25 @@ PUSH 6
 LOAD 169
 LOADSP -8
 SYS 145
-BRZ else(139)
+BRZ else(138)
 LOADSP 1
 PUSH 2
 STREIND
-JUMP endif(139)
-:else(139)
-:endif(139)
+JUMP endif(138)
+:else(138)
+:endif(138)
 PUSH 8
 STORESP -8
 LOADSP 1
 LOADIND
 PUSH 3
 IEQ
-BRZ else(140)
+BRZ else(139)
 PUSH 13
 STORESP -8
-JUMP endif(140)
-:else(140)
-:endif(140)
+JUMP endif(139)
+:else(139)
+:endif(139)
 PUSH 0
 LOADSP 8
 LOADSP -2
@@ -10145,25 +10138,25 @@ PUSH 6
 LOAD 170
 LOADSP -8
 SYS 145
-BRZ else(141)
+BRZ else(140)
 LOADSP 1
 PUSH 3
 STREIND
-JUMP endif(141)
-:else(141)
-:endif(141)
+JUMP endif(140)
+:else(140)
+:endif(140)
 PUSH 8
 STORESP -8
 LOADSP 1
 LOADIND
 PUSH 4
 IEQ
-BRZ else(142)
+BRZ else(141)
 PUSH 13
 STORESP -8
-JUMP endif(142)
-:else(142)
-:endif(142)
+JUMP endif(141)
+:else(141)
+:endif(141)
 PUSH 0
 LOADSP 8
 LOADSP -2
@@ -10179,25 +10172,25 @@ PUSH 6
 LOAD 171
 LOADSP -8
 SYS 145
-BRZ else(143)
+BRZ else(142)
 LOADSP 1
 PUSH 4
 STREIND
-JUMP endif(143)
-:else(143)
-:endif(143)
+JUMP endif(142)
+:else(142)
+:endif(142)
 PUSH 8
 STORESP -8
 LOADSP 1
 LOADIND
 PUSH 5
 IEQ
-BRZ else(144)
+BRZ else(143)
 PUSH 13
 STORESP -8
-JUMP endif(144)
-:else(144)
-:endif(144)
+JUMP endif(143)
+:else(143)
+:endif(143)
 PUSH 0
 LOADSP 8
 LOADSP -2
@@ -10213,13 +10206,13 @@ PUSH 6
 LOAD 172
 LOADSP -8
 SYS 145
-BRZ else(145)
+BRZ else(144)
 LOADSP 1
 PUSH 5
 STREIND
-JUMP endif(145)
-:else(145)
-:endif(145)
+JUMP endif(144)
+:else(144)
+:endif(144)
 LOADSP 3
 LOADIND
 LOADSP 2
@@ -10233,7 +10226,7 @@ STORESP -4
 LOADSP -4
 PUSH 2
 IEQ
-BRZ branch(146_0)
+BRZ branch(145_0)
 SYS 204
 STORESP -5
 LOADSP 4
@@ -10297,7 +10290,7 @@ STORESP -10
 LOADSP -10
 PUSH 10
 IGE
-BRZ else(147)
+BRZ else(146)
 PUSH 0
 LOADSP 8
 LOADSP -9
@@ -10310,7 +10303,7 @@ STORESP -11
 LOADSP -11
 PUSH 1
 IGT
-BRZ else(148)
+BRZ else(147)
 PUSH 0
 SYS 206
 STORESP -18
@@ -10329,21 +10322,21 @@ STORESP -17
 LOADSP -17
 LOADSP -18
 FLT
-BRZ else(149)
+BRZ else(148)
 LOADSP -17
 STORESP -18
-JUMP endif(149)
-:else(149)
-:endif(149)
+JUMP endif(148)
+:else(148)
+:endif(148)
 LOADSP -17
 LOADSP -19
 FGT
-BRZ else(150)
+BRZ else(149)
 LOADSP -17
 STORESP -19
-JUMP endif(150)
-:else(150)
-:endif(150)
+JUMP endif(149)
+:else(149)
+:endif(149)
 LOADSP -12
 INCI
 STORESP -12
@@ -10352,13 +10345,13 @@ JUMP beginwhile(13)
 LOADSP -19
 LOADSP -18
 FEQ
-BRZ else(151)
+BRZ else(150)
 LOADSP -18
 INCF
 STORESP -19
-JUMP endif(151)
-:else(151)
-:endif(151)
+JUMP endif(150)
+:else(150)
+:endif(150)
 PUSH 0
 STORESP -12
 :beginwhile(14)
@@ -10405,7 +10398,7 @@ STORESP -16
 LOADSP -12
 PUSH 0
 IGT
-BRZ else(152)
+BRZ else(151)
 PUSH 0
 LOADSP -13
 LOADSP -14
@@ -10413,9 +10406,9 @@ LOADSP -15
 LOADSP -16
 PUSH 11
 SYS 107
-JUMP endif(152)
-:else(152)
-:endif(152)
+JUMP endif(151)
+:else(151)
+:endif(151)
 LOADSP -15
 STORESP -13
 LOADSP -16
@@ -10425,18 +10418,18 @@ INCI
 STORESP -12
 JUMP beginwhile(14)
 :endwhile(14)
-JUMP endif(148)
-:else(148)
-:endif(148)
 JUMP endif(147)
 :else(147)
 :endif(147)
 JUMP endif(146)
-:branch(146_0)
+:else(146)
+:endif(146)
+JUMP endif(145)
+:branch(145_0)
 LOADSP -4
 PUSH 3
 IEQ
-BRZ else(146)
+BRZ else(145)
 PUSH 0
 LOADSP 8
 LOADSP 7
@@ -10445,8 +10438,8 @@ ADDI
 LOAD 175
 PUSH 12
 SYS 129
-JUMP endif(146)
-:else(146)
+JUMP endif(145)
+:else(145)
 PUSH 0
 LOADSP 8
 LOADSP 7
@@ -10455,7 +10448,7 @@ ADDI
 LOAD 176
 PUSH 8
 SYS 129
-:endif(146)
+:endif(145)
 :cleanup(draw_currency_view)
 POP 20
 POPFP
@@ -10478,7 +10471,7 @@ LOADSP 2
 LOADIND
 PUSH 0
 IEQ
-BRZ branch(153_0)
+BRZ branch(152_0)
 LOAD 177
 STORESP -4
 LOAD 178
@@ -10487,13 +10480,13 @@ LOADSP 3
 PUSH 1059000875
 MULF
 STORESP -1
-JUMP endif(153)
-:branch(153_0)
+JUMP endif(152)
+:branch(152_0)
 LOADSP 2
 LOADIND
 PUSH 1
 IEQ
-BRZ branch(153_1)
+BRZ branch(152_1)
 LOAD 179
 STORESP -4
 LOAD 180
@@ -10506,13 +10499,13 @@ DIVF
 PUSH 1107296256
 ADDF
 STORESP -1
-JUMP endif(153)
-:branch(153_1)
+JUMP endif(152)
+:branch(152_1)
 LOADSP 2
 LOADIND
 PUSH 2
 IEQ
-BRZ branch(153_2)
+BRZ branch(152_2)
 LOAD 181
 STORESP -4
 LOAD 182
@@ -10521,13 +10514,13 @@ LOADSP 3
 PUSH 1074600071
 MULF
 STORESP -1
-JUMP endif(153)
-:branch(153_2)
+JUMP endif(152)
+:branch(152_2)
 LOADSP 2
 LOADIND
 PUSH 3
 IEQ
-BRZ branch(153_3)
+BRZ branch(152_3)
 LOAD 183
 STORESP -4
 LOAD 184
@@ -10536,13 +10529,13 @@ LOADSP 3
 PUSH 1079114056
 MULF
 STORESP -1
-JUMP endif(153)
-:branch(153_3)
+JUMP endif(152)
+:branch(152_3)
 LOADSP 2
 LOADIND
 PUSH 4
 IEQ
-BRZ else(153)
+BRZ else(152)
 LOAD 185
 STORESP -4
 LOAD 186
@@ -10551,8 +10544,8 @@ LOADSP 3
 PUSH 1049051533
 MULF
 STORESP -1
-JUMP endif(153)
-:else(153)
+JUMP endif(152)
+:else(152)
 LOAD 187
 STORESP -4
 LOAD 188
@@ -10561,30 +10554,30 @@ LOADSP 3
 PUSH 1076006748
 DIVF
 STORESP -1
-:endif(153)
+:endif(152)
 LOADSP 1
 LOADIND
-BRZ else(154)
+BRZ else(153)
 LOADSP -5
 STORESP -4
 LOADSP 2
 LOADIND
 PUSH 0
 IEQ
-BRZ branch(155_0)
+BRZ branch(154_0)
 LOAD 189
 STORESP -5
 LOADSP 3
 PUSH 1059000875
 DIVF
 STORESP -1
-JUMP endif(155)
-:branch(155_0)
+JUMP endif(154)
+:branch(154_0)
 LOADSP 2
 LOADIND
 PUSH 1
 IEQ
-BRZ branch(155_1)
+BRZ branch(154_1)
 LOAD 190
 STORESP -5
 LOADSP 3
@@ -10595,57 +10588,57 @@ MULF
 PUSH 1091567616
 DIVF
 STORESP -1
-JUMP endif(155)
-:branch(155_1)
+JUMP endif(154)
+:branch(154_1)
 LOADSP 2
 LOADIND
 PUSH 2
 IEQ
-BRZ branch(155_2)
+BRZ branch(154_2)
 LOAD 191
 STORESP -5
 LOADSP 3
 PUSH 1074600071
 DIVF
 STORESP -1
-JUMP endif(155)
-:branch(155_2)
+JUMP endif(154)
+:branch(154_2)
 LOADSP 2
 LOADIND
 PUSH 3
 IEQ
-BRZ branch(155_3)
+BRZ branch(154_3)
 LOAD 192
 STORESP -5
 LOADSP 3
 PUSH 1079114056
 DIVF
 STORESP -1
-JUMP endif(155)
-:branch(155_3)
+JUMP endif(154)
+:branch(154_3)
 LOADSP 2
 LOADIND
 PUSH 4
 IEQ
-BRZ else(155)
+BRZ else(154)
 LOAD 193
 STORESP -5
 LOADSP 3
 PUSH 1049051533
 DIVF
 STORESP -1
-JUMP endif(155)
-:else(155)
+JUMP endif(154)
+:else(154)
 LOAD 194
 STORESP -5
 LOADSP 3
 PUSH 1076006748
 MULF
 STORESP -1
-:endif(155)
-JUMP endif(154)
-:else(154)
 :endif(154)
+JUMP endif(153)
+:else(153)
+:endif(153)
 PUSH 0
 LOADSP 6
 LOADSP 5
@@ -10654,7 +10647,7 @@ PUSH 7
 LOADSP -4
 PUSH 8
 SYS 145
-BRZ else(156)
+BRZ else(155)
 LOADSP 2
 LOADSP 2
 LOADIND
@@ -10664,19 +10657,19 @@ LOADSP 2
 LOADIND
 PUSH 6
 IGE
-BRZ else(157)
+BRZ else(156)
 LOADSP 2
-PUSH 0
-STREIND
-JUMP endif(157)
-:else(157)
-:endif(157)
-LOADSP 1
 PUSH 0
 STREIND
 JUMP endif(156)
 :else(156)
 :endif(156)
+LOADSP 1
+PUSH 0
+STREIND
+JUMP endif(155)
+:else(155)
+:endif(155)
 LOADSP 6
 LOADSP -2
 ADDI
@@ -10689,15 +10682,15 @@ PUSHFP
 CALL draw_swap_button
 STORESP -3
 LOADSP -3
-BRZ else(158)
+BRZ else(157)
 LOADSP 1
 LOADSP 1
 LOADIND
 NOT
 STREIND
-JUMP endif(158)
-:else(158)
-:endif(158)
+JUMP endif(157)
+:else(157)
+:endif(157)
 PUSH 0
 LOADSP 6
 LOADSP -2
@@ -10710,7 +10703,7 @@ PUSH 7
 LOADSP -5
 PUSH 8
 SYS 145
-BRZ else(159)
+BRZ else(158)
 LOADSP 2
 LOADSP 2
 LOADIND
@@ -10720,19 +10713,19 @@ LOADSP 2
 LOADIND
 PUSH 6
 IGE
-BRZ else(160)
+BRZ else(159)
 LOADSP 2
-PUSH 0
-STREIND
-JUMP endif(160)
-:else(160)
-:endif(160)
-LOADSP 1
 PUSH 0
 STREIND
 JUMP endif(159)
 :else(159)
 :endif(159)
+LOADSP 1
+PUSH 0
+STREIND
+JUMP endif(158)
+:else(158)
+:endif(158)
 PUSH 0
 LOADSP 6
 LOADSP 5
@@ -10802,7 +10795,7 @@ SYS 108
 LOAD 41
 PUSH 0
 IEQ
-BRZ else(161)
+BRZ else(160)
 PUSH 0
 LOADSP 2
 PUSH 5
@@ -10811,13 +10804,13 @@ PUSH 64
 LOAD 197
 PUSH 7
 SYS 110
-JUMP endif(161)
-:else(161)
-:endif(161)
+JUMP endif(160)
+:else(160)
+:endif(160)
 LOAD 41
 PUSH 1
 IGE
-BRZ else(162)
+BRZ else(161)
 PUSH 0
 LOADSP 2
 PUSH 5
@@ -10826,13 +10819,13 @@ PUSH 64
 LOAD 42
 PUSH 15
 SYS 112
-JUMP endif(162)
-:else(162)
-:endif(162)
+JUMP endif(161)
+:else(161)
+:endif(161)
 LOAD 41
 PUSH 2
 IGE
-BRZ else(163)
+BRZ else(162)
 PUSH 0
 LOADSP 2
 PUSH 5
@@ -10841,13 +10834,13 @@ PUSH 76
 LOAD 43
 PUSH 7
 SYS 112
-JUMP endif(163)
-:else(163)
-:endif(163)
+JUMP endif(162)
+:else(162)
+:endif(162)
 LOAD 41
 PUSH 3
 IGE
-BRZ else(164)
+BRZ else(163)
 PUSH 0
 LOADSP 2
 PUSH 5
@@ -10856,13 +10849,13 @@ PUSH 88
 LOAD 44
 PUSH 7
 SYS 112
-JUMP endif(164)
-:else(164)
-:endif(164)
+JUMP endif(163)
+:else(163)
+:endif(163)
 LOAD 41
 PUSH 4
 IGE
-BRZ else(165)
+BRZ else(164)
 PUSH 0
 LOADSP 2
 PUSH 5
@@ -10871,9 +10864,9 @@ PUSH 100
 LOAD 45
 PUSH 7
 SYS 112
-JUMP endif(165)
-:else(165)
-:endif(165)
+JUMP endif(164)
+:else(164)
+:endif(164)
 :cleanup(draw_history_view)
 POPFP
 POP 3
@@ -10883,33 +10876,33 @@ SETFP
 LOAD 41
 PUSH 0
 IEQ
-BRZ else(166)
+BRZ else(165)
 PUSH 0
 LOADSP 2
 LOADSP 1
 LOAD 198
 PUSH 7
 SYS 129
-JUMP endif(166)
-:else(166)
-:endif(166)
+JUMP endif(165)
+:else(165)
+:endif(165)
 LOAD 41
 PUSH 1
 IGE
-BRZ else(167)
+BRZ else(166)
 PUSH 0
 LOADSP 2
 LOADSP 1
 LOAD 42
 PUSH 15
 SYS 144
-JUMP endif(167)
-:else(167)
-:endif(167)
+JUMP endif(166)
+:else(166)
+:endif(166)
 LOAD 41
 PUSH 2
 IGE
-BRZ else(168)
+BRZ else(167)
 PUSH 0
 LOADSP 2
 LOADSP 1
@@ -10918,13 +10911,13 @@ ADDI
 LOAD 43
 PUSH 7
 SYS 144
-JUMP endif(168)
-:else(168)
-:endif(168)
+JUMP endif(167)
+:else(167)
+:endif(167)
 LOAD 41
 PUSH 3
 IGE
-BRZ else(169)
+BRZ else(168)
 PUSH 0
 LOADSP 2
 LOADSP 1
@@ -10933,13 +10926,13 @@ ADDI
 LOAD 44
 PUSH 7
 SYS 144
-JUMP endif(169)
-:else(169)
-:endif(169)
+JUMP endif(168)
+:else(168)
+:endif(168)
 LOAD 41
 PUSH 4
 IGE
-BRZ else(170)
+BRZ else(169)
 PUSH 0
 LOADSP 2
 LOADSP 1
@@ -10948,9 +10941,9 @@ ADDI
 LOAD 45
 PUSH 7
 SYS 144
-JUMP endif(170)
-:else(170)
-:endif(170)
+JUMP endif(169)
+:else(169)
+:endif(169)
 :cleanup(draw_history_compact)
 POPFP
 POP 3
@@ -10985,7 +10978,7 @@ LOADIND
 PUSH 100
 ILT
 AND
-BRZ branch(171_0)
+BRZ branch(170_0)
 LOADSP 3
 LOADSP 3
 LOADIND
@@ -10996,15 +10989,15 @@ LOADSP 3
 LOADIND
 PUSH 100
 IGT
-BRZ else(172)
+BRZ else(171)
 LOADSP 3
 PUSH 100
 STREIND
-JUMP endif(172)
-:else(172)
-:endif(172)
 JUMP endif(171)
-:branch(171_0)
+:else(171)
+:endif(171)
+JUMP endif(170)
+:branch(170_0)
 LOADSP 4
 LOADIND
 NOT
@@ -11013,7 +11006,7 @@ LOADIND
 PUSH 0
 IGT
 AND
-BRZ else(171)
+BRZ else(170)
 LOADSP 3
 LOADSP 3
 LOADIND
@@ -11024,16 +11017,16 @@ LOADSP 3
 LOADIND
 PUSH 0
 ILT
-BRZ else(173)
+BRZ else(172)
 LOADSP 3
 PUSH 0
 STREIND
-JUMP endif(173)
-:else(173)
-:endif(173)
-JUMP endif(171)
-:else(171)
-:endif(171)
+JUMP endif(172)
+:else(172)
+:endif(172)
+JUMP endif(170)
+:else(170)
+:endif(170)
 LOADSP 3
 LOADIND
 PUSHFP
@@ -11052,23 +11045,23 @@ LOADSP 6
 PUSH 14
 SUBI
 IGT
-BRZ else(174)
+BRZ else(173)
 LOADSP 6
 PUSH 14
 SUBI
 STORESP -3
-JUMP endif(174)
-:else(174)
-:endif(174)
+JUMP endif(173)
+:else(173)
+:endif(173)
 LOADSP -3
 PUSH 5
 ILT
-BRZ else(175)
+BRZ else(174)
 PUSH 5
 STORESP -3
-JUMP endif(175)
-:else(175)
-:endif(175)
+JUMP endif(174)
+:else(174)
+:endif(174)
 PUSH 88
 STORESP -4
 LOADSP -4
@@ -11076,23 +11069,23 @@ LOADSP 7
 PUSH 26
 SUBI
 IGT
-BRZ else(176)
+BRZ else(175)
 LOADSP 7
 PUSH 26
 SUBI
 STORESP -4
-JUMP endif(176)
-:else(176)
-:endif(176)
+JUMP endif(175)
+:else(175)
+:endif(175)
 LOADSP -4
 PUSH 20
 ILT
-BRZ else(177)
+BRZ else(176)
 LOADSP 7
 STORESP -4
-JUMP endif(177)
-:else(177)
-:endif(177)
+JUMP endif(176)
+:else(176)
+:endif(176)
 PUSH 0
 STORESP -1
 PUSH 8
@@ -11100,17 +11093,17 @@ STORESP -6
 SYS 184
 PUSH 1
 IEQ
-BRZ else(178)
+BRZ else(177)
 PUSH 1
 STORESP -6
-JUMP endif(178)
-:else(178)
-:endif(178)
+JUMP endif(177)
+:else(177)
+:endif(177)
 LOADSP 5
 LOADIND
 PUSH 0
 IEQ
-BRZ branch(179_0)
+BRZ branch(178_0)
 PUSH 0
 LOADSP 8
 PUSH 6
@@ -11120,13 +11113,13 @@ LOAD 199
 LOADSP -6
 SYS 145
 STORESP -1
-JUMP endif(179)
-:branch(179_0)
+JUMP endif(178)
+:branch(178_0)
 LOADSP 5
 LOADIND
 PUSH 1
 IEQ
-BRZ branch(179_1)
+BRZ branch(178_1)
 PUSH 0
 LOADSP 8
 PUSH 6
@@ -11136,13 +11129,13 @@ LOAD 200
 LOADSP -6
 SYS 145
 STORESP -1
-JUMP endif(179)
-:branch(179_1)
+JUMP endif(178)
+:branch(178_1)
 LOADSP 5
 LOADIND
 PUSH 2
 IEQ
-BRZ branch(179_2)
+BRZ branch(178_2)
 PUSH 0
 LOADSP 8
 PUSH 6
@@ -11152,13 +11145,13 @@ LOAD 201
 LOADSP -6
 SYS 145
 STORESP -1
-JUMP endif(179)
-:branch(179_2)
+JUMP endif(178)
+:branch(178_2)
 LOADSP 5
 LOADIND
 PUSH 3
 IEQ
-BRZ branch(179_3)
+BRZ branch(178_3)
 PUSH 0
 LOADSP 8
 PUSH 6
@@ -11168,13 +11161,13 @@ LOAD 202
 LOADSP -6
 SYS 145
 STORESP -1
-JUMP endif(179)
-:branch(179_3)
+JUMP endif(178)
+:branch(178_3)
 LOADSP 5
 LOADIND
 PUSH 4
 IEQ
-BRZ branch(179_4)
+BRZ branch(178_4)
 PUSH 0
 LOADSP 8
 PUSH 6
@@ -11184,13 +11177,13 @@ LOAD 203
 LOADSP -6
 SYS 145
 STORESP -1
-JUMP endif(179)
-:branch(179_4)
+JUMP endif(178)
+:branch(178_4)
 LOADSP 5
 LOADIND
 PUSH 5
 IEQ
-BRZ else(179)
+BRZ else(178)
 PUSH 0
 LOADSP 8
 PUSH 6
@@ -11200,8 +11193,8 @@ LOAD 204
 LOADSP -6
 SYS 145
 STORESP -1
-JUMP endif(179)
-:else(179)
+JUMP endif(178)
+:else(178)
 PUSH 0
 LOADSP 8
 PUSH 6
@@ -11211,9 +11204,9 @@ LOAD 205
 LOADSP -6
 SYS 145
 STORESP -1
-:endif(179)
+:endif(178)
 LOADSP -1
-BRZ else(180)
+BRZ else(179)
 LOADSP 4
 LOADSP 4
 LOADIND
@@ -11221,35 +11214,35 @@ NOT
 STREIND
 LOADSP 4
 LOADIND
-BRZ else(181)
+BRZ else(180)
 LOADSP 5
 LOADIND
 PUSH 4
 IGE
-BRZ else(182)
+BRZ else(181)
 LOADSP 1
 PUSH 1
 STREIND
-JUMP endif(182)
-:else(182)
+JUMP endif(181)
+:else(181)
 LOADSP 1
 PUSH 0
 STREIND
-:endif(182)
-JUMP endif(181)
-:else(181)
 :endif(181)
-LOADSP 2
-PUSH 4
-STREIND
 JUMP endif(180)
 :else(180)
 :endif(180)
+LOADSP 2
+PUSH 4
+STREIND
+JUMP endif(179)
+:else(179)
+:endif(179)
 LOADSP 3
 LOADIND
 PUSH 0
 IGT
-BRZ else(183)
+BRZ else(182)
 PUSH 0
 LOADSP 8
 PUSH 14
@@ -11263,11 +11256,11 @@ LOADSP 1
 LOADIND
 PUSH 0
 IEQ
-BRZ else(184)
+BRZ else(183)
 LOADSP -3
 PUSH 8
 IGE
-BRZ else(185)
+BRZ else(184)
 PUSH 0
 LOADSP 8
 PUSH 3
@@ -11280,7 +11273,7 @@ PUSH 5
 LOAD 207
 LOADSP -6
 SYS 145
-BRZ else(186)
+BRZ else(185)
 LOADSP 5
 PUSH 0
 STREIND
@@ -11290,16 +11283,16 @@ STREIND
 LOADSP 2
 PUSH 4
 STREIND
-JUMP endif(186)
-:else(186)
-:endif(186)
 JUMP endif(185)
 :else(185)
 :endif(185)
+JUMP endif(184)
+:else(184)
+:endif(184)
 LOADSP -3
 PUSH 14
 IGE
-BRZ else(187)
+BRZ else(186)
 PUSH 0
 LOADSP 8
 PUSH 3
@@ -11312,7 +11305,7 @@ PUSH 5
 LOAD 208
 LOADSP -6
 SYS 145
-BRZ else(188)
+BRZ else(187)
 LOADSP 5
 PUSH 1
 STREIND
@@ -11322,16 +11315,16 @@ STREIND
 LOADSP 2
 PUSH 4
 STREIND
-JUMP endif(188)
-:else(188)
-:endif(188)
 JUMP endif(187)
 :else(187)
 :endif(187)
+JUMP endif(186)
+:else(186)
+:endif(186)
 LOADSP -3
 PUSH 20
 IGE
-BRZ else(189)
+BRZ else(188)
 PUSH 0
 LOADSP 8
 PUSH 3
@@ -11344,7 +11337,7 @@ PUSH 5
 LOAD 209
 LOADSP -6
 SYS 145
-BRZ else(190)
+BRZ else(189)
 LOADSP 5
 PUSH 2
 STREIND
@@ -11354,16 +11347,16 @@ STREIND
 LOADSP 2
 PUSH 4
 STREIND
-JUMP endif(190)
-:else(190)
-:endif(190)
 JUMP endif(189)
 :else(189)
 :endif(189)
+JUMP endif(188)
+:else(188)
+:endif(188)
 LOADSP -3
 PUSH 26
 IGE
-BRZ else(191)
+BRZ else(190)
 PUSH 0
 LOADSP 8
 PUSH 3
@@ -11376,7 +11369,7 @@ PUSH 5
 LOAD 210
 LOADSP -6
 SYS 145
-BRZ else(192)
+BRZ else(191)
 LOADSP 5
 PUSH 3
 STREIND
@@ -11386,16 +11379,16 @@ STREIND
 LOADSP 2
 PUSH 4
 STREIND
-JUMP endif(192)
-:else(192)
-:endif(192)
 JUMP endif(191)
 :else(191)
 :endif(191)
+JUMP endif(190)
+:else(190)
+:endif(190)
 LOADSP -3
 PUSH 32
 IGE
-BRZ else(193)
+BRZ else(192)
 PUSH 0
 LOADSP 8
 PUSH 3
@@ -11408,25 +11401,25 @@ PUSH 5
 LOAD 211
 LOADSP -6
 SYS 145
-BRZ else(194)
+BRZ else(193)
 LOADSP 1
 PUSH 1
 STREIND
 LOADSP 2
 PUSH 4
 STREIND
-JUMP endif(194)
-:else(194)
-:endif(194)
 JUMP endif(193)
 :else(193)
 :endif(193)
-JUMP endif(184)
-:else(184)
+JUMP endif(192)
+:else(192)
+:endif(192)
+JUMP endif(183)
+:else(183)
 LOADSP -3
 PUSH 8
 IGE
-BRZ else(195)
+BRZ else(194)
 PUSH 0
 LOADSP 8
 PUSH 3
@@ -11439,7 +11432,7 @@ PUSH 5
 LOAD 212
 LOADSP -6
 SYS 145
-BRZ else(196)
+BRZ else(195)
 LOADSP 5
 PUSH 4
 STREIND
@@ -11449,16 +11442,16 @@ STREIND
 LOADSP 2
 PUSH 4
 STREIND
-JUMP endif(196)
-:else(196)
-:endif(196)
 JUMP endif(195)
 :else(195)
 :endif(195)
+JUMP endif(194)
+:else(194)
+:endif(194)
 LOADSP -3
 PUSH 14
 IGE
-BRZ else(197)
+BRZ else(196)
 PUSH 0
 LOADSP 8
 PUSH 3
@@ -11471,7 +11464,7 @@ PUSH 5
 LOAD 213
 LOADSP -6
 SYS 145
-BRZ else(198)
+BRZ else(197)
 LOADSP 5
 PUSH 5
 STREIND
@@ -11481,16 +11474,16 @@ STREIND
 LOADSP 2
 PUSH 4
 STREIND
-JUMP endif(198)
-:else(198)
-:endif(198)
 JUMP endif(197)
 :else(197)
 :endif(197)
+JUMP endif(196)
+:else(196)
+:endif(196)
 LOADSP -3
 PUSH 20
 IGE
-BRZ else(199)
+BRZ else(198)
 PUSH 0
 LOADSP 8
 PUSH 3
@@ -11503,7 +11496,7 @@ PUSH 5
 LOAD 214
 LOADSP -6
 SYS 145
-BRZ else(200)
+BRZ else(199)
 LOADSP 5
 PUSH 6
 STREIND
@@ -11513,16 +11506,16 @@ STREIND
 LOADSP 2
 PUSH 4
 STREIND
-JUMP endif(200)
-:else(200)
-:endif(200)
 JUMP endif(199)
 :else(199)
 :endif(199)
+JUMP endif(198)
+:else(198)
+:endif(198)
 LOADSP -3
 PUSH 26
 IGE
-BRZ else(201)
+BRZ else(200)
 PUSH 0
 LOADSP 8
 PUSH 3
@@ -11535,33 +11528,33 @@ PUSH 5
 LOAD 215
 LOADSP -6
 SYS 145
-BRZ else(202)
+BRZ else(201)
 LOADSP 1
 PUSH 0
 STREIND
 LOADSP 2
 PUSH 4
 STREIND
-JUMP endif(202)
-:else(202)
-:endif(202)
 JUMP endif(201)
 :else(201)
 :endif(201)
-:endif(184)
-JUMP endif(183)
-:else(183)
+JUMP endif(200)
+:else(200)
+:endif(200)
 :endif(183)
+JUMP endif(182)
+:else(182)
+:endif(182)
 LOADSP 2
 LOADIND
 PUSH 0
 IGT
-BRZ else(203)
+BRZ else(202)
 LOADSP 2
 LOADIND
 PUSH 3
 IGE
-BRZ else(204)
+BRZ else(203)
 PUSH 0
 LOADSP 8
 PUSH 5
@@ -11572,17 +11565,17 @@ DECI
 PUSH 5
 PUSH 15
 SYS 107
-JUMP endif(204)
-:else(204)
-:endif(204)
+JUMP endif(203)
+:else(203)
+:endif(203)
 LOADSP 2
 LOADSP 2
 LOADIND
 DECI
 STREIND
-JUMP endif(203)
-:else(203)
-:endif(203)
+JUMP endif(202)
+:else(202)
+:endif(202)
 :cleanup(draw_mode_switch)
 POP 6
 POPFP

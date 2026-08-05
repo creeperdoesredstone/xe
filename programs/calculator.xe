@@ -8,21 +8,15 @@ fn is_whitespace(value: char) bool {
 }
 
 fn is_digit(value: char) bool {
-	var code: int
-	code = (int)value
-	return code >= 48 && code <= 57
+	return value >= '0' && value <= '9'
 }
 
 fn is_letter(value: char) bool {
-	var code: int
-	code = (int)value
-	return (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+	return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z')
 }
 
 fn is_identifier_char(value: char) bool {
-	var code: int
-	code = (int)value
-	return is_letter(value) || is_digit(value) || code == 95
+	return is_letter(value) || is_digit(value) || value == '_'
 }
 
 fn is_integral(value: float) bool {
@@ -103,24 +97,17 @@ proc set_error(error_code: int*, error_position: int*, code: int, position: int)
 fn read_operator_code(text: string, position: int) int {
 	var code: int
 	code = peek_code(text, position)
-
-	if (code == 43) {
-		return 1
-	}
-	elseif (code == 45) {
-		return 2
-	}
-	elseif (code == 42) {
-		if (peek_code(text, position + 1) == 42) {
-			return 6
+	
+	switch (code) {
+		case '+' { return 1 }
+		case '-' { return 2 }
+		case '*' {
+			if (peek_code(text, position + 1) == '*') { return 6 }
+			return 3
 		}
-		return 3
-	}
-	elseif (code == 47) {
-		return 4
-	}
-	elseif (code == 37) {
-		return 5
+		case '/' { return 4 }
+		case '%' { return 5 }
+		default { return 0 }
 	}
 
 	return 0
@@ -238,15 +225,15 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 		return 0.0
 	}
 
-	if (current_code == 43 || current_code == 45) {
+	if (current_code == '+' || current_code == '-') {
 		sign_code = current_code
 		*position += 1
 		left = parse_expression(text, position, 25, degrees_mode, error_code, error_position)
-		if (sign_code == 45) {
+		if (sign_code == '-') {
 			left = -left
 		}
 	}
-	elseif ((current_code >= 48 && current_code <= 57) || current_code == 46) {
+	elseif ((current_code >= '0' && current_code <= '9') || current_code == '-') {
 		left = 0.0
 		divisor = 1.0
 		has_digit = false
@@ -255,18 +242,18 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 
 		while (scanning_number) {
 			current_code = peek_code(text, *position)
-			if (current_code >= 48 && current_code <= 57) {
+			if (current_code >= '0' && current_code <= '9') {
 				has_digit = true
 				if (has_decimal) {
 					divisor *= 10.0
-					left += (float)(current_code - 48) / divisor
+					left += (float)(current_code - '0') / divisor
 				}
 				else {
-					left = left * 10.0 + (float)(current_code - 48)
+					left = left * 10.0 + (float)(current_code - '0')
 				}
 				*position += 1
 			}
-			elseif (current_code == 46) {
+			elseif (current_code == '.') {
 				if (has_decimal) {
 					call set_error(error_code, error_position, 2, *position)
 					return 0.0
@@ -284,14 +271,14 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 			return 0.0
 		}
 	}
-	elseif (current_code == 40) {
+	elseif (current_code == '(') {
 		*position += 1
 		left = parse_expression(text, position, 0, degrees_mode, error_code, error_position)
 		if (*error_code != 0) {
 			return 0.0
 		}
 		call skip_whitespace(text, position)
-		if (peek_code(text, *position) != 41) {
+		if (peek_code(text, *position) != ')') {
 			call set_error(error_code, error_position, 4, *position)
 			return 0.0
 		}
@@ -368,7 +355,7 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 			second_argument = 0.0
 			if (function_code == 8) {
 				call skip_whitespace(text, position)
-				if (peek_code(text, *position) != 44) {
+				if (peek_code(text, *position) != ',') {
 					call set_error(error_code, error_position, 4, *position)
 					return 0.0
 				}
@@ -404,13 +391,13 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 		operator_position = *position
 		postfix_percentage = false
 
-		if (peek_code(text, *position) == 37) {
+		if (peek_code(text, *position) == '%') {
 			lookahead_position = *position + 1
 			while (lookahead_position < xestring::strlen(text) && is_whitespace(text[lookahead_position])) {
 				lookahead_position += 1
 			}
 			lookahead_code = peek_code(text, lookahead_position)
-			if (!((lookahead_code >= 48 && lookahead_code <= 57) || lookahead_code == 46 || lookahead_code == 40 || (lookahead_code >= 97 && lookahead_code <= 122))) {
+			if (!((lookahead_code >= '0' && lookahead_code <= '9') || lookahead_code == '.' || lookahead_code == '(' || (lookahead_code >= 'a' && lookahead_code <= 'z'))) {
 				left /= 100.0
 				*position += 1
 				postfix_percentage = true
@@ -564,103 +551,103 @@ proc draw_calculator_status(x: int, y: int, text: string, result: float, error_c
 }
 
 proc append_editor_key(text: string, key: int) {
-	if (key == 48) {
+	if (key == '0') {
 		call xestring::append(text, "0")
 	}
-	elseif (key == 49) {
+	elseif (key == '1') {
 		call xestring::append(text, "1")
 	}
-	elseif (key == 50) {
+	elseif (key == '2') {
 		call xestring::append(text, "2")
 	}
-	elseif (key == 51) {
+	elseif (key == '3') {
 		call xestring::append(text, "3")
 	}
-	elseif (key == 52) {
+	elseif (key == '4') {
 		call xestring::append(text, "4")
 	}
-	elseif (key == 53) {
+	elseif (key == '5') {
 		call xestring::append(text, "5")
 	}
-	elseif (key == 54) {
+	elseif (key == '6') {
 		call xestring::append(text, "6")
 	}
-	elseif (key == 55) {
+	elseif (key == '7') {
 		call xestring::append(text, "7")
 	}
-	elseif (key == 56) {
+	elseif (key == '8') {
 		call xestring::append(text, "8")
 	}
-	elseif (key == 57) {
+	elseif (key == '9') {
 		call xestring::append(text, "9")
 	}
-	elseif (key == 32) {
+	elseif (key == ' ') {
 		call xestring::append(text, " ")
 	}
-	elseif (key == 37) {
+	elseif (key == '%') {
 		call xestring::append(text, "%")
 	}
-	elseif (key == 40) {
+	elseif (key == '(') {
 		call xestring::append(text, "(")
 	}
-	elseif (key == 41) {
+	elseif (key == ')') {
 		call xestring::append(text, ")")
 	}
-	elseif (key == 42) {
+	elseif (key == '*') {
 		call xestring::append(text, "*")
 	}
-	elseif (key == 43) {
+	elseif (key == '+') {
 		call xestring::append(text, "+")
 	}
-	elseif (key == 44) {
+	elseif (key == ',') {
 		call xestring::append(text, ",")
 	}
-	elseif (key == 45) {
+	elseif (key == '-') {
 		call xestring::append(text, "-")
 	}
-	elseif (key == 46) {
+	elseif (key == '.') {
 		call xestring::append(text, ".")
 	}
-	elseif (key == 47) {
+	elseif (key == '/') {
 		call xestring::append(text, "/")
 	}
-	elseif (key == 65 || key == 97) {
+	elseif (key == 'A' || key == 'a') {
 		call xestring::append(text, "a")
 	}
-	elseif (key == 67 || key == 99) {
+	elseif (key == 'B' || key == 'c') {
 		call xestring::append(text, "c")
 	}
-	elseif (key == 69 || key == 101) {
+	elseif (key == 'E' || key == 'e') {
 		call xestring::append(text, "e")
 	}
-	elseif (key == 73 || key == 105) {
+	elseif (key == 'I' || key == 'i') {
 		call xestring::append(text, "i")
 	}
-	elseif (key == 78 || key == 110) {
+	elseif (key == 'N' || key == 'n') {
 		call xestring::append(text, "n")
 	}
-	elseif (key == 79 || key == 111) {
+	elseif (key == 'O' || key == 'o') {
 		call xestring::append(text, "o")
 	}
-	elseif (key == 80 || key == 112) {
+	elseif (key == 'P' || key == 'p') {
 		call xestring::append(text, "p")
 	}
-	elseif (key == 81 || key == 113) {
+	elseif (key == 'Q' || key == 'q') {
 		call xestring::append(text, "q")
 	}
-	elseif (key == 82 || key == 114) {
+	elseif (key == 'R' || key == 'r') {
 		call xestring::append(text, "r")
 	}
-	elseif (key == 83 || key == 115) {
+	elseif (key == 'S' || key == 's') {
 		call xestring::append(text, "s")
 	}
-	elseif (key == 84 || key == 116) {
+	elseif (key == 'T' || key == 't') {
 		call xestring::append(text, "t")
 	}
-	elseif (key == 87 || key == 119) {
+	elseif (key == 'W' || key == 'w') {
 		call xestring::append(text, "w")
 	}
-	elseif (key == 94) {
+	elseif (key == '^') {
 		call xestring::append(text, "**")
 	}
 	elseif (key == 1001) {
