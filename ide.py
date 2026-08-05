@@ -1695,6 +1695,11 @@ class X26IDE(QMainWindow):
 			self.worker.wait(2000)
 		event.accept()
 
+	def keyPressEvent(self, event: QKeyEvent):
+		if event.key() == Qt.Key.Key_F2:
+			self.rename_symbol()
+		return super().keyPressEvent(event)
+
 
 def main():
 	app = QApplication(sys.argv)
