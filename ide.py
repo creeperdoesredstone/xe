@@ -68,9 +68,6 @@ from xe_lang.devices import (
 
 
 def _find_name_token_pos(tokens: list[Token], keyword_pos: Position, name: str) -> Position:
-	"""Given the position of a declaration keyword ('var', 'proc', 'fn', 'class', ...),
-	find the position of the identifier token that names it (which immediately
-	follows the keyword in the token stream)."""
 	for i, tok in enumerate(tokens):
 		if tok.start_pos.idx == keyword_pos.idx:
 			for j in range(i + 1, min(i + 4, len(tokens))):
@@ -81,8 +78,6 @@ def _find_name_token_pos(tokens: list[Token], keyword_pos: Position, name: str) 
 
 
 def _collect_definitions(node, tokens: list[Token], definitions: dict) -> None:
-	"""Walk the AST collecting the source location of every variable, array,
-	struct, class, and subroutine (proc/fn) definition, keyed by name."""
 	if node is None:
 		return
 
