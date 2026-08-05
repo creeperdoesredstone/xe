@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 	QTextEdit,
 	QPushButton,
 	QFileDialog,
-	QMessageBox,
+	QToolTip,
 	QSplitter,
 	QLabel,
 	QComboBox,
@@ -112,6 +112,64 @@ def _collect_definitions(node, tokens: list[Token], definitions: dict) -> None:
 			_collect_definitions(value, tokens, definitions)
 
 
+def _extract_node_signature(node, doc: QTextDocument) -> Optional[str]:
+	if node is None:
+		return None
+
+	if isinstance(node, Parameter):
+		type_str = f": {node.type_name}" if getattr(node, "type_name", None) else ""
+		return f"{node.name}{type_str}"
+
+	pos = getattr(node, "start_pos", None)
+	if pos is not None and hasattr(pos, "ln"):
+		block = doc.findBlockByNumber(pos.ln)
+		if block.isValid():
+			line = block.text().strip()
+			if "{" in line:
+				line = line.split("{")[0].strip()
+			return line
+	return None
+
+
+def _collect_definition_details(
+	node, tokens: list[Token], definitions: dict, doc: QTextDocument
+) -> None:
+	if node is None:
+		return
+
+	if isinstance(node, (list, tuple)):
+		for item in node:
+			_collect_definition_details(item, tokens, definitions, doc)
+		return
+
+	if not isinstance(node, Node):
+		return
+
+	sig = _extract_node_signature(node, doc)
+
+	if isinstance(node, (VariableDeclaration, ArrayDeclaration)):
+		pos = _find_name_token_pos(tokens, node.start_pos, node.name)
+		definitions.setdefault(node.name, []).append(("variable", pos, sig))
+	elif isinstance(node, Parameter):
+		definitions.setdefault(node.name, []).append(("variable", node.start_pos, sig))
+	elif isinstance(node, (FunctionDefinition, ProcedureDefinition)):
+		pos = _find_name_token_pos(tokens, node.start_pos, node.name)
+		definitions.setdefault(node.name, []).append(("subroutine", pos, sig))
+	elif isinstance(node, StructDefinition):
+		var = node.var
+		name = getattr(var, "value", None)
+		pos = getattr(var, "start_pos", node.start_pos)
+		if name:
+			definitions.setdefault(name, []).append(("struct", pos, sig))
+	elif isinstance(node, ClassDefinition):
+		pos = _find_name_token_pos(tokens, node.start_pos, node.name)
+		definitions.setdefault(node.name, []).append(("class", pos, sig))
+
+	for value in vars(node).values():
+		if isinstance(value, (Node, list, tuple)):
+			_collect_definition_details(value, tokens, definitions, doc)
+
+
 PALETTE = list(DEFAULT_PALETTE)
 
 
@@ -186,8 +244,8 @@ class CodeEditor(QPlainTextEdit):
 
 		self.line_number_area = LineNumberArea(self)
 		self.go_to_definition_callback = None
-		self._hover_underline_selection: Optional["QTextEdit.ExtraSelection"] = None
-		self._last_mouse_pos: Optional["QPoint"] = None
+		self._hover_underline_selection: Optional[QTextEdit.ExtraSelection] = None
+		self._last_mouse_pos: Optional[QPoint] = None
 		self.setMouseTracking(True)
 
 		self.blockCountChanged.connect(self.update_line_number_area_width)
@@ -196,6 +254,123 @@ class CodeEditor(QPlainTextEdit):
 
 		self.update_line_number_area_width(0)
 		self.highlight_current_line()
+
+	def _format_signature(self, sig: str) -> str:
+		match = re.match(
+			r"^((?:proc|fn)\s+\w+)\s*\((.*?)\)(.*)$",
+			sig,
+			re.DOTALL,
+		)
+		if not match:
+			return sig
+
+		head, params_raw, tail = match.groups()
+		params = [p.strip() for p in re.split(r",|\n", params_raw) if p.strip()]
+
+		if len(params) > 3:
+			# Use non-breaking spaces (&nbsp;) so HTML preserves leading parameter indent
+			formatted_params = "<br>".join(f"&nbsp;&nbsp;&nbsp;&nbsp;{p}" for p in params)
+			return f"{head}(<br>{formatted_params}<br>){tail}"
+
+		return sig
+
+	def _highlight_signature_html(self, sig: str) -> str:
+		theme_name = getattr(self.window(), "current_theme", "Default Dark")
+		theme = THEMES.get(theme_name, THEMES["Default Dark"])
+
+		clean_sig_text = sig.replace("&nbsp;", " ").replace("<br>", "\n")
+
+		doc = QTextDocument()
+		doc.setDefaultFont(self.font())
+		doc.setPlainText(clean_sig_text)
+
+		highlighter = XPP26SyntaxHighlighter(doc, theme)
+		highlighter.rehighlight()
+
+		raw_html = doc.toHtml()
+
+		body_match = re.search(r"<body[^>]*>(.*?)</body>", raw_html, re.DOTALL)
+		content = body_match.group(1) if body_match else raw_html
+
+		paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', content, re.DOTALL)
+		if paragraphs:
+			formatted_lines = []
+			for line in paragraphs:
+				leading_spaces = len(line) - len(line.lstrip(" "))
+				if leading_spaces > 0:
+					line = ("&nbsp;" * leading_spaces) + line.lstrip(" ")
+				formatted_lines.append(line)
+			content = "<br>".join(formatted_lines)
+
+		return content
+
+	def _find_definition_signature(self, name: str, hover_pos_idx: int) -> str | None:
+		text = self.toPlainText()
+
+		doc = self.document()
+		hover_block = doc.findBlock(hover_pos_idx)
+		line_text = hover_block.text()
+		comment_idx = line_text.find("#")
+
+		if comment_idx != -1:
+			col_in_block = hover_pos_idx - hover_block.position()
+			if col_in_block >= comment_idx:
+				backtick_pattern = rf"`{re.escape(name)}`"
+				if not re.search(backtick_pattern, line_text[comment_idx:]):
+					return None
+
+		clean_lines = []
+		for line in text.splitlines():
+			if line.lstrip().startswith("#"):
+				clean_lines.append("")
+			else:
+				clean_lines.append(line.split("#")[0])
+
+		clean_text = "\n".join(clean_lines)
+
+		patterns = [
+			# Subroutine definitions
+			rf"(\b(?:proc|fn)\s+{re.escape(name)}\s*\([^)]*\)[^{{\n]*)",
+			# Variable / Array declarations
+			rf"(\b(?:var|array)\s+{re.escape(name)}\s*:[^\n;{{]+)",
+			# Struct / Class definitions
+			rf"(\b(?:struct|class)\s+{re.escape(name)}\b)",
+			# Parameter inside a header
+			rf"(\b{re.escape(name)}\s*:\s*[a-zA-Z_]\w*)",
+		]
+
+		combined_pattern = re.compile("|".join(patterns))
+
+		text_before_hover = clean_text[:hover_pos_idx]
+		matches_before = list(combined_pattern.finditer(text_before_hover))
+
+		if matches_before:
+			sig = matches_before[-1].group(0).strip()
+			return sig.rstrip("{").strip()
+
+		match_after = combined_pattern.search(clean_text, hover_pos_idx)
+		if match_after:
+			sig = match_after.group(0).strip()
+			return sig.rstrip("{").strip()
+
+		return None
+
+	def _show_definition_tooltip(self, pos: QPoint) -> None:
+		word_cursor = self._identifier_word_at(pos)
+		if not word_cursor:
+			QToolTip.hideText()
+			return
+
+		name = word_cursor.selectedText()
+		hover_pos_idx = word_cursor.position()
+		sig = self._find_definition_signature(name, hover_pos_idx)
+		if sig:
+			formatted_sig = self._format_signature(sig)
+			html_sig = self._highlight_signature_html(formatted_sig)
+			global_pos = self.viewport().mapToGlobal(pos)
+			QToolTip.showText(global_pos, html_sig, self.viewport())
+		else:
+			QToolTip.hideText()
 
 	def _identifier_word_at(self, pos) -> Optional[QTextCursor]:
 		cursor = self.cursorForPosition(pos)
@@ -260,12 +435,14 @@ class CodeEditor(QPlainTextEdit):
 		self._update_pointer_cursor(ctrl_held)
 		self._update_hover_underline(pos if ctrl_held else None)
 
+		self._show_definition_tooltip(pos)
 		super().mouseMoveEvent(event)
 
 	def leaveEvent(self, event):
 		self._last_mouse_pos = None
 		self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
 		self._update_hover_underline(None)
+		QToolTip.hideText()
 		super().leaveEvent(event)
 
 	def keyPressEvent(self, event: QKeyEvent):
@@ -1223,6 +1400,12 @@ class X26IDE(QMainWindow):
 			QTextEdit {{ background-color: {theme['background']}; color: {theme['foreground']}; border: 1px solid #555; }}
 			QLabel {{ color: {theme['foreground']}; }}
 			QSplitter::handle {{ background-color: #555; }}
+			QToolTip {{ 
+                background-color: {theme['toolbar_bg']}; 
+                color: {theme['foreground']}; 
+                border: none; 
+                padding: 0px; 
+            }}
 		"""
 		self.setStyleSheet(stylesheet)
 		self.output.setStyleSheet(
