@@ -21,14 +21,18 @@ from PyQt6.QtWidgets import (
 	QLabel,
 	QComboBox,
 	QLineEdit,
+	QCheckBox,
+	QInputDialog,
 )
 from PyQt6.QtGui import (
 	QSyntaxHighlighter,
 	QTextDocument,
 	QTextCharFormat,
 	QTextFormat,
+	QTextCursor,
 	QColor,
 	QKeySequence,
+	QShortcut,
 	QImage,
 	QPixmap,
 	QPainter,
@@ -37,10 +41,21 @@ from PyQt6.QtGui import (
 	QFont,
 	QTextOption,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QRect, QSize
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QRect, QSize, QPoint
 
 from xe_lang.lexer import lex
-from xe_lang.helper import TT
+from xe_lang.parser import parse
+from xe_lang.helper import TT, Token, Position
+from xe_lang.nodes import (
+	Node,
+	VariableDeclaration,
+	ArrayDeclaration,
+	Parameter,
+	FunctionDefinition,
+	ProcedureDefinition,
+	StructDefinition,
+	ClassDefinition,
+)
 from runtime import run, RuntimeContext
 from ide_themes import THEMES
 from xe_lang.devices import (
@@ -50,6 +65,56 @@ from xe_lang.devices import (
 	FrameSnapshot,
 	OSDevice,
 )
+
+
+def _find_name_token_pos(tokens: list[Token], keyword_pos: Position, name: str) -> Position:
+	"""Given the position of a declaration keyword ('var', 'proc', 'fn', 'class', ...),
+	find the position of the identifier token that names it (which immediately
+	follows the keyword in the token stream)."""
+	for i, tok in enumerate(tokens):
+		if tok.start_pos.idx == keyword_pos.idx:
+			for j in range(i + 1, min(i + 4, len(tokens))):
+				if tokens[j]._type == TT.IDENT and tokens[j].value == name:
+					return tokens[j].start_pos
+			break
+	return keyword_pos
+
+
+def _collect_definitions(node, tokens: list[Token], definitions: dict) -> None:
+	"""Walk the AST collecting the source location of every variable, array,
+	struct, class, and subroutine (proc/fn) definition, keyed by name."""
+	if node is None:
+		return
+
+	if isinstance(node, (list, tuple)):
+		for item in node:
+			_collect_definitions(item, tokens, definitions)
+		return
+
+	if not isinstance(node, Node):
+		return
+
+	if isinstance(node, (VariableDeclaration, ArrayDeclaration)):
+		pos = _find_name_token_pos(tokens, node.start_pos, node.name)
+		definitions.setdefault(node.name, []).append(("variable", pos))
+	elif isinstance(node, Parameter):
+		definitions.setdefault(node.name, []).append(("variable", node.start_pos))
+	elif isinstance(node, (FunctionDefinition, ProcedureDefinition)):
+		pos = _find_name_token_pos(tokens, node.start_pos, node.name)
+		definitions.setdefault(node.name, []).append(("subroutine", pos))
+	elif isinstance(node, StructDefinition):
+		var = node.var
+		name = getattr(var, "value", None)
+		pos = getattr(var, "start_pos", node.start_pos)
+		if name:
+			definitions.setdefault(name, []).append(("struct", pos))
+	elif isinstance(node, ClassDefinition):
+		pos = _find_name_token_pos(tokens, node.start_pos, node.name)
+		definitions.setdefault(node.name, []).append(("class", pos))
+
+	for value in vars(node).values():
+		if isinstance(value, (Node, list, tuple)):
+			_collect_definitions(value, tokens, definitions)
 
 
 PALETTE = list(DEFAULT_PALETTE)
@@ -119,10 +184,16 @@ class LineNumberArea(QWidget):
 
 
 class CodeEditor(QPlainTextEdit):
+	INDENT = "\t"
+
 	def __init__(self, parent=None):
 		super().__init__(parent)
 
 		self.line_number_area = LineNumberArea(self)
+		self.go_to_definition_callback = None
+		self._hover_underline_selection: Optional["QTextEdit.ExtraSelection"] = None
+		self._last_mouse_pos: Optional["QPoint"] = None
+		self.setMouseTracking(True)
 
 		self.blockCountChanged.connect(self.update_line_number_area_width)
 		self.updateRequest.connect(self.update_line_number_area)
@@ -130,6 +201,244 @@ class CodeEditor(QPlainTextEdit):
 
 		self.update_line_number_area_width(0)
 		self.highlight_current_line()
+
+	def _identifier_word_at(self, pos) -> Optional[QTextCursor]:
+		cursor = self.cursorForPosition(pos)
+		text = cursor.block().text()
+		idx = cursor.positionInBlock()
+
+		def is_word_char(ch: str) -> bool:
+			return ch.isalnum() or ch == "_"
+
+		on_word = (idx < len(text) and is_word_char(text[idx])) or (
+			idx > 0 and is_word_char(text[idx - 1])
+		)
+		if not on_word:
+			return None
+
+		word_cursor = QTextCursor(cursor)
+		word_cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+		word = word_cursor.selectedText()
+		if not word or not (word[0].isalpha() or word[0] == "_"):
+			return None
+		return word_cursor
+
+	def _update_hover_underline(self, pos) -> None:
+		selection = None
+		if pos is not None and (
+			QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier
+		):
+			word_cursor = self._identifier_word_at(pos)
+			if word_cursor is not None:
+				selection = QTextEdit.ExtraSelection()
+				fmt = QTextCharFormat()
+				fmt.setFontUnderline(True)
+				fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.SingleUnderline)
+				selection.format = fmt
+				selection.cursor = word_cursor
+
+		self._hover_underline_selection = selection
+		self.highlight_current_line()
+
+	def _update_pointer_cursor(self, ctrl_held: bool) -> None:
+		if ctrl_held and QApplication.mouseButtons() == Qt.MouseButton.NoButton:
+			self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+		else:
+			self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
+
+	def mousePressEvent(self, event: QMouseEvent):
+		if (
+			event.button() == Qt.MouseButton.LeftButton
+			and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+			and self.go_to_definition_callback
+		):
+			cursor = self.cursorForPosition(event.pos())
+			self.go_to_definition_callback(cursor)
+			return
+		super().mousePressEvent(event)
+
+	def mouseMoveEvent(self, event: QMouseEvent):
+		pos = event.pos()
+		self._last_mouse_pos = pos
+		ctrl_held = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+
+		self._update_pointer_cursor(ctrl_held)
+		self._update_hover_underline(pos if ctrl_held else None)
+
+		super().mouseMoveEvent(event)
+
+	def leaveEvent(self, event):
+		self._last_mouse_pos = None
+		self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
+		self._update_hover_underline(None)
+		super().leaveEvent(event)
+
+	def keyPressEvent(self, event: QKeyEvent):
+		if event.key() == Qt.Key.Key_Control:
+			self._update_pointer_cursor(True)
+			self._update_hover_underline(self._last_mouse_pos)
+			super().keyPressEvent(event)
+			return
+		self._handle_other_key_press(event)
+
+	def keyReleaseEvent(self, event: QKeyEvent):
+		if event.key() == Qt.Key.Key_Control:
+			self._update_pointer_cursor(False)
+			self._update_hover_underline(None)
+		super().keyReleaseEvent(event)
+
+	@staticmethod
+	def _leading_whitespace(text: str) -> str:
+		return text[: len(text) - len(text.lstrip(" \t"))]
+
+	def _handle_return(self):
+		cursor = self.textCursor()
+		cursor.removeSelectedText()
+
+		block_text = cursor.block().text()
+		pos_in_block = cursor.positionInBlock()
+		before = block_text[:pos_in_block]
+		after = block_text[pos_in_block:]
+
+		indent = self._leading_whitespace(block_text)
+		opens_block = before.rstrip().endswith("{")
+		closes_next = after.lstrip().startswith("}")
+
+		if opens_block and closes_next:
+			inner_indent = indent + self.INDENT
+			cursor.insertText("\n" + inner_indent + "\n" + indent)
+			cursor.movePosition(QTextCursor.MoveOperation.PreviousBlock)
+			cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+			self.setTextCursor(cursor)
+		elif opens_block:
+			cursor.insertText("\n" + indent + self.INDENT)
+		else:
+			cursor.insertText("\n" + indent)
+
+	def _maybe_dedent_before_brace(self) -> bool:
+		cursor = self.textCursor()
+		if cursor.hasSelection():
+			return False
+
+		block_text = cursor.block().text()
+		pos_in_block = cursor.positionInBlock()
+		before = block_text[:pos_in_block]
+
+		if before == "" or before.strip() != "":
+			return False
+
+		if before.endswith(self.INDENT):
+			new_indent = before[: -len(self.INDENT)]
+		elif before.endswith(" "):
+			strip_count = min(4, len(before) - len(before.rstrip(" ")))
+			if not strip_count:
+				return False
+			new_indent = before[:-strip_count]
+		else:
+			return False
+
+		cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+		cursor.movePosition(
+			QTextCursor.MoveOperation.Right,
+			QTextCursor.MoveMode.KeepAnchor,
+			len(before),
+		)
+		cursor.insertText(new_indent)
+		return True
+
+	def _handle_tab(self, indent: bool):
+		cursor = self.textCursor()
+
+		if not cursor.hasSelection():
+			if indent:
+				cursor.insertText(self.INDENT)
+			else:
+				block_text = cursor.block().text()
+				before = block_text[: cursor.positionInBlock()]
+				if before.endswith(self.INDENT):
+					cursor.movePosition(
+						QTextCursor.MoveOperation.Left,
+						QTextCursor.MoveMode.KeepAnchor,
+						len(self.INDENT),
+					)
+					cursor.removeSelectedText()
+				elif before.endswith(" "):
+					strip_count = min(4, len(before) - len(before.rstrip(" ")))
+					if strip_count:
+						cursor.movePosition(
+							QTextCursor.MoveOperation.Left,
+							QTextCursor.MoveMode.KeepAnchor,
+							strip_count,
+						)
+						cursor.removeSelectedText()
+			return
+
+		doc = self.document()
+		start = cursor.selectionStart()
+		end = cursor.selectionEnd()
+		start_block_num = doc.findBlock(start).blockNumber()
+		end_block_obj = doc.findBlock(end)
+		end_block_num = end_block_obj.blockNumber()
+		if end == end_block_obj.position() and end_block_num > start_block_num:
+			end_block_num -= 1
+
+		cursor.beginEditBlock()
+		for bn in range(start_block_num, end_block_num + 1):
+			block = doc.findBlockByNumber(bn)
+			bc = QTextCursor(block)
+			if indent:
+				bc.insertText(self.INDENT)
+			else:
+				text = block.text()
+				if text.startswith(self.INDENT):
+					bc.movePosition(
+						QTextCursor.MoveOperation.Right,
+						QTextCursor.MoveMode.KeepAnchor,
+						1,
+					)
+					bc.removeSelectedText()
+				elif text.startswith(" "):
+					n = min(4, len(text) - len(text.lstrip(" ")))
+					if n:
+						bc.movePosition(
+							QTextCursor.MoveOperation.Right,
+							QTextCursor.MoveMode.KeepAnchor,
+							n,
+						)
+						bc.removeSelectedText()
+		cursor.endEditBlock()
+
+		new_start_block = doc.findBlockByNumber(start_block_num)
+		new_end_block = doc.findBlockByNumber(end_block_num)
+		sel_cursor = QTextCursor(doc)
+		sel_cursor.setPosition(new_start_block.position())
+		sel_cursor.setPosition(
+			new_end_block.position() + len(new_end_block.text()),
+			QTextCursor.MoveMode.KeepAnchor,
+		)
+		self.setTextCursor(sel_cursor)
+
+	def _handle_other_key_press(self, event: QKeyEvent):
+		key = event.key()
+
+		if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+			self._handle_return()
+			return
+
+		if key == Qt.Key.Key_Tab:
+			self._handle_tab(indent=True)
+			return
+
+		if key == Qt.Key.Key_Backtab:
+			self._handle_tab(indent=False)
+			return
+
+		if event.text() == "}":
+			self._maybe_dedent_before_brace()
+			super().keyPressEvent(event)
+			return
+
+		super().keyPressEvent(event)
 
 	def line_number_area_width(self):
 		digits = len(str(max(1, self.blockCount())))
@@ -187,6 +496,9 @@ class CodeEditor(QPlainTextEdit):
 			selection.cursor.clearSelection()
 
 			selections.append(selection)
+
+		if self._hover_underline_selection is not None:
+			selections.append(self._hover_underline_selection)
 
 		self.setExtraSelections(selections)
 
@@ -623,6 +935,122 @@ class VMWorkerThread(QThread):
 			)
 
 
+class FindReplaceBar(QWidget):
+	def __init__(self, editor: QPlainTextEdit, parent=None):
+		super().__init__(parent)
+		self.editor = editor
+
+		layout = QHBoxLayout(self)
+		layout.setContentsMargins(4, 4, 4, 4)
+
+		self.find_input = QLineEdit()
+		self.find_input.setPlaceholderText("Find")
+		self.replace_input = QLineEdit()
+		self.replace_input.setPlaceholderText("Replace with")
+		self.case_checkbox = QCheckBox("Match case")
+
+		self.find_prev_btn = QPushButton("Prev")
+		self.find_next_btn = QPushButton("Next")
+		self.replace_btn = QPushButton("Replace")
+		self.replace_all_btn = QPushButton("Replace All")
+		self.close_btn = QPushButton("✕")
+		self.close_btn.setFixedWidth(28)
+
+		layout.addWidget(QLabel("Find:"))
+		layout.addWidget(self.find_input)
+		layout.addWidget(self.find_prev_btn)
+		layout.addWidget(self.find_next_btn)
+		layout.addWidget(self.case_checkbox)
+		layout.addWidget(self.replace_input)
+		layout.addWidget(self.replace_btn)
+		layout.addWidget(self.replace_all_btn)
+		layout.addStretch()
+		layout.addWidget(self.close_btn)
+
+		self.find_next_btn.clicked.connect(lambda: self.find(backward=False))
+		self.find_prev_btn.clicked.connect(lambda: self.find(backward=True))
+		self.replace_btn.clicked.connect(self.replace_one)
+		self.replace_all_btn.clicked.connect(self.replace_all)
+		self.close_btn.clicked.connect(self.hide_and_focus_editor)
+		self.find_input.returnPressed.connect(lambda: self.find(backward=False))
+		self.replace_input.returnPressed.connect(self.replace_one)
+
+		close_shortcut = QShortcut(QKeySequence("Escape"), self)
+		close_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+		close_shortcut.activated.connect(self.hide_and_focus_editor)
+
+	def set_replace_mode(self, enabled: bool):
+		self.replace_input.setVisible(enabled)
+		self.replace_btn.setVisible(enabled)
+		self.replace_all_btn.setVisible(enabled)
+
+	def hide_and_focus_editor(self):
+		self.hide()
+		self.editor.setFocus()
+
+	def _flags(self, backward: bool = False) -> QTextDocument.FindFlag:
+		flags = QTextDocument.FindFlag(0)
+		if backward:
+			flags |= QTextDocument.FindFlag.FindBackward
+		if self.case_checkbox.isChecked():
+			flags |= QTextDocument.FindFlag.FindCaseSensitively
+		return flags
+
+	def find(self, backward: bool = False) -> bool:
+		text = self.find_input.text()
+		if not text:
+			return False
+
+		found = self.editor.find(text, self._flags(backward))
+		if not found:
+			# wrap around to the other end of the document and try again
+			cursor = self.editor.textCursor()
+			cursor.movePosition(
+				QTextCursor.MoveOperation.End
+				if backward
+				else QTextCursor.MoveOperation.Start
+			)
+			self.editor.setTextCursor(cursor)
+			found = self.editor.find(text, self._flags(backward))
+		return found
+
+	def replace_one(self):
+		text = self.find_input.text()
+		if not text:
+			return
+
+		cursor = self.editor.textCursor()
+		selected = cursor.selectedText()
+		matches = (
+			selected == text
+			if self.case_checkbox.isChecked()
+			else selected.lower() == text.lower()
+		)
+		if cursor.hasSelection() and matches:
+			cursor.insertText(self.replace_input.text())
+
+		self.find(backward=False)
+
+	def replace_all(self) -> int:
+		text = self.find_input.text()
+		if not text:
+			return 0
+
+		replacement = self.replace_input.text()
+		cursor = self.editor.textCursor()
+		cursor.movePosition(QTextCursor.MoveOperation.Start)
+		self.editor.setTextCursor(cursor)
+
+		count = 0
+		group_cursor = self.editor.textCursor()
+		group_cursor.beginEditBlock()
+		while self.editor.find(text, self._flags(backward=False)):
+			self.editor.textCursor().insertText(replacement)
+			count += 1
+		group_cursor.endEditBlock()
+		return count
+
+
 class X26IDE(QMainWindow):
 	def __init__(self):
 		super().__init__()
@@ -695,6 +1123,12 @@ class X26IDE(QMainWindow):
 		self.editor.setCursorWidth(8)
 
 		editor_layout.addWidget(self.editor)
+		self.editor.go_to_definition_callback = self.go_to_definition
+
+		self.find_replace_bar = FindReplaceBar(self.editor)
+		self.find_replace_bar.hide()
+		editor_layout.addWidget(self.find_replace_bar)
+
 		self.highlighter = XPP26SyntaxHighlighter(
 			self.editor.document(), THEMES[self.current_theme]
 		)
@@ -768,6 +1202,17 @@ class X26IDE(QMainWindow):
 		run_action.setShortcut("Ctrl+Return")
 		run_action.triggered.connect(self.run_code)
 
+		edit_menu = menubar.addMenu("Edit")
+		for name, shortcut, slot in [
+			("Find", "Ctrl+F", lambda: self.show_find_bar(replace=False)),
+			("Replace", "Ctrl+H", lambda: self.show_find_bar(replace=True)),
+			("Rename Symbol", "F2", self.rename_symbol),
+			("Toggle Comment", "Ctrl+/", self.toggle_comment),
+		]:
+			act = edit_menu.addAction(name)
+			act.setShortcut(shortcut)
+			act.triggered.connect(slot)
+
 	def apply_theme(self):
 		theme = THEMES[self.current_theme]
 		self.editor.line_number_bg = QColor(theme["toolbar_bg"])
@@ -797,6 +1242,140 @@ class X26IDE(QMainWindow):
 		if name in THEMES:
 			self.current_theme = name
 			self.apply_theme()
+
+	def show_find_bar(self, replace: bool):
+		self.find_replace_bar.set_replace_mode(replace)
+		self.find_replace_bar.show()
+		self.find_replace_bar.find_input.setFocus()
+		self.find_replace_bar.find_input.selectAll()
+
+	def toggle_comment(self):
+		cursor = self.editor.textCursor()
+		doc = self.editor.document()
+
+		if cursor.hasSelection():
+			start_block_num = doc.findBlock(cursor.selectionStart()).blockNumber()
+			end_pos = cursor.selectionEnd()
+			end_block_obj = doc.findBlock(end_pos)
+			end_block_num = end_block_obj.blockNumber()
+			if end_pos == end_block_obj.position() and end_block_num > start_block_num:
+				end_block_num -= 1
+		else:
+			start_block_num = end_block_num = doc.findBlock(
+				cursor.position()
+			).blockNumber()
+
+		blocks = [
+			doc.findBlockByNumber(bn) for bn in range(start_block_num, end_block_num + 1)
+		]
+		non_empty = [b for b in blocks if b.text().strip() != ""]
+		already_commented = bool(non_empty) and all(
+			b.text().lstrip().startswith("#") for b in non_empty
+		)
+
+		edit_cursor = self.editor.textCursor()
+		edit_cursor.beginEditBlock()
+		for block in blocks:
+			text = block.text()
+			if already_commented:
+				stripped = text.lstrip()
+				ws_len = len(text) - len(stripped)
+				if stripped.startswith("# "):
+					remove_len = 2
+				elif stripped.startswith("#"):
+					remove_len = 1
+				else:
+					continue
+				bc = QTextCursor(block)
+				bc.setPosition(block.position() + ws_len)
+				bc.movePosition(
+					QTextCursor.MoveOperation.Right,
+					QTextCursor.MoveMode.KeepAnchor,
+					remove_len,
+				)
+				bc.removeSelectedText()
+			else:
+				if text.strip() == "":
+					continue
+				ws_len = len(text) - len(text.lstrip(" \t"))
+				bc = QTextCursor(block)
+				bc.setPosition(block.position() + ws_len)
+				bc.insertText("# ")
+		edit_cursor.endEditBlock()
+
+	def rename_symbol(self):
+		cursor = self.editor.textCursor()
+		cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+		old_name = cursor.selectedText()
+
+		if not old_name or not (old_name[0].isalpha() or old_name[0] == "_"):
+			return
+
+		new_name, ok = QInputDialog.getText(
+			self, "Rename Symbol", f"Rename '{old_name}' to:", text=old_name
+		)
+		if not ok or not new_name or new_name == old_name:
+			return
+
+		doc = self.editor.document()
+		flags = (
+			QTextDocument.FindFlag.FindCaseSensitively
+			| QTextDocument.FindFlag.FindWholeWords
+		)
+
+		group_cursor = self.editor.textCursor()
+		group_cursor.beginEditBlock()
+		found = doc.find(old_name, 0, flags)
+		while not found.isNull():
+			found.insertText(new_name)
+			found = doc.find(old_name, found.position(), flags)
+		group_cursor.endEditBlock()
+
+	def go_to_definition(self, cursor: QTextCursor):
+		word_cursor = QTextCursor(cursor)
+		word_cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+		name = word_cursor.selectedText()
+
+		if not name or not (name[0].isalpha() or name[0] == "_"):
+			return
+
+		code = self.editor.toPlainText()
+		tokens, lex_error = lex("<editor>", code)
+		if not tokens:
+			return
+
+		ast_result = parse(tokens)
+		program = ast_result.value
+		if program is None:
+			return
+
+		definitions: dict = {}
+		_collect_definitions(program, tokens, definitions)
+
+		matches = definitions.get(name)
+		if not matches:
+			return
+
+		click_idx = cursor.position()
+		before = [(kind, pos) for kind, pos in matches if pos.idx <= click_idx]
+		if before:
+			_, target_pos = max(before, key=lambda kp: kp[1].idx)
+		else:
+			_, target_pos = min(matches, key=lambda kp: kp[1].idx)
+
+		self._move_cursor_to(target_pos)
+
+	def _move_cursor_to(self, pos: Position):
+		doc = self.editor.document()
+		block = doc.findBlockByNumber(pos.ln)
+		if not block.isValid():
+			return
+
+		target_cursor = QTextCursor(block)
+		target_cursor.setPosition(block.position() + min(pos.col, len(block.text())))
+		self.editor.setTextCursor(target_cursor)
+		self.editor.centerCursor()
+		self.editor.setFocus()
 
 	def new_file(self):
 		self.editor.clear()
