@@ -7,6 +7,7 @@ VALID_IDEN = LETTERS + DIGITS + "_"
 
 KEYWORDS = [
 	"var",
+	"const",
 	"array",
 	"out",
 	"in",

@@ -488,6 +488,9 @@ def emit_BinaryOperation(node: BinaryOperation) -> Result:
 def emit_VariableDeclaration(node: VariableDeclaration) -> Result:
 	return Result().success([])
 
+def emit_ConstantDeclaration(node: VariableDeclaration) -> Result:
+	return Result().success([])
+
 
 def emit_VariableAssign(node: VariableAssign) -> Result:
 	res = Result()

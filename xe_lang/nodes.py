@@ -235,6 +235,23 @@ class PointerAssign(Node):
 		return f"PTR_ASSIGN ({self.target}, {self.operator}, {self.value})"
 
 
+class ConstantDeclaration(Node):
+	def __init__(
+		self,
+		start_pos: Position,
+		end_pos: Position,
+		name: str,
+		value: Node,
+	):
+		super().__init__(start_pos, end_pos)
+		self.name: str = name
+		self.value: Node = value
+
+	def __repr__(self):
+		return f"CONST ({self.name}: {self.value})"
+
+
+
 class ForLoop(Node):
 	def __init__(
 		self,

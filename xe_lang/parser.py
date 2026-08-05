@@ -178,6 +178,8 @@ def parse(tokens: list[Token]) -> Result:
 			match current_tok.value:
 				case "var":
 					return var_declaration()
+				case "const":
+					return const_declaration()
 				case "array":
 					return array_declaration()
 				case "for":
@@ -271,6 +273,70 @@ def parse(tokens: list[Token]) -> Result:
 				pointer_layers,
 				is_variable,
 				library_name,
+			)
+		)
+
+	def const_declaration() -> Result:
+		start_pos: Position = current_tok.start_pos.copy()
+		res: Result = Result()
+		
+		advance()  # consume 'const'
+
+		if current_tok._type != TT.IDENT:
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected constant name after 'const' keyword, but found '{current_tok.value or current_tok._type.name}'.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+		const_name: str = current_tok.value
+		advance()
+
+		if current_tok._type != TT.ASGN:
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected '=' after constant name, but found '{current_tok.value or current_tok._type.name}'.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+		advance()
+
+		value: Node = res.register(literal())
+		if not isinstance(
+			value,
+			(
+				IntLiteral,
+				FloatLiteral,
+				StringLiteral,
+				BoolLiteral,
+				CharLiteral
+			),
+		):
+			return res.fail(
+				InvalidSyntaxError(
+					"Constant value must be a constant literal.",
+					value.start_pos,
+					value.end_pos,
+				)
+			)
+		end_pos = value.end_pos.copy()
+
+		if current_tok._type not in (TT.EOF, TT.NEWLINE, TT.SEMICOL, TT.RBR):
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected end of line (newline or ';') after variable declaration block, but found unexpected trailing token '{current_tok.value or current_tok._type.name}'.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+		return res.success(
+			ConstantDeclaration(
+				start_pos,
+				end_pos,
+				const_name,
+				value,
 			)
 		)
 

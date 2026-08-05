@@ -98,7 +98,7 @@ def run(
 		if __name__ == "__main__":
 			print(ast.value)
 
-		seman_res = context.semantic.analyze(ast.value)
+		seman_res = context.semantic.visit(ast.value)
 		if seman_res.error:
 			return None, seman_res.error, None
 		
