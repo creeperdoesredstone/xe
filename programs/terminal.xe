@@ -1,0 +1,895 @@
+# Xenon Terminal: a deterministic, sandboxed command workspace.
+
+var terminal_window: graphics::Window
+var terminal_command: string
+var tab_1_command: string
+var tab_2_command: string
+var tab_3_command: string
+var tab_1_output: string
+var tab_2_output: string
+var tab_3_output: string
+var history_1: string
+var history_2: string
+var history_3: string
+var saved_1: string
+var saved_2: string
+var saved_3: string
+var terminal_echo: string
+array tab_theme: int[3]
+array tab_split: int[3]
+array tab_monitor: int[3]
+var active_tab: int
+var tab_count: int
+var saved_list_open: bool
+var history_position: int
+var plus_x: int
+var tab_animation_progress: int
+var tab_reveal_index: int
+var tab_closing: bool
+var tab_close_index: int
+var sparkle_frames: int
+var sparkle_x: int
+var options_open: bool
+var options_progress: int
+var options_page: int
+var options_flash: int
+
+proc clear_terminal_text(text: string) {
+	if (xestring::strlen(text) > 0) {
+		text[0] = '\0'
+		call xestring::update_length(text)
+	}
+}
+
+proc set_terminal_text(target: string, source: string) {
+	call clear_terminal_text(target)
+	call xestring::append(target, source)
+}
+
+fn terminal_starts_with(text: string, prefix: string) bool {
+	var index: int
+	if (xestring::strlen(text) < xestring::strlen(prefix)) { return false }
+	index = 0
+	while (index < xestring::strlen(prefix)) {
+		if ((int)(text[index]) != (int)(prefix[index])) { return false }
+		index += 1
+	}
+	return true
+}
+
+proc save_active_command() {
+	if (active_tab == 0) {
+		call set_terminal_text(tab_1_command, terminal_command)
+	}
+	elseif (active_tab == 1) {
+		call set_terminal_text(tab_2_command, terminal_command)
+	}
+	else {
+		call set_terminal_text(tab_3_command, terminal_command)
+	}
+}
+
+proc load_active_command() {
+	if (active_tab == 0) {
+		call set_terminal_text(terminal_command, tab_1_command)
+	}
+	elseif (active_tab == 1) {
+		call set_terminal_text(terminal_command, tab_2_command)
+	}
+	else {
+		call set_terminal_text(terminal_command, tab_3_command)
+	}
+}
+
+proc set_active_output(text: string) {
+	if (active_tab == 0) {
+		call set_terminal_text(tab_1_output, text)
+	}
+	elseif (active_tab == 1) {
+		call set_terminal_text(tab_2_output, text)
+	}
+	else {
+		call set_terminal_text(tab_3_output, text)
+	}
+}
+
+proc switch_terminal_tab(next_tab: int) {
+	if (next_tab >= 0 && next_tab < tab_count && next_tab != active_tab) {
+		call save_active_command()
+		active_tab = next_tab
+		call load_active_command()
+		history_position = 0
+		saved_list_open = false
+		options_open = false
+	}
+}
+
+fn active_terminal_theme() int {
+	return tab_theme[active_tab]
+}
+
+fn active_terminal_split() bool {
+	return tab_split[active_tab] != 0
+}
+
+fn active_terminal_monitor() bool {
+	return tab_monitor[active_tab] != 0
+}
+
+proc initialize_terminal_tab(index: int) {
+	if (index == 0) {
+		call clear_terminal_text(tab_1_command)
+		call set_terminal_text(tab_1_output, "New terminal tab")
+	}
+	elseif (index == 1) {
+		call clear_terminal_text(tab_2_command)
+		call set_terminal_text(tab_2_output, "New terminal tab")
+	}
+	else {
+		call clear_terminal_text(tab_3_command)
+		call set_terminal_text(tab_3_output, "New terminal tab")
+	}
+	tab_theme[index] = 0
+	tab_split[index] = 0
+	tab_monitor[index] = 0
+}
+
+proc remove_terminal_tab(index: int) {
+	var shift_index: int
+	if (tab_count > 1 && index >= 0 && index < tab_count) {
+	call save_active_command()
+	if (index == 0) {
+		call set_terminal_text(tab_1_command, tab_2_command)
+		call set_terminal_text(tab_1_output, tab_2_output)
+		if (tab_count == 3) {
+			call set_terminal_text(tab_2_command, tab_3_command)
+			call set_terminal_text(tab_2_output, tab_3_output)
+		}
+	}
+	elseif (index == 1 && tab_count == 3) {
+		call set_terminal_text(tab_2_command, tab_3_command)
+		call set_terminal_text(tab_2_output, tab_3_output)
+	}
+	if (tab_count == 3) {
+		call clear_terminal_text(tab_3_command)
+		call set_terminal_text(tab_3_output, "Third terminal tab")
+	}
+	else {
+		call clear_terminal_text(tab_2_command)
+		call set_terminal_text(tab_2_output, "Second terminal tab")
+	}
+	shift_index = index
+	while (shift_index < tab_count - 1) {
+		tab_theme[shift_index] = tab_theme[shift_index + 1]
+		tab_split[shift_index] = tab_split[shift_index + 1]
+		tab_monitor[shift_index] = tab_monitor[shift_index + 1]
+		shift_index += 1
+	}
+	if (active_tab > index) { active_tab -= 1 }
+	elseif (active_tab == index && active_tab == tab_count - 1) { active_tab -= 1 }
+	tab_count -= 1
+	if (active_tab < 0) { active_tab = 0 }
+	call load_active_command()
+	saved_list_open = false
+	options_open = false
+	}
+}
+
+proc start_terminal_close(index: int) {
+	if (tab_count > 1 && tab_animation_progress == 100 && !tab_closing) {
+		call save_active_command()
+		tab_closing = true
+		tab_close_index = index
+		tab_reveal_index = index
+		tab_animation_progress = 0
+		options_open = false
+		saved_list_open = false
+	}
+}
+
+proc push_terminal_history(text: string) {
+	if (xestring::strlen(text) > 0) {
+		call set_terminal_text(history_3, history_2)
+		call set_terminal_text(history_2, history_1)
+		call set_terminal_text(history_1, text)
+	}
+}
+
+proc save_terminal_command(text: string) {
+	if (xestring::strlen(text) > 0) {
+		call set_terminal_text(saved_3, saved_2)
+		call set_terminal_text(saved_2, saved_1)
+		call set_terminal_text(saved_1, text)
+	}
+}
+
+proc execute_terminal_command() {
+	var echo_index: int
+	if (xestring::strlen(terminal_command) == 0) {
+		call set_active_output("Ready")
+	}
+	elseif (terminal_command == "help") {
+		call set_active_output("help clear time history saved save about echo exit\ntheme xenon|violet|mono\nsplit on|off\nmonitor on|off")
+	}
+	elseif (terminal_command == "clear") {
+		call set_active_output("")
+	}
+	elseif (terminal_command == "time") {
+		tab_monitor[active_tab] = 1
+		call set_active_output("Uptime monitor enabled")
+	}
+	elseif (terminal_command == "theme xenon") {
+		tab_theme[active_tab] = 0
+		call set_active_output("Theme set to Xenon")
+	}
+	elseif (terminal_command == "theme violet") {
+		tab_theme[active_tab] = 1
+		call set_active_output("Theme set to Violet")
+	}
+	elseif (terminal_command == "theme mono") {
+		tab_theme[active_tab] = 2
+		call set_active_output("Theme set to Mono")
+	}
+	elseif (terminal_command == "split on") {
+		tab_split[active_tab] = 1
+		call set_active_output("Split view enabled")
+	}
+	elseif (terminal_command == "split off") {
+		tab_split[active_tab] = 0
+		call set_active_output("Split view disabled")
+	}
+	elseif (terminal_command == "monitor on") {
+		tab_monitor[active_tab] = 1
+		call set_active_output("Resource monitor enabled")
+	}
+	elseif (terminal_command == "monitor off") {
+		tab_monitor[active_tab] = 0
+		call set_active_output("Resource monitor disabled")
+	}
+	elseif (terminal_command == "theme" || terminal_command == "split" || terminal_command == "monitor") {
+		options_open = true
+		options_page = 0
+		options_flash = 5
+		call set_active_output("Choose the tab option from the Options menu")
+	}
+	elseif (terminal_command == "history") {
+		call set_active_output("Up/Down recalls: 1 newest, then 2 and 3")
+	}
+	elseif (terminal_command == "saved") {
+		saved_list_open = !saved_list_open
+		call set_active_output("Saved command list toggled")
+	}
+	elseif (terminal_command == "save") {
+		call save_terminal_command(history_1)
+		call set_active_output("Previous command saved")
+	}
+	elseif (terminal_command == "about") {
+		call set_active_output("Xenon Terminal - deterministic Xe shell")
+	}
+	elseif (terminal_command == "exit") {
+		terminal_window.close()
+	}
+	elseif (terminal_starts_with(terminal_command, "echo ")) {
+		call clear_terminal_text(terminal_echo)
+		echo_index = 5
+		while (echo_index < xestring::strlen(terminal_command)) {
+			call xestring::append_char(terminal_echo, terminal_command[echo_index])
+			echo_index += 1
+		}
+		call set_active_output(terminal_echo)
+	}
+	else {
+		call set_active_output("Unknown command. Type help for the command list.")
+	}
+	call push_terminal_history(terminal_command)
+	call clear_terminal_text(terminal_command)
+	call save_active_command()
+	history_position = 0
+}
+
+proc autocomplete_terminal_command() {
+	if (terminal_starts_with(terminal_command, "he")) {
+		call set_terminal_text(terminal_command, "help")
+	}
+	elseif (terminal_starts_with(terminal_command, "cl")) {
+		call set_terminal_text(terminal_command, "clear")
+	}
+	elseif (terminal_starts_with(terminal_command, "ti")) {
+		call set_terminal_text(terminal_command, "time")
+	}
+	elseif (terminal_starts_with(terminal_command, "th")) {
+		call set_terminal_text(terminal_command, "theme")
+	}
+	elseif (terminal_starts_with(terminal_command, "sp")) {
+		call set_terminal_text(terminal_command, "split")
+	}
+	elseif (terminal_starts_with(terminal_command, "mo")) {
+		call set_terminal_text(terminal_command, "monitor")
+	}
+	elseif (terminal_starts_with(terminal_command, "hi")) {
+		call set_terminal_text(terminal_command, "history")
+	}
+	elseif (terminal_starts_with(terminal_command, "sa")) {
+		call set_terminal_text(terminal_command, "saved")
+	}
+	elseif (terminal_starts_with(terminal_command, "ab")) {
+		call set_terminal_text(terminal_command, "about")
+	}
+	elseif (terminal_starts_with(terminal_command, "ex")) {
+		call set_terminal_text(terminal_command, "exit")
+	}
+}
+
+proc recall_terminal_history(direction: int) {
+	if (direction < 0 && history_position < 3) { history_position += 1 }
+	elseif (direction > 0 && history_position > 0) { history_position -= 1 }
+	if (history_position == 0) {
+		call clear_terminal_text(terminal_command)
+	}
+	elseif (history_position == 1) {
+		call set_terminal_text(terminal_command, history_1)
+	}
+	elseif (history_position == 2) {
+		call set_terminal_text(terminal_command, history_2)
+	}
+	else {
+		call set_terminal_text(terminal_command, history_3)
+	}
+}
+
+proc erase_terminal_character() {
+	var length: int
+	length = xestring::strlen(terminal_command)
+	if (length > 0) {
+		terminal_command[length - 1] = '\0'
+		call xestring::update_length(terminal_command)
+	}
+}
+
+proc draw_terminal_line(x: int, y: int, width: int, text: string, color: int) {
+	var length: int
+	var visible: int
+	var start: int
+	var index: int
+	length = xestring::strlen(text)
+	visible = (width - 8) / 6
+	start = 0
+	if (length > visible) { start = length - visible }
+	index = start
+	while (index < length) {
+		call graphics::draw_char(terminal_window, x + 4 + (index - start) * 6, y, text[index], color)
+		index += 1
+	}
+}
+
+proc draw_terminal_line_small(x: int, y: int, width: int, text: string, color: int) {
+	var length: int
+	var visible: int
+	var start: int
+	var index: int
+	length = xestring::strlen(text)
+	visible = (width - 4) / 4
+	start = 0
+	if (length > visible) { start = length - visible }
+	index = start
+	while (index < length) {
+		call graphics::draw_char_small(terminal_window, x + 2 + (index - start) * 4, y, text[index], color)
+		index += 1
+	}
+}
+
+proc draw_terminal_wrapped(x: int, y: int, width: int, height: int, text: string, color: int) {
+	var columns: int
+	var rows: int
+	var capacity: int
+	var length: int
+	var start: int
+	var index: int
+	var column: int
+	var row: int
+	columns = (width - 4) / 4
+	rows = (height - 4) / 6
+	if (columns < 1) { columns = 1 }
+	if (rows < 1) { rows = 1 }
+	capacity = columns * rows
+	length = xestring::strlen(text)
+	start = 0
+	if (length > capacity) { start = length - capacity }
+	index = start
+	column = 0
+	row = 0
+	while (index < length && row < rows) {
+		if ((int)(text[index]) == 10) {
+			column = 0
+			row += 1
+		}
+		else {
+			call graphics::draw_char_small(terminal_window, x + 2 + column * 4, y + row * 6, text[index], color)
+			column += 1
+			if (column >= columns) { column = 0; row += 1 }
+		}
+		index += 1
+	}
+}
+
+fn terminal_ease_out(progress: int) int {
+	var remaining: int
+	remaining = 100 - progress
+	return 100 - remaining * remaining / 100
+}
+
+proc draw_revealing_tab(x: int, target_width: int, label: string, progress: int, color: int) {
+	var width: int
+	var pixel_x: int
+	var pixel_y: int
+	var reveal_x: int
+	width = 6 + (target_width - 6) * progress / 100
+	reveal_x = x + (100 - progress) * 2 / 100
+	call graphics::fill_rect(terminal_window, reveal_x, 2, width, 7, graphics::COLOR_0)
+	pixel_y = 3
+	while (pixel_y < 8) {
+		pixel_x = reveal_x + 1
+		while (pixel_x < reveal_x + width - 1) {
+			if (((pixel_x + pixel_y) % 4) * 25 < progress) {
+				call graphics::set_pixel(terminal_window, pixel_x, pixel_y, color)
+			}
+			pixel_x += 1
+		}
+		pixel_y += 1
+	}
+	call graphics::draw_rect(terminal_window, reveal_x, 2, width, 7, graphics::COLOR_8)
+	if (progress >= 60 && width >= 14) {
+		call graphics::draw_text_small(terminal_window, reveal_x + 2, 3, label, graphics::WHITE)
+	}
+}
+
+fn terminal_pointer_inside(x: int, y: int, width: int, height: int) bool {
+	var pointer_x: int
+	var pointer_y: int
+	pointer_x = graphics::pointer_x(terminal_window)
+	pointer_y = graphics::pointer_y(terminal_window)
+	return pointer_x >= x && pointer_x < x + width && pointer_y >= y && pointer_y < y + height
+}
+
+proc draw_terminal_tab(index: int, x: int, width: int, label: string, accent_color: int) {
+	var tab_color: int
+	var close_x: int
+	var close_color: int
+	var close_clicked: bool
+	var close_hovered: bool
+	var tab_hovered: bool
+	tab_color = graphics::COLOR_5
+	if (active_tab == index) { tab_color = accent_color }
+	close_x = x + width - 6
+	tab_hovered = tab_count > 1 && terminal_pointer_inside(x, 2, width, 7)
+	close_hovered = tab_count > 1 && terminal_pointer_inside(close_x, 3, 5, 5)
+	if (close_hovered) {
+		call graphics::fill_rect(terminal_window, x, 2, width, 7, tab_color)
+		call graphics::draw_rect(terminal_window, x, 2, width, 7, graphics::COLOR_8)
+		call graphics::draw_text_small(terminal_window, x + 2, 3, label, graphics::WHITE)
+		close_clicked = graphics::button_flat(terminal_window, close_x, 3, 5, 5, "", tab_color)
+		if (close_clicked) {
+			call start_terminal_close(index)
+		}
+	}
+	else {
+		if (graphics::button_tone(terminal_window, x, 2, width, 7, label, tab_color)) {
+			call switch_terminal_tab(index)
+		}
+	}
+	if (tab_hovered) {
+		close_color = graphics::COLOR_8
+		if (close_hovered) { close_color = graphics::COLOR_7 }
+		call graphics::set_pixel(terminal_window, close_x + 1, 4, close_color)
+		call graphics::set_pixel(terminal_window, close_x + 3, 4, close_color)
+		call graphics::set_pixel(terminal_window, close_x + 2, 5, close_color)
+		call graphics::set_pixel(terminal_window, close_x + 1, 6, close_color)
+		call graphics::set_pixel(terminal_window, close_x + 3, 6, close_color)
+	}
+}
+
+proc draw_terminal_sparkle(x: int, frames: int) {
+	var color: int
+	var distance: int
+	color = graphics::COLOR_8
+	if (frames >= 2) { color = graphics::COLOR_7 }
+	if (frames >= 3) { color = graphics::WHITE }
+	distance = 4 - frames
+	call graphics::set_pixel(terminal_window, x, 5 - distance / 2, color)
+	call graphics::set_pixel(terminal_window, x - distance, 5, color)
+	call graphics::set_pixel(terminal_window, x + distance, 4, color)
+	if (frames % 2 == 0) {
+		call graphics::set_pixel(terminal_window, x - distance / 2, 3, color)
+		call graphics::set_pixel(terminal_window, x + distance / 2, 7, color)
+	}
+}
+
+fn terminal_option_color(selected: bool, surface: int) int {
+	if (!selected) { return surface }
+	if (os::theme_mode == os::THEME_LIGHT) { return graphics::COLOR_8 }
+	return graphics::COLOR_1
+}
+
+proc draw_terminal_options(x: int, y: int, target_width: int, target_height: int) {
+	var eased: int
+	var width: int
+	var height: int
+	var surface: int
+	var option_color: int
+	var blocker_clicked: bool
+	if (options_open && options_progress < 100) {
+		options_progress += 12
+		if (options_progress > 100) { options_progress = 100 }
+	}
+	elseif (!options_open && options_progress > 0) {
+		options_progress -= 12
+		if (options_progress < 0) { options_progress = 0 }
+	}
+	eased = terminal_ease_out(options_progress)
+	width = 14 + (target_width - 14) * eased / 100
+	height = 7 + (target_height - 7) * eased / 100
+	surface = graphics::COLOR_8
+	if (os::theme_mode == os::THEME_LIGHT) { surface = graphics::COLOR_1 }
+	if (options_progress > 0) {
+		blocker_clicked = graphics::button_flat(terminal_window, x, y, width, height, "", surface)
+		if (options_page == 0) {
+			if (height >= 13) {
+				option_color = terminal_option_color(active_terminal_theme() == 0, surface)
+				if (graphics::button_flat(terminal_window, x + 2, y + 8, width - 4, 5, "Xenon", option_color)) { tab_theme[active_tab] = 0; options_open = false; options_flash = 5 }
+			}
+			if (height >= 19) {
+				option_color = terminal_option_color(active_terminal_theme() == 1, surface)
+				if (graphics::button_flat(terminal_window, x + 2, y + 14, width - 4, 5, "Violet", option_color)) { tab_theme[active_tab] = 1; options_open = false; options_flash = 5 }
+			}
+			if (height >= 25) {
+				option_color = terminal_option_color(active_terminal_theme() == 2, surface)
+				if (graphics::button_flat(terminal_window, x + 2, y + 20, width - 4, 5, "Mono", option_color)) { tab_theme[active_tab] = 2; options_open = false; options_flash = 5 }
+			}
+			if (height >= 31) {
+				if (graphics::button_flat(terminal_window, x + 2, y + 26, width - 4, 5, "More v", surface)) { options_page = 1; options_flash = 4 }
+			}
+		}
+		else {
+			if (height >= 13) {
+				option_color = terminal_option_color(!active_terminal_split(), surface)
+				if (graphics::button_flat(terminal_window, x + 2, y + 8, width - 4, 5, "Single view", option_color)) { tab_split[active_tab] = 0; options_open = false; options_flash = 5 }
+			}
+			if (height >= 19) {
+				option_color = terminal_option_color(active_terminal_split(), surface)
+				if (graphics::button_flat(terminal_window, x + 2, y + 14, width - 4, 5, "Split view", option_color)) { tab_split[active_tab] = 1; options_open = false; options_flash = 5 }
+			}
+			if (height >= 25) {
+				option_color = terminal_option_color(!active_terminal_monitor(), surface)
+				if (graphics::button_flat(terminal_window, x + 2, y + 20, width - 4, 5, "Monitor off", option_color)) { tab_monitor[active_tab] = 0; options_open = false; options_flash = 5 }
+			}
+			if (height >= 31) {
+				option_color = terminal_option_color(active_terminal_monitor(), surface)
+				if (graphics::button_flat(terminal_window, x + 2, y + 26, width - 4, 5, "Monitor on", option_color)) { tab_monitor[active_tab] = 1; options_open = false; options_flash = 5 }
+			}
+			if (height >= 37) {
+				if (graphics::button_flat(terminal_window, x + 2, y + 32, width - 4, 5, "Themes ^", surface)) { options_page = 0; options_flash = 4 }
+			}
+		}
+	}
+	if (graphics::button_flat(terminal_window, x, y, 14, 7, "...", surface)) {
+		options_open = !options_open
+		options_page = 0
+		options_flash = 5
+		saved_list_open = false
+	}
+	if (options_flash > 0) {
+		if (options_flash >= 4) {
+			call graphics::draw_line(terminal_window, x, y - 1, x + 13, y - 1, graphics::WHITE)
+		}
+		options_flash -= 1
+	}
+}
+
+proc draw_active_terminal_output(x: int, y: int, width: int, height: int, color: int) {
+	if (active_tab == 0) {
+		call draw_terminal_wrapped(x, y, width, height, tab_1_output, color)
+	}
+	elseif (active_tab == 1) {
+		call draw_terminal_wrapped(x, y, width, height, tab_2_output, color)
+	}
+	else {
+		call draw_terminal_wrapped(x, y, width, height, tab_3_output, color)
+	}
+}
+
+proc draw_secondary_terminal_output(x: int, y: int, width: int, height: int, color: int) {
+	if (tab_count < 2) {
+		call graphics::draw_text_small(terminal_window, x, y, "Open another tab", graphics::COLOR_7)
+	}
+	elseif (active_tab == 0) {
+		call draw_terminal_wrapped(x, y, width, height, tab_2_output, color)
+	}
+	else {
+		call draw_terminal_wrapped(x, y, width, height, tab_1_output, color)
+	}
+}
+
+proc set_and_execute_command(text: string) {
+	call set_terminal_text(terminal_command, text)
+	call execute_terminal_command()
+}
+
+terminal_command = ""
+tab_1_command = ""
+tab_2_command = ""
+tab_3_command = ""
+tab_1_output = "Ready - type help"
+tab_2_output = "Second terminal tab"
+tab_3_output = "Third terminal tab"
+history_1 = ""
+history_2 = ""
+history_3 = ""
+saved_1 = "help"
+saved_2 = "monitor on"
+saved_3 = "theme violet"
+terminal_echo = ""
+active_tab = 0
+tab_count = 1
+tab_theme[0] = 0
+tab_theme[1] = 0
+tab_theme[2] = 0
+tab_split[0] = 0
+tab_split[1] = 0
+tab_split[2] = 0
+tab_monitor[0] = 0
+tab_monitor[1] = 0
+tab_monitor[2] = 0
+saved_list_open = false
+history_position = 0
+plus_x = 44
+tab_animation_progress = 100
+tab_reveal_index = -1
+tab_closing = false
+tab_close_index = -1
+sparkle_frames = 0
+sparkle_x = 0
+options_open = false
+options_progress = 0
+options_page = 0
+options_flash = 0
+
+var content_width: int
+var content_height: int
+var main_width: int
+var output_color: int
+var panel_color: int
+var accent_color: int
+var key: int
+var command_width: int
+var command_y: int
+var command_height: int
+var tab_width: int
+var tab_step: int
+var plus_width: int
+var body_y: int
+var body_height: int
+var side_width: int
+var side_x: int
+var split_height: int
+var animation_eased: int
+var tab_draw_x: int
+var closing_visibility: int
+var options_x: int
+var options_y: int
+var options_width: int
+var options_height: int
+
+terminal_window.x = 40
+terminal_window.y = 25
+terminal_window.width = 360
+terminal_window.height = 270
+terminal_window.title = "Xenon Terminal"
+terminal_window.state = graphics::WINDOW_NORMAL
+
+while (terminal_window.state != graphics::WINDOW_CLOSED) {
+	call graphics::begin_draw(terminal_window)
+	if (!terminal_window.is_minimized()) {
+		content_width = graphics::content_width(terminal_window)
+		content_height = graphics::content_height(terminal_window)
+		if (active_terminal_theme() == 0) { panel_color = graphics::COLOR_1; output_color = graphics::COLOR_10; accent_color = graphics::COLOR_3 }
+		elseif (active_terminal_theme() == 1) { panel_color = graphics::COLOR_5; output_color = graphics::COLOR_11; accent_color = graphics::COLOR_13 }
+		else { panel_color = graphics::COLOR_8; output_color = graphics::WHITE; accent_color = graphics::COLOR_2 }
+
+		tab_width = (content_width - 24) / 3
+		if (tab_width > 38) { tab_width = 38 }
+		if (tab_width < 14) { tab_width = 14 }
+		tab_step = tab_width + 2
+		plus_width = 14
+		animation_eased = terminal_ease_out(tab_animation_progress)
+		if (tab_animation_progress < 100) {
+			tab_animation_progress += 14
+			if (tab_animation_progress > 100) { tab_animation_progress = 100 }
+			animation_eased = terminal_ease_out(tab_animation_progress)
+			if (tab_closing) {
+				plus_x = 4 + tab_count * tab_step - tab_step * animation_eased / 100
+			}
+			else {
+				plus_x = 4 + (tab_count - 1) * tab_step + tab_step * animation_eased / 100
+			}
+			if (tab_animation_progress == 100) {
+				if (tab_closing) {
+					sparkle_x = 4 + tab_close_index * tab_step + tab_width / 2
+					sparkle_frames = 3
+					call remove_terminal_tab(tab_close_index)
+					tab_closing = false
+					tab_close_index = -1
+				}
+				tab_reveal_index = -1
+			}
+		}
+		else {
+			plus_x = 4 + tab_count * tab_step
+		}
+
+		tab_draw_x = 4
+		if (tab_closing && tab_close_index == 0) {
+			closing_visibility = 100 - animation_eased
+			call draw_revealing_tab(tab_draw_x, tab_width, "T1", closing_visibility, accent_color)
+		}
+		else {
+			call draw_terminal_tab(0, tab_draw_x, tab_width, "T1", accent_color)
+		}
+		if (tab_count >= 2) {
+			tab_draw_x = 4 + tab_step
+			if (tab_closing && tab_close_index < 1) { tab_draw_x -= tab_step * animation_eased / 100 }
+			if (!tab_closing && tab_reveal_index == 1) {
+				call draw_revealing_tab(tab_draw_x, tab_width, "T2", animation_eased, accent_color)
+			}
+			elseif (tab_closing && tab_close_index == 1) {
+				closing_visibility = 100 - animation_eased
+				call draw_revealing_tab(tab_draw_x, tab_width, "T2", closing_visibility, accent_color)
+			}
+			else {
+				call draw_terminal_tab(1, tab_draw_x, tab_width, "T2", accent_color)
+			}
+		}
+		if (tab_count >= 3) {
+			tab_draw_x = 4 + tab_step * 2
+			if (tab_closing && tab_close_index < 2) { tab_draw_x -= tab_step * animation_eased / 100 }
+			if (!tab_closing && tab_reveal_index == 2) {
+				call draw_revealing_tab(tab_draw_x, tab_width, "T3", animation_eased, accent_color)
+			}
+			elseif (tab_closing && tab_close_index == 2) {
+				closing_visibility = 100 - animation_eased
+				call draw_revealing_tab(tab_draw_x, tab_width, "T3", closing_visibility, accent_color)
+			}
+			else {
+				call draw_terminal_tab(2, tab_draw_x, tab_width, "T3", accent_color)
+			}
+		}
+		if (graphics::button_tone(terminal_window, plus_x, 2, plus_width, 7, "+", graphics::COLOR_2)) {
+			if (tab_count < 3 && tab_animation_progress == 100 && !tab_closing) {
+				call initialize_terminal_tab(tab_count)
+				tab_count += 1
+				tab_reveal_index = tab_count - 1
+				tab_animation_progress = 0
+				call switch_terminal_tab(tab_count - 1)
+			}
+		}
+		if (sparkle_frames > 0) {
+			call draw_terminal_sparkle(sparkle_x, sparkle_frames)
+			sparkle_frames -= 1
+		}
+
+		body_y = 12
+		body_height = content_height - 24
+		if (body_height < 0) { body_height = 0 }
+		side_width = 0
+		if (content_width >= 110) {
+			side_width = content_width / 3
+			if (side_width > 46) { side_width = 46 }
+		}
+		main_width = content_width - 8
+		if (side_width > 0) { main_width = content_width - side_width - 10 }
+		call graphics::fill_rect(terminal_window, 4, body_y, main_width, body_height, panel_color)
+		call graphics::draw_rect(terminal_window, 4, body_y, main_width, body_height, graphics::COLOR_8)
+
+		if (body_height >= 8) {
+			if (active_terminal_split() && body_height >= 30) {
+				split_height = body_height / 2
+				call draw_active_terminal_output(6, body_y + 3, main_width - 4, split_height - 4, output_color)
+				call graphics::draw_line(terminal_window, 4, body_y + split_height, 4 + main_width, body_y + split_height, graphics::COLOR_8)
+				call draw_secondary_terminal_output(6, body_y + split_height + 3, main_width - 4, body_height - split_height - 4, output_color)
+			}
+			else {
+				call draw_active_terminal_output(6, body_y + 3, main_width - 4, body_height - 4, output_color)
+			}
+			if (active_terminal_monitor() && body_height >= 22) {
+				call graphics::draw_text_small(terminal_window, 7, body_y + body_height - 12, "ms", graphics::COLOR_8)
+				call graphics::draw_int_small(terminal_window, 17, body_y + body_height - 12, os::ticks(), output_color)
+				call graphics::draw_text_small(terminal_window, 7, body_y + body_height - 6, "VM 64K", graphics::COLOR_8)
+			}
+		}
+
+		if (side_width > 0) {
+			side_x = content_width - side_width - 4
+			if (!saved_list_open) {
+				if (graphics::button(terminal_window, side_x, body_y, side_width, 7, "Help")) {
+					call set_and_execute_command("help")
+				}
+				if (graphics::button(terminal_window, side_x, body_y + 8, side_width, 7, "Clear")) {
+					call set_and_execute_command("clear")
+				}
+				if (graphics::button(terminal_window, side_x, body_y + 24, side_width, 7, "History")) {
+					call set_and_execute_command("history")
+				}
+				if (graphics::button(terminal_window, side_x, body_y + 32, side_width, 7, "Saved")) { saved_list_open = true }
+				if (graphics::button_tone(terminal_window, side_x, body_y + 40, side_width, 7, "Save", graphics::COLOR_2)) {
+					call save_terminal_command(terminal_command)
+				}
+			}
+			else {
+				call graphics::draw_text_small(terminal_window, side_x + 2, body_y + 1, "Saved", graphics::COLOR_14)
+				if (graphics::button(terminal_window, side_x, body_y + 8, side_width, 7, saved_1)) {
+					call set_terminal_text(terminal_command, saved_1)
+					saved_list_open = false
+				}
+				if (graphics::button(terminal_window, side_x, body_y + 16, side_width, 7, saved_2)) {
+					call set_terminal_text(terminal_command, saved_2)
+					saved_list_open = false
+				}
+				if (graphics::button(terminal_window, side_x, body_y + 24, side_width, 7, saved_3)) {
+					call set_terminal_text(terminal_command, saved_3)
+					saved_list_open = false
+				}
+				if (graphics::button(terminal_window, side_x, body_y + 34, side_width, 7, "Back")) { saved_list_open = false }
+			}
+		}
+
+		command_width = content_width - 8
+		command_y = content_height - 10
+		command_height = 8
+		if (content_height < 32) {
+			command_y = content_height - 8
+			command_height = 6
+		}
+		call graphics::fill_rect(terminal_window, 4, command_y, command_width, command_height, graphics::COLOR_1)
+		call graphics::draw_rect(terminal_window, 4, command_y, command_width, command_height, accent_color)
+		call graphics::draw_text_small(terminal_window, 7, command_y + 2, ">", accent_color)
+		call draw_terminal_line_small(12, command_y + 2, command_width - 10, terminal_command, graphics::WHITE)
+
+		options_x = 4
+		options_y = 11
+		options_width = content_width - 8
+		if (side_width > 0) {
+			options_x = side_x
+			options_y = body_y + 16
+			options_width = side_width
+		}
+		options_height = 39
+		if (options_height > content_height - options_y - 2) { options_height = content_height - options_y - 2 }
+		if (options_height < 7) { options_height = 7 }
+		call draw_terminal_options(options_x, options_y, options_width, options_height)
+
+			key = graphics::read_key()
+			while (key != 0) {
+				if (key == graphics::KEY_BACKSPACE) {
+					call erase_terminal_character()
+				}
+				elseif (key == graphics::KEY_ENTER) {
+					call execute_terminal_command()
+				}
+				elseif (key == graphics::KEY_UP) {
+					call recall_terminal_history(-1)
+				}
+				elseif (key == graphics::KEY_DOWN) {
+					call recall_terminal_history(1)
+				}
+				elseif (key == 9) {
+					call autocomplete_terminal_command()
+				}
+				elseif (key >= 32 && key <= 126) {
+					call xestring::append_char(terminal_command, (char)key)
+					history_position = 0
+				}
+				key = graphics::read_key()
+			}
+	}
+	call graphics::update(terminal_window)
+	call os::sleep(16)
+}

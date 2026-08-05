@@ -1,0 +1,415 @@
+# Xenon Settings. All edits are staged and committed atomically through Apply.
+
+var settings_window: graphics::Window
+
+fn previous_setting_id(value: int, count: int) int {
+	if (count <= 0) { return 0 }
+	value -= 1
+	if (value < 0) { return count - 1 }
+	return value
+}
+
+fn next_setting_id(value: int, count: int) int {
+	if (count <= 0) { return 0 }
+	value += 1
+	if (value >= count) { return 0 }
+	return value
+}
+
+fn ease_menu(value: int) int {
+	return value * (200 - value) / 100
+}
+
+proc reload_os_settings(master: int*, music: int*, effects: int*, background: int*, palette: int*, theme: int*, transparency: int*, corners: int*, icons: int*, clock: int*, enabled: bool*) {
+	*master = os::volume
+	*music = os::music_volume
+	*effects = os::sound_effect_volume
+	*background = os::background_id
+	*palette = os::palette
+	*theme = os::theme_mode
+	*transparency = os::window_transparency
+	*corners = os::window_corner_style
+	*icons = os::icon_size
+	*clock = os::clock_format
+	*enabled = os::settings_enabled
+}
+
+proc draw_value_line(label: string, y: int, value: int, content_x: int, content_width: int) {
+	call graphics::draw_text(settings_window, content_x, y, label, graphics::COLOR_7)
+	call graphics::draw_int(settings_window, content_x + content_width - 20, y, value, graphics::COLOR_14)
+}
+
+var staged_master: int
+var staged_music: int
+var staged_effects: int
+var staged_background: int
+var staged_palette: int
+var staged_theme: int
+var staged_transparency: int
+var staged_corners: int
+var staged_icons: int
+var staged_clock: int
+var staged_enabled: bool
+var background_count: int
+var palette_count: int
+var content_width: int
+var content_height: int
+var panel_x: int
+var panel_width: int
+var action_width: int
+var action_y: int
+var active_tab: int
+var menu_open: bool
+var menu_progress: int
+var menu_eased: int
+var menu_width: int
+var menu_height: int
+var menu_target_width: int
+var menu_target_height: int
+var flash_frames: int
+var applied: bool
+var menu_block_clicked: bool
+var menu_surface: int
+
+call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+background_count = os::background_count()
+palette_count = os::palette_count()
+active_tab = 0
+menu_open = false
+menu_progress = 0
+flash_frames = 0
+
+settings_window.x = 40
+settings_window.y = 25
+settings_window.width = 370
+settings_window.height = 270
+settings_window.title = "Xenon Settings"
+settings_window.state = graphics::WINDOW_NORMAL
+
+while (settings_window.state != graphics::WINDOW_CLOSED) {
+	call graphics::begin_draw(settings_window)
+
+	if (!settings_window.is_minimized()) {
+		content_width = graphics::content_width(settings_window)
+		content_height = graphics::content_height(settings_window)
+		menu_surface = graphics::COLOR_8
+		if (os::theme_mode == os::THEME_LIGHT) { menu_surface = graphics::COLOR_1 }
+
+		if (menu_open && menu_progress < 100) {
+			menu_progress += 10
+			if (menu_progress > 100) { menu_progress = 100 }
+		}
+		elseif (!menu_open && menu_progress > 0) {
+			menu_progress -= 10
+			if (menu_progress < 0) { menu_progress = 0 }
+		}
+
+		menu_target_width = 84
+		if (menu_target_width > content_width - 8) { menu_target_width = content_width - 8 }
+		if (menu_target_width < 18) { menu_target_width = 18 }
+		menu_target_height = 43
+		if (menu_target_height > content_height - 8) { menu_target_height = content_height - 8 }
+		if (menu_target_height < 7) { menu_target_height = 7 }
+		menu_eased = ease_menu(menu_progress)
+		menu_width = 18 + (menu_target_width - 18) * menu_eased / 100
+		menu_height = 7 + (menu_target_height - 7) * menu_eased / 100
+
+		panel_x = 28
+		if (content_width < 120) { panel_x = 4 }
+		panel_width = content_width - panel_x - 4
+		if (content_width >= 180 && content_height >= 112) {
+			call graphics::fill_rect(settings_window, panel_x, 4, panel_width, content_height - 8, graphics::COLOR_1)
+			call graphics::draw_rect(settings_window, panel_x, 4, panel_width, content_height - 8, graphics::COLOR_8)
+
+			if (active_tab == 0) {
+				call graphics::draw_text(settings_window, panel_x + 4, 8, "Sound", graphics::WHITE)
+				call draw_value_line("Master", 21, staged_master, panel_x + 4, panel_width - 8)
+				staged_master = graphics::slider(settings_window, panel_x + 4, 29, panel_width - 8, staged_master, 0, 100)
+				call draw_value_line("Music", 45, staged_music, panel_x + 4, panel_width - 8)
+				staged_music = graphics::slider(settings_window, panel_x + 4, 53, panel_width - 8, staged_music, 0, 100)
+				call draw_value_line("Effects", 69, staged_effects, panel_x + 4, panel_width - 8)
+				staged_effects = graphics::slider(settings_window, panel_x + 4, 77, panel_width - 8, staged_effects, 0, 100)
+			}
+			elseif (active_tab == 1) {
+				call graphics::draw_text(settings_window, panel_x + 4, 8, "Personalization", graphics::WHITE)
+				call graphics::draw_text(settings_window, panel_x + 4, 23, "Theme", graphics::COLOR_7)
+				if (staged_theme == os::THEME_DARK) {
+					if (graphics::button_tone(settings_window, panel_x + panel_width - 50, 19, 46, 11, "Dark", graphics::COLOR_5)) {
+						staged_theme = os::THEME_LIGHT
+						if (staged_palette < 3) { staged_palette += 3 }
+					}
+				}
+				else {
+					if (graphics::button_tone(settings_window, panel_x + panel_width - 50, 19, 46, 11, "Light", graphics::COLOR_7)) {
+						staged_theme = os::THEME_DARK
+						if (staged_palette >= 3) { staged_palette -= 3 }
+					}
+				}
+
+				call graphics::draw_text(settings_window, panel_x + 4, 43, "Background", graphics::COLOR_7)
+				call graphics::draw_int(settings_window, panel_x + panel_width - 55, 43, staged_background, graphics::COLOR_14)
+				if (graphics::button(settings_window, panel_x + panel_width - 34, 39, 14, 11, "<")) {
+					staged_background = previous_setting_id(staged_background, background_count)
+				}
+				if (graphics::button(settings_window, panel_x + panel_width - 18, 39, 14, 11, ">")) {
+					staged_background = next_setting_id(staged_background, background_count)
+				}
+
+				call graphics::draw_text(settings_window, panel_x + 4, 63, "Palette", graphics::COLOR_7)
+				call graphics::draw_int(settings_window, panel_x + panel_width - 55, 63, staged_palette, graphics::COLOR_14)
+				if (graphics::button(settings_window, panel_x + panel_width - 34, 59, 14, 11, "<")) {
+					staged_palette = previous_setting_id(staged_palette, palette_count)
+					if (staged_theme == os::THEME_DARK && staged_palette >= 3) { staged_palette = 2 }
+					if (staged_theme == os::THEME_LIGHT && staged_palette < 3) { staged_palette = palette_count - 1 }
+				}
+				if (graphics::button(settings_window, panel_x + panel_width - 18, 59, 14, 11, ">")) {
+					staged_palette = next_setting_id(staged_palette, palette_count)
+					if (staged_theme == os::THEME_DARK && staged_palette >= 3) { staged_palette = 0 }
+					if (staged_theme == os::THEME_LIGHT && staged_palette < 3) { staged_palette = 3 }
+				}
+				call graphics::draw_text(settings_window, panel_x + 4, 82, "Wallpaper support later", graphics::COLOR_8)
+			}
+			elseif (active_tab == 2) {
+				call graphics::draw_text(settings_window, panel_x + 4, 8, "Window appearance", graphics::WHITE)
+				call draw_value_line("Transparency", 23, staged_transparency, panel_x + 4, panel_width - 8)
+				staged_transparency = graphics::slider(settings_window, panel_x + 4, 31, panel_width - 8, staged_transparency, 0, 100)
+				call graphics::draw_text(settings_window, panel_x + 4, 51, "Corner style", graphics::COLOR_7)
+				if (staged_corners == os::CORNER_SQUARE) {
+					if (graphics::button(settings_window, panel_x + 4, 61, panel_width - 8, 11, "Square")) { staged_corners = os::CORNER_ROUNDED }
+				}
+				elseif (staged_corners == os::CORNER_ROUNDED) {
+					if (graphics::button(settings_window, panel_x + 4, 61, panel_width - 8, 11, "Rounded")) { staged_corners = os::CORNER_SOFT }
+				}
+				else {
+					if (graphics::button(settings_window, panel_x + 4, 61, panel_width - 8, 11, "Soft")) { staged_corners = os::CORNER_SQUARE }
+				}
+			}
+			elseif (active_tab == 3) {
+				call graphics::draw_text(settings_window, panel_x + 4, 8, "Icons and time", graphics::WHITE)
+				call graphics::draw_text(settings_window, panel_x + 4, 23, "Icon size", graphics::COLOR_7)
+				if (staged_icons == os::ICON_SMALL) {
+					if (graphics::button(settings_window, panel_x + 4, 33, panel_width - 8, 11, "Small")) { staged_icons = os::ICON_MEDIUM }
+				}
+				elseif (staged_icons == os::ICON_MEDIUM) {
+					if (graphics::button(settings_window, panel_x + 4, 33, panel_width - 8, 11, "Medium")) { staged_icons = os::ICON_LARGE }
+				}
+				else {
+					if (graphics::button(settings_window, panel_x + 4, 33, panel_width - 8, 11, "Large")) { staged_icons = os::ICON_SMALL }
+				}
+				call graphics::draw_text(settings_window, panel_x + 4, 57, "Clock format", graphics::COLOR_7)
+				if (staged_clock == os::CLOCK_24_HOUR) {
+					if (graphics::button(settings_window, panel_x + 4, 67, panel_width - 8, 11, "24 hour")) { staged_clock = os::CLOCK_12_HOUR }
+				}
+				else {
+					if (graphics::button(settings_window, panel_x + 4, 67, panel_width - 8, 11, "12 hour")) { staged_clock = os::CLOCK_24_HOUR }
+				}
+			}
+			else {
+				call graphics::draw_text(settings_window, panel_x + 4, 8, "System", graphics::WHITE)
+				call graphics::draw_text(settings_window, panel_x + 4, 23, "Settings access", graphics::COLOR_7)
+				if (staged_enabled) {
+					if (graphics::button_tone(settings_window, panel_x + 4, 34, panel_width - 8, 11, "Enabled", graphics::COLOR_2)) { staged_enabled = false }
+				}
+				else {
+					if (graphics::button_tone(settings_window, panel_x + 4, 34, panel_width - 8, 11, "Disabled", graphics::COLOR_4)) { staged_enabled = true }
+				}
+				call graphics::draw_text(settings_window, panel_x + 4, 54, "Changes apply together", graphics::COLOR_8)
+			}
+
+			action_y = content_height - 16
+			action_width = (panel_width - 10) / 2
+			if (graphics::button_tone(settings_window, panel_x + 4, action_y, action_width, 11, "Apply", graphics::COLOR_2)) {
+				applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, staged_transparency, staged_corners, staged_icons, staged_clock, staged_enabled)
+				if (applied) {
+					call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+				}
+			}
+			if (graphics::button(settings_window, panel_x + 6 + action_width, action_y, action_width, 11, "Cancel")) {
+				call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+				settings_window.close()
+			}
+		}
+		elseif (content_height < 40) {
+			call graphics::fill_rect(settings_window, panel_x, 4, panel_width, content_height - 8, graphics::COLOR_1)
+			call graphics::draw_rect(settings_window, panel_x, 4, panel_width, content_height - 8, graphics::COLOR_8)
+			if (active_tab == 0) {
+				call graphics::draw_text_small(settings_window, 24, 5, "Sound", graphics::WHITE)
+				call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Master", graphics::COLOR_7)
+				call graphics::draw_int_small(settings_window, panel_x + panel_width - 12, 12, staged_master, graphics::COLOR_14)
+			}
+			elseif (active_tab == 1) {
+				call graphics::draw_text_small(settings_window, 24, 5, "Personal", graphics::WHITE)
+				if (staged_theme == os::THEME_DARK) {
+					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Dark", graphics::COLOR_7)
+				}
+				else {
+					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Light", graphics::COLOR_7)
+				}
+			}
+			elseif (active_tab == 2) {
+				call graphics::draw_text_small(settings_window, 24, 5, "Windows", graphics::WHITE)
+				call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Opacity", graphics::COLOR_7)
+				call graphics::draw_int_small(settings_window, panel_x + panel_width - 12, 12, staged_transparency, graphics::COLOR_14)
+			}
+			elseif (active_tab == 3) {
+				call graphics::draw_text_small(settings_window, 24, 5, "Display", graphics::WHITE)
+				if (staged_clock == os::CLOCK_24_HOUR) {
+					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "24 hour", graphics::COLOR_7)
+				}
+				else {
+					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "12 hour", graphics::COLOR_7)
+				}
+			}
+			else {
+				call graphics::draw_text_small(settings_window, 24, 5, "System", graphics::WHITE)
+				if (staged_enabled) {
+					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Enabled", graphics::COLOR_7)
+				}
+				else {
+					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Disabled", graphics::COLOR_7)
+				}
+			}
+
+			action_y = content_height - 7
+			action_width = (panel_width - 7) / 2
+			if (graphics::button_tone(settings_window, panel_x + 3, action_y, action_width, 5, "Set", graphics::COLOR_2)) {
+				applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, staged_transparency, staged_corners, staged_icons, staged_clock, staged_enabled)
+				if (applied) {
+					call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+				}
+			}
+			if (graphics::button(settings_window, panel_x + 4 + action_width, action_y, action_width, 5, "Esc")) {
+				call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+				settings_window.close()
+			}
+		}
+		else {
+			call graphics::fill_rect(settings_window, panel_x, 4, panel_width, content_height - 8, graphics::COLOR_1)
+			call graphics::draw_rect(settings_window, panel_x, 4, panel_width, content_height - 8, graphics::COLOR_8)
+
+			if (active_tab == 0) {
+				call graphics::draw_text_small(settings_window, panel_x + 3, 7, "Sound", graphics::WHITE)
+				call graphics::draw_text_small(settings_window, panel_x + 3, 14, "Master", graphics::COLOR_7)
+				staged_master = graphics::slider(settings_window, panel_x + 3, 20, panel_width - 6, staged_master, 0, 100)
+				if (content_height >= 45) {
+					call graphics::draw_text_small(settings_window, panel_x + 3, 26, "Music", graphics::COLOR_7)
+					staged_music = graphics::slider(settings_window, panel_x + 3, 32, panel_width - 6, staged_music, 0, 100)
+				}
+				if (content_height >= 58) {
+					call graphics::draw_text_small(settings_window, panel_x + 3, 38, "Effects", graphics::COLOR_7)
+					staged_effects = graphics::slider(settings_window, panel_x + 3, 44, panel_width - 6, staged_effects, 0, 100)
+				}
+			}
+			elseif (active_tab == 1) {
+				call graphics::draw_text_small(settings_window, panel_x + 3, 7, "Personalization", graphics::WHITE)
+				if (staged_theme == os::THEME_DARK) {
+					if (graphics::button_flat(settings_window, panel_x + 3, 15, panel_width - 6, 7, "Dark theme", graphics::COLOR_8)) {
+						staged_theme = os::THEME_LIGHT
+						if (staged_palette < 3) { staged_palette += 3 }
+					}
+				}
+				else {
+					if (graphics::button_flat(settings_window, panel_x + 3, 15, panel_width - 6, 7, "Light theme", graphics::COLOR_8)) {
+						staged_theme = os::THEME_DARK
+						if (staged_palette >= 3) { staged_palette -= 3 }
+					}
+				}
+				if (content_height >= 43) {
+					if (graphics::button_flat(settings_window, panel_x + 3, 24, panel_width - 6, 7, "Background", graphics::COLOR_8)) { staged_background = next_setting_id(staged_background, background_count) }
+					if (graphics::button_flat(settings_window, panel_x + 3, 33, panel_width - 6, 7, "Palette", graphics::COLOR_8)) {
+						staged_palette = next_setting_id(staged_palette, palette_count)
+						if (staged_theme == os::THEME_DARK && staged_palette >= 3) { staged_palette = 0 }
+						if (staged_theme == os::THEME_LIGHT && staged_palette < 3) { staged_palette = 3 }
+					}
+				}
+			}
+			elseif (active_tab == 2) {
+				call graphics::draw_text_small(settings_window, panel_x + 3, 7, "Appearance", graphics::WHITE)
+				call graphics::draw_text_small(settings_window, panel_x + 3, 14, "Transparency", graphics::COLOR_7)
+				staged_transparency = graphics::slider(settings_window, panel_x + 3, 20, panel_width - 6, staged_transparency, 0, 100)
+				if (staged_corners == os::CORNER_SQUARE) {
+					if (graphics::button_flat(settings_window, panel_x + 3, 28, panel_width - 6, 7, "Square corners", graphics::COLOR_8)) { staged_corners = os::CORNER_ROUNDED }
+				}
+				elseif (staged_corners == os::CORNER_ROUNDED) {
+					if (graphics::button_flat(settings_window, panel_x + 3, 28, panel_width - 6, 7, "Rounded corners", graphics::COLOR_8)) { staged_corners = os::CORNER_SOFT }
+				}
+				else {
+					if (graphics::button_flat(settings_window, panel_x + 3, 28, panel_width - 6, 7, "Soft corners", graphics::COLOR_8)) { staged_corners = os::CORNER_SQUARE }
+				}
+			}
+			elseif (active_tab == 3) {
+				call graphics::draw_text_small(settings_window, panel_x + 3, 7, "Icons and time", graphics::WHITE)
+				if (staged_icons == os::ICON_SMALL) {
+					if (graphics::button_flat(settings_window, panel_x + 3, 15, panel_width - 6, 7, "Small icons", graphics::COLOR_8)) { staged_icons = os::ICON_MEDIUM }
+				}
+				elseif (staged_icons == os::ICON_MEDIUM) {
+					if (graphics::button_flat(settings_window, panel_x + 3, 15, panel_width - 6, 7, "Medium icons", graphics::COLOR_8)) { staged_icons = os::ICON_LARGE }
+				}
+				else {
+					if (graphics::button_flat(settings_window, panel_x + 3, 15, panel_width - 6, 7, "Large icons", graphics::COLOR_8)) { staged_icons = os::ICON_SMALL }
+				}
+				if (staged_clock == os::CLOCK_24_HOUR) {
+					if (graphics::button_flat(settings_window, panel_x + 3, 24, panel_width - 6, 7, "24 hour clock", graphics::COLOR_8)) { staged_clock = os::CLOCK_12_HOUR }
+				}
+				else {
+					if (graphics::button_flat(settings_window, panel_x + 3, 24, panel_width - 6, 7, "12 hour clock", graphics::COLOR_8)) { staged_clock = os::CLOCK_24_HOUR }
+				}
+			}
+			else {
+				call graphics::draw_text_small(settings_window, panel_x + 3, 7, "System", graphics::WHITE)
+				if (staged_enabled) {
+					if (graphics::button_flat(settings_window, panel_x + 3, 15, panel_width - 6, 7, "Settings enabled", graphics::COLOR_8)) { staged_enabled = false }
+				}
+				else {
+					if (graphics::button_flat(settings_window, panel_x + 3, 15, panel_width - 6, 7, "Settings disabled", graphics::COLOR_8)) { staged_enabled = true }
+				}
+			}
+
+			action_y = content_height - 9
+			action_width = (panel_width - 7) / 2
+			if (graphics::button_tone(settings_window, panel_x + 3, action_y, action_width, 6, "Apply", graphics::COLOR_2)) {
+				applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, staged_transparency, staged_corners, staged_icons, staged_clock, staged_enabled)
+				if (applied) {
+					call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+				}
+			}
+			if (graphics::button(settings_window, panel_x + 4 + action_width, action_y, action_width, 6, "Cancel")) {
+				call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+				settings_window.close()
+			}
+		}
+
+		if (menu_progress > 0) {
+			menu_block_clicked = graphics::button_flat(settings_window, 4, 4, menu_width, menu_height, "", menu_surface)
+		}
+		if (menu_open) {
+			if (graphics::button_flat(settings_window, 4, 4, 18, 7, "v", menu_surface)) {
+				menu_open = false
+				flash_frames = 4
+			}
+		}
+		else {
+			if (graphics::button_flat(settings_window, 4, 4, 18, 7, ">", menu_surface)) {
+				menu_open = true
+				flash_frames = 4
+			}
+		}
+
+		if (menu_open && menu_progress == 100 && menu_target_width >= 44 && menu_target_height >= 39) {
+			if (graphics::button_flat(settings_window, 8, 12, menu_target_width - 8, 5, "Sound", menu_surface)) { active_tab = 0; menu_open = false; flash_frames = 4 }
+			if (graphics::button_flat(settings_window, 8, 18, menu_target_width - 8, 5, "Personalize", menu_surface)) { active_tab = 1; menu_open = false; flash_frames = 4 }
+			if (graphics::button_flat(settings_window, 8, 24, menu_target_width - 8, 5, "Appearance", menu_surface)) { active_tab = 2; menu_open = false; flash_frames = 4 }
+			if (graphics::button_flat(settings_window, 8, 30, menu_target_width - 8, 5, "Icons + Time", menu_surface)) { active_tab = 3; menu_open = false; flash_frames = 4 }
+			if (graphics::button_flat(settings_window, 8, 36, menu_target_width - 8, 5, "System", menu_surface)) { active_tab = 4; menu_open = false; flash_frames = 4 }
+		}
+		if (flash_frames > 0) {
+			if (flash_frames >= 3) {
+				call graphics::draw_line(settings_window, 5, 4, menu_width + 2, 4, graphics::WHITE)
+			}
+			flash_frames -= 1
+		}
+	}
+
+	call graphics::update(settings_window)
+	call os::sleep(16)
+}

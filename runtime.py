@@ -107,10 +107,14 @@ def run(
 		assembly = compile_ast(optimized_ast, fn)
 		if assembly.error:
 			return None, assembly.error, None
-		print(ANSI.BOLD + ANSI.PURPLE + "\nLABELS" + ANSI.END)
 
 		optimized_asm = optimize(assembly.value, DEFAULT_PASSES)
 		formatted_asm = format_instructions(optimized_asm)
+
+		fp = Path(fn).stem
+		if not fp[0] == "<":
+			with open(f"asm/{fp}.xas", "w") as file:
+				file.write(formatted_asm)
 	
 		bytecode = assemble(fn, formatted_asm)
 		if bytecode.error:
@@ -123,6 +127,7 @@ def run(
 	context.vm.ip = 0
 
 	result = context.vm.run()
+	print(f"Max stack depth: {context.vm.max_sp}")
 
 	return (
 		result.value[:context.vm.sp][:32],

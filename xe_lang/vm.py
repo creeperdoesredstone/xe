@@ -71,6 +71,7 @@ class VM:
 		self.cr: int = 0
 		self.im: int = TRUE
 		self.bp: int = 0
+		self.max_sp: int = 0
 
 		self.labels = {}
 		self.start_time = time.monotonic()
@@ -360,6 +361,7 @@ class VM:
 		self.heap_pointer = 0x2000
 		self.sp = 0
 		self.exit_code = 0
+		self.max_sp = 0
 
 		self.free_list = [(0x2000, 0xE000)]
 		self.allocations = {}
@@ -388,6 +390,8 @@ class VM:
 
 			self.ip += 1
 			# input()
+			if self.sp > self.max_sp:
+				self.max_sp = self.sp
 
 			# process window events if the window is alive
 			if self.ip % 200 == 0 and self.root:
