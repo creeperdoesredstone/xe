@@ -1001,6 +1001,9 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 			)
 		)
 
+		if i == len(node.cases) - 1:
+			instructions.append((node.end_pos, node.end_pos, "POP", 1))
+
 	# default
 	if node.default_case:
 		instructions.append(
@@ -1019,9 +1022,6 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 		instructions.extend(res.register(emit(node.default_case)))
 		if res.error:
 			return res
-
-	else:
-		instructions.append((node.end_pos, node.end_pos, "POP", 1))
 
 	instructions.append(
 		(
