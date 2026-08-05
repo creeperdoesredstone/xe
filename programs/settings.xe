@@ -74,6 +74,7 @@ var menu_surface: int
 call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 background_count = os::background_count()
 palette_count = os::palette_count()
+out << background_count << '\n' << palette_count << '\n'
 active_tab = 0
 menu_open = false
 menu_progress = 0

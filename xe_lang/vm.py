@@ -618,6 +618,9 @@ class VM:
 				if is_float_op:
 					b = u32_to_float(b)
 					a = u32_to_float(a)
+				else:
+					if a > 0x7FFFFFFF: a -= 0x100000000
+					if b > 0x7FFFFFFF: b -= 0x100000000
 				val = 0
 
 				match ins_arg:
