@@ -8,11 +8,17 @@ BINARY_RULES = {
 	(TT.ADD, "float", "int"): "float",
 	(TT.ADD, "float", "float"): "float",
 	(TT.ADD, "string", "string"): "string",
+    (TT.ADD, "char", "char"): "int",
+	(TT.ADD, "int", "char"): "int",
+	(TT.ADD, "char", "int"): "int",
 
 	(TT.SUB, "int", "int"): "int",
 	(TT.SUB, "int", "float"): "float",
 	(TT.SUB, "float", "int"): "float",
 	(TT.SUB, "float", "float"): "float",
+    (TT.SUB, "char", "char"): "int",
+	(TT.SUB, "int", "char"): "int",
+	(TT.SUB, "char", "int"): "int",
 
 	(TT.MUL, "int", "int"): "int",
 	(TT.MUL, "int", "float"): "float",
@@ -39,21 +45,33 @@ BINARY_RULES = {
 	(TT.LT, "int", "float"): "bool",
 	(TT.LT, "float", "int"): "bool",
 	(TT.LT, "float", "float"): "bool",
+    (TT.LT, "char", "char"): "bool",
+	(TT.LT, "int", "char"): "bool",
+	(TT.LT, "char", "int"): "bool",
 
 	(TT.LE, "int", "int"): "bool",
 	(TT.LE, "int", "float"): "bool",
 	(TT.LE, "float", "int"): "bool",
 	(TT.LE, "float", "float"): "bool",
+    (TT.LE, "char", "char"): "bool",
+	(TT.LE, "int", "char"): "bool",
+	(TT.LE, "char", "int"): "bool",
 
 	(TT.GT, "int", "int"): "bool",
 	(TT.GT, "int", "float"): "bool",
 	(TT.GT, "float", "int"): "bool",
 	(TT.GT, "float", "float"): "bool",
+    (TT.GT, "char", "char"): "bool",
+	(TT.GT, "int", "char"): "bool",
+	(TT.GT, "char", "int"): "bool",
 
 	(TT.GE, "int", "int"): "bool",
 	(TT.GE, "int", "float"): "bool",
 	(TT.GE, "float", "int"): "bool",
 	(TT.GE, "float", "float"): "bool",
+    (TT.GE, "char", "char"): "bool",
+	(TT.GE, "int", "char"): "bool",
+	(TT.GE, "char", "int"): "bool",
 	
 	# Equality
 	(TT.EQ, "int", "int"): "bool",
@@ -62,6 +80,9 @@ BINARY_RULES = {
 	(TT.EQ, "float", "float"): "bool",
 	(TT.EQ, "bool", "bool"): "bool",
 	(TT.EQ, "string", "string"): "bool",
+    (TT.EQ, "char", "char"): "bool",
+    (TT.EQ, "int", "char"): "bool",
+    (TT.EQ, "char", "int"): "bool",
 
 	(TT.NE, "int", "int"): "bool",
 	(TT.NE, "int", "float"): "bool",
@@ -69,6 +90,9 @@ BINARY_RULES = {
 	(TT.NE, "float", "float"): "bool",
 	(TT.NE, "bool", "bool"): "bool",
 	(TT.NE, "string", "string"): "bool",
+    (TT.NE, "char", "char"): "bool",
+	(TT.NE, "int", "char"): "bool",
+	(TT.NE, "char", "int"): "bool",
 	
 	# Logical
 	(TT.ANDL, "bool", "bool"): "bool",

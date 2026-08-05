@@ -4,9 +4,7 @@
 var calculator_window: graphics::Window
 
 fn is_whitespace(value: char) bool {
-	var code: int
-	code = (int)value
-	return code == 32 || code == 9 || code == 10 || code == 13
+	return value == ' ' || value == '\t' || value == '\n' || value == 13
 }
 
 fn is_digit(value: char) bool {
