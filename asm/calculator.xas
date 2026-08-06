@@ -6224,6 +6224,7 @@ POP 1
 PUSH 5
 JUMP cleanup(read_operator_code)
 JUMP endswitch(0)
+POP 1
 :default(0)
 POP 1
 PUSH 0

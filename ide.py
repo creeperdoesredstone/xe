@@ -1002,10 +1002,10 @@ class VMGraphicsWidget(QWidget):
 			Qt.Key.Key_Enter: 13,
 			Qt.Key.Key_Escape: 27,
 			Qt.Key.Key_Space: 32,
-			Qt.Key.Key_Left: 37,
-			Qt.Key.Key_Up: 38,
-			Qt.Key.Key_Right: 39,
-			Qt.Key.Key_Down: 40,
+			Qt.Key.Key_Left: 3,
+			Qt.Key.Key_Up: 4,
+			Qt.Key.Key_Right: 5,
+			Qt.Key.Key_Down: 6,
 			Qt.Key.Key_Delete: 46,
 		}.get(key)
 		if special is not None:
