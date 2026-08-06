@@ -46,7 +46,7 @@ class Optimizer:
 		if node.const_value is not None:
 			node.const_value.start_pos = node.start_pos
 			node.const_value.end_pos = node.end_pos
-			return node.const_value
+			return self.optimize(node.const_value)
 		return node
 
 	def fold_unary(self, node: UnaryOperation):
@@ -287,4 +287,9 @@ class Optimizer:
 		):
 			return self.fold_binary(node)
 
+		return node
+
+	def visit_MemberAccess(self, node: MemberAccess):
+		if getattr(node, "const_value") is not None:
+			return node.const_value
 		return node

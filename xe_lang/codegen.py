@@ -1629,6 +1629,9 @@ def emit_ProcedureCall(node: ProcedureCall) -> Result:
 def emit_StructDefinition(node: StructDefinition) -> Result:
 	return Result().success([])
 
+def emit_EnumDeclaration(node: EnumDeclaration) -> Result:
+	return Result().success([])
+
 
 def emit_MemberAccess(node: MemberAccess) -> Result:
 	res = Result()

@@ -1752,6 +1752,7 @@ class SemanticAnalyzer:
 			node.type = field.type
 			node.field_address = field.address
 			node.struct_symbol = struct_or_class_symbol
+			node.const_value = field.const_value
 			return res.success(field.type)
 
 		if parent_type.base in self.classes:
@@ -2011,6 +2012,36 @@ class SemanticAnalyzer:
 
 		self.pop_scope()
 		node.symbol = class_sym
+
+		return res.success(None)
+
+	def visit_EnumDeclaration(self, node: EnumDeclaration) -> Result:
+		res = Result()
+
+		if node.enum_name in self.scope.symbols:
+			return res.fail(
+				SemanticError(
+					f"'{node.name}' is already declared.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		enum_sym = ClassSymbol(
+			name=node.enum_name,
+			type=Type(node.enum_name)
+		)
+		self.scope.symbols[node.enum_name] = enum_sym
+
+		for i, const in enumerate(node.enum_constants):
+			const_symbol = VariableSymbol(
+				name=const,
+				type=Type("int"),
+				const_value=IntLiteral(None, None, i),
+			)
+			enum_sym.fields[const] = const_symbol
+
+		node.symbol = enum_sym
 
 		return res.success(None)
 

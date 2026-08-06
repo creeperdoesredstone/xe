@@ -208,6 +208,8 @@ def parse(tokens: list[Token]) -> Result:
 					return return_statement()
 				case "call":
 					return procedure_call()
+				case "enum":
+					return enum_declaration()
 
 		return expr()
 
@@ -1722,6 +1724,96 @@ def parse(tokens: list[Token]) -> Result:
 			)
 
 		return res.success(ProcedureCall(start_pos, end_pos, proc_name, args))
+
+	def enum_declaration() -> Result:
+		start_pos: Position = current_tok.start_pos.copy()
+		res: Result = Result()
+		advance()
+
+		if current_tok != Token(TT.KEYWORD, "class", None, None):
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected 'class' after 'enum', found {current_tok.value or current_tok._type} instead.",
+					current_tok.start_pos,
+					current_tok.end_pos
+				)
+			)
+		advance()
+
+		if current_tok._type != TT.IDENT:
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected an enum name after 'class', found {current_tok.value or current_tok._type} instead.",
+					current_tok.start_pos,
+					current_tok.end_pos
+				)
+			)
+		enum_name: str = current_tok.value
+		advance()
+
+		if current_tok._type != TT.LBR:
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected '{{' after enum name, found {current_tok.value or current_tok._type} instead.",
+					current_tok.start_pos,
+					current_tok.end_pos
+				)
+			)
+		advance()
+
+		enum_constants: list[str] = []
+
+		while current_tok._type not in (TT.RBR, TT.EOF):
+			while current_tok._type == TT.NEWLINE: advance()
+			if current_tok._type != TT.IDENT:
+				return res.fail(
+					InvalidSyntaxError(
+						f"Expected an enum constant, found {current_tok.value or current_tok._type} instead.",
+						current_tok.start_pos,
+						current_tok.end_pos
+					)
+				)
+
+			if current_tok.value in enum_constants:
+				return res.fail(
+					InvalidSyntaxError(
+						f"Enum constant '{current_tok.value} already defined.",
+						current_tok.start_pos,
+						current_tok.end_pos
+					)
+				)
+
+			enum_constants.append(current_tok.value)
+			advance()
+			while current_tok._type == TT.NEWLINE: advance()
+
+			if current_tok._type not in (TT.COMMA, TT.RBR):
+				return res.fail(
+					InvalidSyntaxError(
+						f"Expected ',' or '}}' after enum constant, found {current_tok.value or current_tok._type} instead.",
+						current_tok.start_pos,
+						current_tok.end_pos
+					)
+				)
+			if current_tok._type == TT.COMMA: advance()
+
+		if current_tok._type != TT.RBR:
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected '}}' after enum declaration, found {current_tok.value or current_tok._type} instead.",
+					current_tok.start_pos,
+					current_tok.end_pos
+				)
+			)
+		end_pos: Position = current_tok.end_pos.copy()
+		advance()
+
+		return res.success(EnumDeclaration(
+			start_pos,
+			end_pos,
+			enum_name,
+			enum_constants
+		))
 
 	# other parse subroutines
 	def expr() -> Result:

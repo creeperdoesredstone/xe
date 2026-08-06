@@ -32,7 +32,8 @@ KEYWORDS = [
 	"free",
 	"this",
 	"struct",
-	"asm"
+	"asm",
+	"enum",
 ]
 DATA_TYPES = ["int", "float", "string", "bool", "char", "function"]
 

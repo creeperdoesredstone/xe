@@ -682,3 +682,16 @@ class LibraryAssign(Node):
 
 	def __repr__(self):
 		return f"LIB_ASSIGN({self.library_name}::{self.member_name} {self.operator} {self.value})"
+
+
+class EnumDeclaration(Node):
+	def __init__(
+		self,
+		start_pos: Position,
+		end_pos: Position,
+		enum_name: str,
+		enum_constants: list[str]
+	) -> None:
+		super().__init__(start_pos, end_pos)
+		self.enum_name: str = enum_name
+		self.enum_constants: list[str] = enum_constants

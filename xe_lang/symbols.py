@@ -67,6 +67,8 @@ class VariableSymbol(BaseSymbol):
 	is_local: bool = False
 
 	def __repr__(self) -> str:
+		if self.const_value is not None:
+			return f"<Const Symbol '{self.name}': {self.const_value})>"
 		loc_str = "local" if self.is_local else "global"
 		arr_str = f"[{self.arr_length}]" if self.arr_length > 0 else ""
 		return (
