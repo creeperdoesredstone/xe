@@ -1006,7 +1006,7 @@ class VMGraphicsWidget(QWidget):
 			Qt.Key.Key_Up: 4,
 			Qt.Key.Key_Right: 5,
 			Qt.Key.Key_Down: 6,
-			Qt.Key.Key_Delete: 46,
+			Qt.Key.Key_Delete: 127,
 		}.get(key)
 		if special is not None:
 			return special

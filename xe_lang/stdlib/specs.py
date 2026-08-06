@@ -105,9 +105,9 @@ GRAPHICS_SPEC = LibrarySpec(
 		ConstantSpec("SCREEN_HEIGHT", 360),
 		*(ConstantSpec(f"COLOR_{index}", index) for index in range(16)),
 		ConstantSpec("COLOR_BLACK", 0),
-		ConstantSpec("COLOR_WHITE", 15),
+		ConstantSpec("COLOR_WHITE", 12),
 		ConstantSpec("BLACK", 0),
-		ConstantSpec("WHITE", 15),
+		ConstantSpec("WHITE", 12),
 		ConstantSpec("WINDOW_NORMAL", 0),
 		ConstantSpec("WINDOW_MINIMIZED", 1),
 		ConstantSpec("WINDOW_FULLSCREEN", 2),
@@ -121,7 +121,7 @@ GRAPHICS_SPEC = LibrarySpec(
 		ConstantSpec("KEY_UP", 4),
 		ConstantSpec("KEY_RIGHT", 5),
 		ConstantSpec("KEY_DOWN", 6),
-		ConstantSpec("KEY_DELETE", 46),
+		ConstantSpec("KEY_DELETE", 127),
 	),
 )
 
