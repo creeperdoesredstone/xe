@@ -951,6 +951,7 @@ class VMGraphicsWidget(QWidget):
 			0.01,
 			min(available_width / self.width_px, available_height / self.height_px),
 		)
+		self.scale = round(self.scale)
 		self.render_width = max(1, round(self.width_px * self.scale))
 		self.render_height = max(1, round(self.height_px * self.scale))
 		self.render_x = (available_width - self.render_width) // 2
