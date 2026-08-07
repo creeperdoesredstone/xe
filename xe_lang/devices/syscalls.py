@@ -96,6 +96,7 @@ class DeviceRuntime:
 			SyscallID.GRAPHICS_WINDOW: self._raw_window,
 			SyscallID.GRAPHICS_TASKBAR: self._raw_taskbar,
 			SyscallID.GRAPHICS_TASK_ATOM: self._raw_task_atom,
+			SyscallID.GRAPHICS_DRAW_BG: self._graphics_draw_background,
 			SyscallID.GRAPHICS_BUTTON: self._raw_button,
 			SyscallID.GRAPHICS_SLIDER: self._raw_slider,
 			SyscallID.MOUSE_POLL: self._raw_mouse_poll,
@@ -684,6 +685,9 @@ class DeviceRuntime:
 			return
 		handle = entry[1]
 		vm.push(self.windows.content_height(handle) // self.windows.ui_scale(handle))
+
+	def _graphics_draw_background(self, vm: Any, result: Any) -> None:
+		self.os.draw_background(self.graphics)
 
 	def _graphics_begin_draw(self, vm: Any, result: Any) -> None:
 		entry = self._window_args(vm, result, 1, refresh=True)

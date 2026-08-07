@@ -27,6 +27,7 @@ class BuiltInID(Enum):
 
 	GRAPHICS_WIDTH = auto()
 	GRAPHICS_HEIGHT = auto()
+	GRAPHICS_DRAW_BG = auto()
 	GRAPHICS_BEGIN_DRAW = auto()
 	GRAPHICS_UPDATE = auto()
 	GRAPHICS_CLEAR = auto()

@@ -68,6 +68,7 @@ GRAPHICS_SPEC = LibrarySpec(
 	(
 		_builtin("width", BuiltInID.GRAPHICS_WIDTH, (), "int", SyscallID.APP_GRAPHICS_WIDTH),
 		_builtin("height", BuiltInID.GRAPHICS_HEIGHT, (), "int", SyscallID.APP_GRAPHICS_HEIGHT),
+		_builtin("draw_bg", BuiltInID.GRAPHICS_DRAW_BG, (), None, SyscallID.GRAPHICS_DRAW_BG),
 		_builtin("begin_draw", BuiltInID.GRAPHICS_BEGIN_DRAW, ("Window",), None, SyscallID.APP_GRAPHICS_BEGIN_DRAW, WINDOW_REF),
 		_builtin("update", BuiltInID.GRAPHICS_UPDATE, ("Window",), None, SyscallID.APP_GRAPHICS_UPDATE, WINDOW_REF),
 		_builtin("clear", BuiltInID.GRAPHICS_CLEAR, ("Window", "int"), None, SyscallID.APP_GRAPHICS_CLEAR, WINDOW_REF),
