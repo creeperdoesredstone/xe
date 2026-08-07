@@ -427,7 +427,7 @@ class GraphicsDevice:
 				x = origin_x
 				y += 6 * scale
 				continue
-			glyph = FONT_3X5.get(char.upper(), FONT_3X5[" "])
+			glyph = FONT_3X5.get(char, FONT_3X5["\u007f"])
 			remapped_glyph = tuple(map(lambda n: n >> (5 - glyph[0]), glyph[1:]))
 			self._draw_glyph(x, y, remapped_glyph, glyph[0], color, scale)
 			x += (glyph[0] + 1) * scale
