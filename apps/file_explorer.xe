@@ -13,6 +13,9 @@ array shell_accumulator: int[8]
 array shell_speed: int[8]
 array entry_render_x: int[64]
 array entry_render_y: int[64]
+array entry_label_x: int[64]
+array entry_label_y: int[64]
+array entry_label_initialized: int[64]
 array entry_name_cache: string[64]
 array entry_directory_cache: int[64]
 array entry_position_cache: int[64]
@@ -857,6 +860,7 @@ proc reset_energy_shells() {
 		if (os::entry_is_directory(current_path, index)) { entry_directory_cache[index] = 1 }
 		else { entry_directory_cache[index] = 0 }
 		entry_shell[index] = index / shell_capacity
+		entry_label_initialized[index] = 0
 		index += 1
 	}
 	shell_count = (count + shell_capacity - 1) / shell_capacity
@@ -1659,6 +1663,12 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	var label_dy: int
 	var label_abs_dx: int
 	var label_abs_dy: int
+	var label_distance: int
+	var label_offset_x: int
+	var label_offset_y: int
+	var label_difference: int
+	var label_step: int
+	var label_ease: int
 	count = cached_entry_count
 	call prepare_orbit_projection(tilt, view_roll)
 	viewport_center_x = x + area_width / 2
@@ -1861,26 +1871,56 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			if (name_chars > (area_width - sidebar_width - 8) / 4) { name_chars = (area_width - sidebar_width - 8) / 4 }
 			if (name_chars < 1) { name_chars = 1 }
 			name_width = name_chars * 4
-			name_x = atom_x - name_width / 2
-			name_y = atom_y - node_radius - 8
 			label_dx = atom_x - center_x
 			label_dy = atom_y - center_y
 			label_abs_dx = label_dx
 			label_abs_dy = label_dy
 			if (label_abs_dx < 0) { label_abs_dx = -label_abs_dx }
 			if (label_abs_dy < 0) { label_abs_dy = -label_abs_dy }
-			if (label_abs_dx >= label_abs_dy) {
-				name_y = atom_y - 2
-				if (label_dx >= 0) { name_x = atom_x + node_radius + 4 }
-				else { name_x = atom_x - node_radius - name_width - 4 }
+			label_distance = label_abs_dx + label_abs_dy
+			if (label_distance < 1) {
+				label_dy = -1
+				label_abs_dy = 1
+				label_distance = 1
 			}
-			elseif (label_dy >= 0) { name_y = atom_y + node_radius + 4 }
+			label_offset_x = label_dx * (node_radius + 4 + name_width / 2) / label_distance
+			label_offset_y = label_dy * (node_radius + 7) / label_distance
+			name_x = atom_x + label_offset_x - name_width / 2
+			name_y = atom_y + label_offset_y - 2
 			if (name_x < x + sidebar_width + 2) { name_x = x + sidebar_width + 2 }
 			if (name_x + name_width > x + area_width - 2) { name_x = x + area_width - name_width - 2 }
-			if (name_y < y + 11) { name_y = atom_y + node_radius + 3 }
+			if (name_y < y + 11) { name_y = y + 11 }
 			if (name_y > y + area_height - 8) { name_y = y + area_height - 8 }
-			call draw_explorer_text_clipped(name_x, name_y, entry_name_cache[index], name_chars, name_color)
+			label_ease = animation_step * 4
+			if (label_ease > 60) { label_ease = 60 }
+			if (entry_label_initialized[index] == 0) {
+				entry_label_x[index] = name_x
+				entry_label_y[index] = name_y
+				entry_label_initialized[index] = 1
+			}
+			else {
+				label_difference = name_x - entry_label_x[index]
+				label_step = label_difference * label_ease / 100
+				if (label_step == 0 && label_difference > 0) { label_step = 1 }
+				elseif (label_step == 0 && label_difference < 0) { label_step = -1 }
+				entry_label_x[index] += label_step
+				if (label_difference > 0 && entry_label_x[index] > name_x) { entry_label_x[index] = name_x }
+				elseif (label_difference < 0 && entry_label_x[index] < name_x) { entry_label_x[index] = name_x }
+				label_difference = name_y - entry_label_y[index]
+				label_step = label_difference * label_ease / 100
+				if (label_step == 0 && label_difference > 0) { label_step = 1 }
+				elseif (label_step == 0 && label_difference < 0) { label_step = -1 }
+				entry_label_y[index] += label_step
+				if (label_difference > 0 && entry_label_y[index] > name_y) { entry_label_y[index] = name_y }
+				elseif (label_difference < 0 && entry_label_y[index] < name_y) { entry_label_y[index] = name_y }
+			}
+			if (entry_label_x[index] < x + sidebar_width + 2) { entry_label_x[index] = x + sidebar_width + 2 }
+			if (entry_label_x[index] + name_width > x + area_width - 2) { entry_label_x[index] = x + area_width - name_width - 2 }
+			if (entry_label_y[index] < y + 11) { entry_label_y[index] = y + 11 }
+			if (entry_label_y[index] > y + area_height - 8) { entry_label_y[index] = y + area_height - 8 }
+			call draw_explorer_text_clipped(entry_label_x[index], entry_label_y[index], entry_name_cache[index], name_chars, name_color)
 		}
+		else { entry_label_initialized[index] = 0 }
 		index += 1
 	}
 	visual_fade = 100

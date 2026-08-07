@@ -1555,7 +1555,7 @@ proc draw_ide_open_picker(window_width: int, window_height: int) {
 		row_tone = graphics::COLOR_8
 		if (entry_index == open_picker_selected) { row_tone = graphics::COLOR_5 }
 		row_clicked = false
-		if (open_picker_guard == 0) { row_clicked = graphics::button_flat(ide_window, panel_x + 3, row_y, row_width, 8, "", row_tone) }
+		if (open_picker_guard == 0) { row_clicked = graphics::button_flat(ide_window, panel_x + 3, row_y, row_width, 8, " ", row_tone) }
 		else { call graphics::fill_rect(ide_window, panel_x + 3, row_y, row_width, 8, row_tone) }
 		if (is_folder) { call graphics::draw_text_small(ide_window, panel_x + 6, row_y + 2, "D", graphics::COLOR_10) }
 		else { call graphics::draw_text_small(ide_window, panel_x + 6, row_y + 2, "F", graphics::COLOR_7) }

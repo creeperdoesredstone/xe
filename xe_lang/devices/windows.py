@@ -611,6 +611,17 @@ class WindowManager:
 		transition = self._transition
 		if transition and transition.handle == handle:
 			self._blend_transition(transition)
+		# Immediate-mode controls normally release capture while they are drawn.
+		# A modal can disappear between press and release, though, leaving its
+		# control absent from the release frame.  Clear only that orphaned capture
+		# after every control has had an opportunity to process the release.
+		if (
+			self._widget_capture is not None
+			and len(self._widget_capture) > 1
+			and self._widget_capture[1] == handle
+			and self.input.frame().left_released
+		):
+			self._widget_capture = None
 
 	def _draw_frame(self, rect: Rect, color: int, width: int) -> None:
 		width = max(1, width)
