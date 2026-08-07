@@ -955,7 +955,7 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 		fail_label = (
 			f"case({label}_{i + 1})"
 			if i < len(node.cases) - 1
-			else (f"default({label})" if node.default_case else f"endswitch({label})")
+			else (f"default({label})" if node.default_case else f"nomatch({label})")
 		)
 
 		if i != 0:
@@ -1030,6 +1030,7 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 			return res
 
 	else:
+		instructions.append((node.end_pos, node.end_pos, f":nomatch({label})"))
 		instructions.append((node.end_pos, node.end_pos, "POP", 1))
 
 	instructions.append(
