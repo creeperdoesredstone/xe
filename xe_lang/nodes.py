@@ -476,7 +476,9 @@ class NewObjectExpression(Node):
 
 
 class FreePointer(Node):
-	pass
+	def __init__(self, start_pos: Position, end_pos: Position, name: str):
+		super().__init__(start_pos, end_pos)
+		self.name: str = name
 
 
 class TypeCast(Node):

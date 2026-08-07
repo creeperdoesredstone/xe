@@ -210,6 +210,8 @@ def parse(tokens: list[Token]) -> Result:
 					return procedure_call()
 				case "enum":
 					return enum_declaration()
+				case "free":
+					return free_statement()
 
 		return expr()
 
@@ -1813,6 +1815,41 @@ def parse(tokens: list[Token]) -> Result:
 			end_pos,
 			enum_name,
 			enum_constants
+		))
+
+	def free_statement() -> Result:
+		start_pos: Position = current_tok.start_pos.copy()
+		res: Result = Result()
+		advance()
+
+		if current_tok._type != TT.AND:
+			return res.fail(InvalidSyntaxError(
+				f"Expected '&' after 'free', found {current_tok.value or current_tok._type} instead.",
+				current_tok.start_pos,
+				current_tok.end_pos
+			))
+		advance()
+
+		if current_tok._type != TT.IDENT:
+			return res.fail(InvalidSyntaxError(
+				f"Expected an identifier after '&', found {current_tok.value or current_tok._type} instead.",
+				current_tok.start_pos,
+				current_tok.end_pos
+			))
+		iden_name: str = current_tok.value
+		end_pos: Position = current_tok.end_pos.copy()
+		advance()
+
+		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF, TT.RBR):
+			return res.fail(InvalidSyntaxError(
+				f"Expected EOL after identifier, found {current_tok.value or current_tok._type} instead.",
+				current_tok.start_pos,
+				current_tok.end_pos
+			))
+		return res.success(FreePointer(
+			start_pos,
+			end_pos,
+			iden_name
 		))
 
 	# other parse subroutines

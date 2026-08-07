@@ -406,7 +406,7 @@ class VM:
 			except Exception:
 				pass
 		self.devices.files.close_all()
-
+		print(self.allocations)
 		return res.success(self.stack[:self.sp])
 
 	def push(self, value) -> None:

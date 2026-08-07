@@ -2096,3 +2096,25 @@ def emit_LibraryCall(node: LibraryCall) -> Result:
 			node.end_pos,
 		)
 	)
+
+
+def emit_FreePointer(node: FreePointer) -> Result:
+	instructions = []
+	instructions += [
+		(node.start_pos, node.end_pos, "PUSH", node.address),
+		(node.start_pos, node.end_pos, "LOADIND"),
+	]
+
+	if node.is_string:
+		instructions += [
+			(node.start_pos, node.end_pos, "DUP", 0),
+			(node.start_pos, node.end_pos, "LOADIND"),
+			(node.start_pos, node.end_pos, "SYS", SyscallID.OS_FREE),
+		]
+
+	instructions += [
+		(node.start_pos, node.end_pos, "SYS", SyscallID.OS_FREE),
+		(node.start_pos, node.end_pos, "PUSH", TRUE),
+		(node.start_pos, node.end_pos, "STORE", node.address)
+	]
+	return Result().success(instructions)

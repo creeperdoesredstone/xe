@@ -2469,6 +2469,36 @@ class SemanticAnalyzer:
 		node.type = member_sym.return_type if member_sym.return_type is not None else Type("none")
 		return res.success(node.type)
 
+	def visit_FreePointer(self, node: FreePointer) -> Result:
+		res: Result = Result()
+		symbol: BaseSymbol | None = self.scope.lookup(node.name)
+		
+		if symbol is None:
+			return res.fail(
+				SemanticError(
+					f"Undefined variable '{node.name}'",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		sym_type: Type = symbol.type
+		node.is_string = False
+		if sym_type.pointer_layers == 0:
+			if sym_type.base != "string":
+				return res.fail(
+					SemanticError(
+						f"Variable '{node.name}' must be a pointer or a string.",
+						node.start_pos,
+						node.end_pos,
+					)
+				)
+			else:
+				node.is_string = True
+
+		node.address = symbol.address
+		return res.success(None)
+
 
 def analyze(ast: Node) -> Result:
 	analyzer = SemanticAnalyzer()
