@@ -433,8 +433,9 @@ class GraphicsDevice:
 				y += 8 * scale
 				continue
 			glyph = FONT_5X7.get(char, FONT_5X7.get(char.upper(), FONT_5X7["\u007f"]))
-			self._draw_glyph(x, y, glyph, 5, color, scale)
-			x += 6 * scale
+			remapped_glyph = tuple(map(lambda n: n >> (5 - glyph[0]), glyph[1:]))
+			self._draw_glyph(x, y, remapped_glyph, glyph[0], color, scale)
+			x += (glyph[0] + 1) * scale
 
 	def draw_text_small(
 		self,

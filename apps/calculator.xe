@@ -1483,7 +1483,7 @@ if (graphical_mode) {
 					call draw_editor_key(keypad_x + button_width + 2, 42, button_width, "sin", graphics::COLOR_8, 1001, expression, &dirty, &error_code)
 					call draw_editor_key(keypad_x + (button_width + 2) * 2, 42, button_width, "cos", graphics::COLOR_8, 1002, expression, &dirty, &error_code)
 					call draw_editor_key(keypad_x + (button_width + 2) * 3, 42, button_width, "tan", graphics::COLOR_8, 1003, expression, &dirty, &error_code)
-					call draw_editor_key(keypad_x + (button_width + 2) * 4, 42, button_width, "sqrt", graphics::COLOR_8, 1007, expression, &dirty, &error_code)
+					call draw_editor_key(keypad_x + (button_width + 2) * 4, 42, button_width, "\x001e", graphics::COLOR_8, 1007, expression, &dirty, &error_code)
 				}
 
 				call draw_editor_key(keypad_x, 56, button_width, "**", graphics::COLOR_1, 1011, expression, &dirty, &error_code)
