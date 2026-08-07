@@ -122,14 +122,21 @@ def _encode_instruction(opcode: str, args: list[int]) -> int:
 	elif arg_count == 1:
 		arg_value = args[0]
 		if wide:
+			if not -0x80000000 <= arg_value <= 0xFFFFFFFF:
+				raise ValueError(f"{opcode} argument is outside the 32-bit range")
 			modifier = (arg_value >> 16) & 0xFFFF
 			arg = arg_value & 0xFFFF
 		else:
+			minimum = -0x8000 if opcode in ("LOADSP", "STORESP") else 0
+			if not minimum <= arg_value <= 0xFFFF:
+				raise ValueError(f"{opcode} argument is outside the 16-bit range")
 			modifier = default_modifier
 			arg = arg_value & 0xFFFF
 	else:
+		if any(not 0 <= value <= 0xFFFF for value in args):
+			raise ValueError(f"{opcode} arguments must be unsigned 16-bit values")
 		modifier = args[0] & 0xFFFF
-		arg = args[1] % 0x10000
+		arg = args[1] & 0xFFFF
 
 	return ((op & 0xF) << 32) | ((modifier & 0xFFFF) << 16) | (arg & 0xFFFF)
 
@@ -161,7 +168,7 @@ def _make_position(fn: str, ftxt: str, line: int, col: int) -> Position:
 	return Position(0, line, col, fn, ftxt)
 
 
-def assemble(fn: str, ftxt: str) -> Result:
+def assemble(fn: str, ftxt: str, *, emit_file: bool = True) -> Result:
 	res = Result()
 	lines = ftxt.splitlines()
 
@@ -386,7 +393,10 @@ def assemble(fn: str, ftxt: str) -> Result:
 
 	for pos, token in data_records:
 		try:
-			data.append(_parse_int(token) & 0xFFFFFFFF)
+			value = _parse_int(token)
+			if not -0x80000000 <= value <= 0xFFFFFFFF:
+				raise ValueError("Data value is outside the 32-bit range")
+			data.append(value & 0xFFFFFFFF)
 		except ValueError as exc:
 			return res.fail(
 				AssemblyError(
@@ -410,7 +420,7 @@ def assemble(fn: str, ftxt: str) -> Result:
 
 	stem = Path(fn).stem
 
-	if not stem.startswith("<"):
+	if emit_file and not stem.startswith("<"):
 		outdir = Path("exe")
 		outdir.mkdir(exist_ok=True)
 
@@ -433,5 +443,7 @@ def assemble_file(path: Path | str) -> Result:
 		return res.fail(AssemblyError(f"Assembly file not found: {path}", pos, pos))
 
 	text = path_obj.read_text(encoding="utf-8")
-	res.register(assemble(str(path_obj), text))
-	return res
+	program = res.register(assemble(str(path_obj), text))
+	if res.error:
+		return res
+	return res.success(program)

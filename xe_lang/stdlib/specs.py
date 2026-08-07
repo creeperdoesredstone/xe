@@ -99,6 +99,11 @@ GRAPHICS_SPEC = LibrarySpec(
 		_builtin("draw_int_small", BuiltInID.GRAPHICS_DRAW_INT_SMALL, ("Window", "int", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_DRAW_INT_SMALL, WINDOW_REF),
 		_builtin("draw_float_small", BuiltInID.GRAPHICS_DRAW_FLOAT_SMALL, ("Window", "int", "int", "float", "int"), None, SyscallID.APP_GRAPHICS_DRAW_FLOAT_SMALL, WINDOW_REF),
 		_builtin("button_flat", BuiltInID.GRAPHICS_BUTTON_FLAT, ("Window", "int", "int", "int", "int", "string", "int"), "bool", SyscallID.APP_GRAPHICS_BUTTON_FLAT, WINDOW_REF),
+		_builtin("draw_atom", BuiltInID.GRAPHICS_DRAW_ATOM, ("Window", "int", "int", "int", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_DRAW_ATOM, WINDOW_REF),
+		_builtin("modifiers", BuiltInID.GRAPHICS_MODIFIERS, (), "int", SyscallID.APP_GRAPHICS_MODIFIERS),
+		_builtin("right_mouse_down", BuiltInID.GRAPHICS_RIGHT_MOUSE_DOWN, (), "bool", SyscallID.APP_GRAPHICS_RIGHT_MOUSE_DOWN),
+		_builtin("right_mouse_pressed", BuiltInID.GRAPHICS_RIGHT_MOUSE_PRESSED, (), "bool", SyscallID.APP_GRAPHICS_RIGHT_MOUSE_PRESSED),
+		_builtin("right_mouse_released", BuiltInID.GRAPHICS_RIGHT_MOUSE_RELEASED, (), "bool", SyscallID.APP_GRAPHICS_RIGHT_MOUSE_RELEASED),
 	),
 	(
 		ConstantSpec("SCREEN_WIDTH", 480),
@@ -113,7 +118,9 @@ GRAPHICS_SPEC = LibrarySpec(
 		ConstantSpec("WINDOW_FULLSCREEN", 2),
 		ConstantSpec("WINDOW_CLOSED", 3),
 		ConstantSpec("MOUSE_LEFT", 1),
+		ConstantSpec("MOUSE_RIGHT", 2),
 		ConstantSpec("KEY_BACKSPACE", 8),
+		ConstantSpec("KEY_TAB", 9),
 		ConstantSpec("KEY_ENTER", 13),
 		ConstantSpec("KEY_ESCAPE", 27),
 		ConstantSpec("KEY_SPACE", 32),
@@ -122,6 +129,17 @@ GRAPHICS_SPEC = LibrarySpec(
 		ConstantSpec("KEY_RIGHT", 5),
 		ConstantSpec("KEY_DOWN", 6),
 		ConstantSpec("KEY_DELETE", 127),
+		ConstantSpec("MOD_SHIFT", 1),
+		ConstantSpec("MOD_CTRL", 2),
+		ConstantSpec("MOD_ALT", 4),
+		ConstantSpec("ATOM_CONNECTED", 0),
+		ConstantSpec("ATOM_MISSING", 1),
+		ConstantSpec("ATOM_EXECUTING", 2),
+		ConstantSpec("ATOM_ERROR", 3),
+		ConstantSpec("ATOM_DISABLED", 4),
+		ConstantSpec("RING_NONE", 0),
+		ConstantSpec("RING_SOLID", 1),
+		ConstantSpec("RING_DOTTED", 2),
 	),
 )
 
@@ -135,11 +153,24 @@ OS_SPEC = LibrarySpec(
 		_builtin("background_count", BuiltInID.OS_BACKGROUND_COUNT, (), "int", SyscallID.APP_OS_BACKGROUND_COUNT),
 		_builtin("palette_count", BuiltInID.OS_PALETTE_COUNT, (), "int", SyscallID.APP_OS_PALETTE_COUNT),
 		_builtin("ticks", BuiltInID.OS_TICKS, (), "int", SyscallID.OS_GET_TICKS),
+		_builtin("year", BuiltInID.OS_YEAR, (), "int", SyscallID.APP_OS_YEAR),
+		_builtin("month", BuiltInID.OS_MONTH, (), "int", SyscallID.APP_OS_MONTH),
+		_builtin("day", BuiltInID.OS_DAY, (), "int", SyscallID.APP_OS_DAY),
+		_builtin("hour", BuiltInID.OS_HOUR, (), "int", SyscallID.OS_GET_HOUR),
+		_builtin("minute", BuiltInID.OS_MINUTE, (), "int", SyscallID.OS_GET_MINUTE),
 		_builtin("open_read", BuiltInID.OS_OPEN_READ, ("string",), "File", SyscallID.APP_OS_OPEN_READ),
 		_builtin("open_write", BuiltInID.OS_OPEN_WRITE, ("string",), "File", SyscallID.APP_OS_OPEN_WRITE),
 		_builtin("read", BuiltInID.OS_READ, ("File",), "string", SyscallID.APP_OS_READ),
 		_builtin("write", BuiltInID.OS_WRITE, ("File", "string"), "bool", SyscallID.APP_OS_WRITE),
 		_builtin("close", BuiltInID.OS_CLOSE, ("string",), None, SyscallID.APP_OS_CLOSE),
+		_builtin("entry_count", BuiltInID.OS_ENTRY_COUNT, ("string",), "int", SyscallID.APP_OS_ENTRY_COUNT),
+		_builtin("entry_name", BuiltInID.OS_ENTRY_NAME, ("string", "int"), "string", SyscallID.APP_OS_ENTRY_NAME),
+		_builtin("entry_is_directory", BuiltInID.OS_ENTRY_IS_DIRECTORY, ("string", "int"), "bool", SyscallID.APP_OS_ENTRY_IS_DIRECTORY),
+		_builtin("path_exists", BuiltInID.OS_PATH_EXISTS, ("string",), "bool", SyscallID.APP_OS_PATH_EXISTS),
+		_builtin("make_file", BuiltInID.OS_MAKE_FILE, ("string",), "bool", SyscallID.APP_OS_MAKE_FILE),
+		_builtin("make_directory", BuiltInID.OS_MAKE_DIRECTORY, ("string",), "bool", SyscallID.APP_OS_MAKE_DIRECTORY),
+		_builtin("rename", BuiltInID.OS_RENAME, ("string", "string"), "bool", SyscallID.APP_OS_RENAME),
+		_builtin("delete", BuiltInID.OS_DELETE, ("string",), "bool", SyscallID.APP_OS_DELETE),
 		_builtin(
 			"apply_preferences",
 			BuiltInID.OS_APPLY_PREFERENCES,
@@ -188,6 +219,7 @@ CURRENCY_SPEC = LibrarySpec(
 		_builtin("rate", BuiltInID.CURRENCY_RATE, (), "float", SyscallID.APP_CURRENCY_RATE),
 		_builtin("point_count", BuiltInID.CURRENCY_POINT_COUNT, (), "int", SyscallID.APP_CURRENCY_POINT_COUNT),
 		_builtin("point", BuiltInID.CURRENCY_POINT, ("int",), "float", SyscallID.APP_CURRENCY_POINT),
+		_builtin("point_date", BuiltInID.CURRENCY_POINT_DATE, ("int",), "string", SyscallID.APP_CURRENCY_POINT_DATE),
 	),
 	(
 		ConstantSpec("RANGE_1D", 0),
@@ -204,7 +236,47 @@ CURRENCY_SPEC = LibrarySpec(
 )
 
 
-STANDARD_LIBRARY_SPECS = (GRAPHICS_SPEC, OS_SPEC, CURRENCY_SPEC)
+COMPILER_SPEC = LibrarySpec(
+	"compiler",
+	(
+		_builtin("check", BuiltInID.COMPILER_CHECK, ("string",), "bool", SyscallID.APP_COMPILER_CHECK),
+		_builtin("error", BuiltInID.COMPILER_ERROR, (), "string", SyscallID.APP_COMPILER_ERROR),
+		_builtin("error_line", BuiltInID.COMPILER_ERROR_LINE, (), "int", SyscallID.APP_COMPILER_ERROR_LINE),
+		_builtin("error_column", BuiltInID.COMPILER_ERROR_COLUMN, (), "int", SyscallID.APP_COMPILER_ERROR_COLUMN),
+		_builtin("assembly", BuiltInID.COMPILER_ASSEMBLY, (), "string", SyscallID.APP_COMPILER_ASSEMBLY),
+		_builtin("bytecode_size", BuiltInID.COMPILER_BYTECODE_SIZE, (), "int", SyscallID.APP_COMPILER_BYTECODE_SIZE),
+		_builtin("load_visual", BuiltInID.COMPILER_LOAD_VISUAL, ("string",), "int", SyscallID.APP_COMPILER_LOAD_VISUAL),
+		_builtin("atom_count", BuiltInID.COMPILER_ATOM_COUNT, (), "int", SyscallID.APP_COMPILER_ATOM_COUNT),
+		_builtin("atom_text", BuiltInID.COMPILER_ATOM_TEXT, ("int",), "string", SyscallID.APP_COMPILER_ATOM_TEXT),
+		_builtin("atom_kind", BuiltInID.COMPILER_ATOM_KIND, ("int",), "int", SyscallID.APP_COMPILER_ATOM_KIND),
+		_builtin("atom_line", BuiltInID.COMPILER_ATOM_LINE, ("int",), "int", SyscallID.APP_COMPILER_ATOM_LINE),
+		_builtin("atom_enabled", BuiltInID.COMPILER_ATOM_ENABLED, ("int",), "bool", SyscallID.APP_COMPILER_ATOM_ENABLED),
+		_builtin("set_atom_enabled", BuiltInID.COMPILER_SET_ATOM_ENABLED, ("int", "bool"), "bool", SyscallID.APP_COMPILER_SET_ATOM_ENABLED),
+		_builtin("visual_source", BuiltInID.COMPILER_VISUAL_SOURCE, (), "string", SyscallID.APP_COMPILER_VISUAL_SOURCE),
+		_builtin("script_count", BuiltInID.COMPILER_SCRIPT_COUNT, (), "int", SyscallID.APP_COMPILER_SCRIPT_COUNT),
+		_builtin("script_name", BuiltInID.COMPILER_SCRIPT_NAME, ("int",), "string", SyscallID.APP_COMPILER_SCRIPT_NAME),
+		_builtin("script_shell", BuiltInID.COMPILER_SCRIPT_SHELL, ("int",), "int", SyscallID.APP_COMPILER_SCRIPT_SHELL),
+		_builtin("script_line", BuiltInID.COMPILER_SCRIPT_LINE, ("int",), "int", SyscallID.APP_COMPILER_SCRIPT_LINE),
+		_builtin("script_enabled", BuiltInID.COMPILER_SCRIPT_ENABLED, ("int",), "bool", SyscallID.APP_COMPILER_SCRIPT_ENABLED),
+		_builtin("load_document", BuiltInID.COMPILER_LOAD_DOCUMENT, ("int", "string", "string"), "int", SyscallID.APP_COMPILER_LOAD_DOCUMENT),
+		_builtin("document_script_count", BuiltInID.COMPILER_DOCUMENT_SCRIPT_COUNT, ("int",), "int", SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_COUNT),
+		_builtin("document_script_name", BuiltInID.COMPILER_DOCUMENT_SCRIPT_NAME, ("int", "int"), "string", SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_NAME),
+		_builtin("document_script_shell", BuiltInID.COMPILER_DOCUMENT_SCRIPT_SHELL, ("int", "int"), "int", SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_SHELL),
+		_builtin("document_script_line", BuiltInID.COMPILER_DOCUMENT_SCRIPT_LINE, ("int", "int"), "int", SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_LINE),
+		_builtin("document_script_enabled", BuiltInID.COMPILER_DOCUMENT_SCRIPT_ENABLED, ("int", "int"), "bool", SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_ENABLED),
+		_builtin("document_source", BuiltInID.COMPILER_DOCUMENT_SOURCE, ("int",), "string", SyscallID.APP_COMPILER_DOCUMENT_SOURCE),
+	),
+	(
+		ConstantSpec("ATOM_EVENT", 0),
+		ConstantSpec("ATOM_INSTRUCTION", 1),
+		ConstantSpec("ATOM_VALUE", 2),
+		ConstantSpec("ATOM_CONDITION", 3),
+		ConstantSpec("ATOM_DECLARATION", 4),
+	),
+)
+
+
+STANDARD_LIBRARY_SPECS = (GRAPHICS_SPEC, OS_SPEC, CURRENCY_SPEC, COMPILER_SPEC)
 
 BUILTIN_SYSCALLS = {
 	builtin.builtin_id: builtin.syscall

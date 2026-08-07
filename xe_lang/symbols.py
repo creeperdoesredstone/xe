@@ -68,7 +68,7 @@ class VariableSymbol(BaseSymbol):
 
 	def __repr__(self) -> str:
 		if self.const_value is not None:
-			return f"<Const Symbol '{self.name}': {self.const_value})>"
+			return f"<Const Symbol '{self.name}': {self.const_value}>"
 		loc_str = "local" if self.is_local else "global"
 		arr_str = f"[{self.arr_length}]" if self.arr_length > 0 else ""
 		return (
@@ -319,7 +319,7 @@ def init_libraries(scope: Scope):
 					"title": VariableSymbol("title", Type("string"), address=4),
 					"state": VariableSymbol("state", Type("int"), address=5),
 					"_handle": VariableSymbol("_handle", Type("int"), address=6),
-					"_reserved0": VariableSymbol("_reserved0", Type("int"), address=7),
+					"ui_scale": VariableSymbol("ui_scale", Type("int"), address=7),
 					"_reserved1": VariableSymbol("_reserved1", Type("int"), address=8),
 					"_reserved2": VariableSymbol("_reserved2", Type("int"), address=9),
 				},

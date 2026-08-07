@@ -1,14 +1,14 @@
 from xe_lang.helper import TT
 
 BINARY_RULES = {
-	
+
 	# Arithmetic
 	(TT.ADD, "int", "int"): "int",
 	(TT.ADD, "int", "float"): "float",
 	(TT.ADD, "float", "int"): "float",
 	(TT.ADD, "float", "float"): "float",
 	(TT.ADD, "string", "string"): "string",
-    (TT.ADD, "char", "char"): "int",
+	(TT.ADD, "char", "char"): "int",
 	(TT.ADD, "int", "char"): "int",
 	(TT.ADD, "char", "int"): "int",
 
@@ -16,7 +16,7 @@ BINARY_RULES = {
 	(TT.SUB, "int", "float"): "float",
 	(TT.SUB, "float", "int"): "float",
 	(TT.SUB, "float", "float"): "float",
-    (TT.SUB, "char", "char"): "int",
+	(TT.SUB, "char", "char"): "int",
 	(TT.SUB, "int", "char"): "int",
 	(TT.SUB, "char", "int"): "int",
 
@@ -45,7 +45,7 @@ BINARY_RULES = {
 	(TT.LT, "int", "float"): "bool",
 	(TT.LT, "float", "int"): "bool",
 	(TT.LT, "float", "float"): "bool",
-    (TT.LT, "char", "char"): "bool",
+	(TT.LT, "char", "char"): "bool",
 	(TT.LT, "int", "char"): "bool",
 	(TT.LT, "char", "int"): "bool",
 
@@ -53,7 +53,7 @@ BINARY_RULES = {
 	(TT.LE, "int", "float"): "bool",
 	(TT.LE, "float", "int"): "bool",
 	(TT.LE, "float", "float"): "bool",
-    (TT.LE, "char", "char"): "bool",
+	(TT.LE, "char", "char"): "bool",
 	(TT.LE, "int", "char"): "bool",
 	(TT.LE, "char", "int"): "bool",
 
@@ -61,7 +61,7 @@ BINARY_RULES = {
 	(TT.GT, "int", "float"): "bool",
 	(TT.GT, "float", "int"): "bool",
 	(TT.GT, "float", "float"): "bool",
-    (TT.GT, "char", "char"): "bool",
+	(TT.GT, "char", "char"): "bool",
 	(TT.GT, "int", "char"): "bool",
 	(TT.GT, "char", "int"): "bool",
 
@@ -69,10 +69,10 @@ BINARY_RULES = {
 	(TT.GE, "int", "float"): "bool",
 	(TT.GE, "float", "int"): "bool",
 	(TT.GE, "float", "float"): "bool",
-    (TT.GE, "char", "char"): "bool",
+	(TT.GE, "char", "char"): "bool",
 	(TT.GE, "int", "char"): "bool",
 	(TT.GE, "char", "int"): "bool",
-	
+
 	# Equality
 	(TT.EQ, "int", "int"): "bool",
 	(TT.EQ, "int", "float"): "bool",
@@ -80,9 +80,9 @@ BINARY_RULES = {
 	(TT.EQ, "float", "float"): "bool",
 	(TT.EQ, "bool", "bool"): "bool",
 	(TT.EQ, "string", "string"): "bool",
-    (TT.EQ, "char", "char"): "bool",
-    (TT.EQ, "int", "char"): "bool",
-    (TT.EQ, "char", "int"): "bool",
+	(TT.EQ, "char", "char"): "bool",
+	(TT.EQ, "int", "char"): "bool",
+	(TT.EQ, "char", "int"): "bool",
 
 	(TT.NE, "int", "int"): "bool",
 	(TT.NE, "int", "float"): "bool",
@@ -90,15 +90,15 @@ BINARY_RULES = {
 	(TT.NE, "float", "float"): "bool",
 	(TT.NE, "bool", "bool"): "bool",
 	(TT.NE, "string", "string"): "bool",
-    (TT.NE, "char", "char"): "bool",
+	(TT.NE, "char", "char"): "bool",
 	(TT.NE, "int", "char"): "bool",
 	(TT.NE, "char", "int"): "bool",
-	
+
 	# Logical
 	(TT.ANDL, "bool", "bool"): "bool",
 	(TT.ORL, "bool", "bool"): "bool",
 	(TT.XORL, "bool", "bool"): "bool",
-	
+
 	# Bitwise
 	(TT.AND, "int", "int"): "int",
 	(TT.OR, "int", "int"): "int",
@@ -122,7 +122,7 @@ BINARY_OPCODE_MAP = {
 	(TT.ADD, "int"):   ["ADDI"],
 	(TT.ADD, "float"): ["ADDF"],
 	(TT.ADD, "string"): ["SYS", 10],
-	
+
 	(TT.SUB, "int"):   ["SUBI"],
 	(TT.SUB, "float"): ["SUBF"],
 	(TT.MUL, "int"):   ["MULI"],
@@ -133,17 +133,17 @@ BINARY_OPCODE_MAP = {
 	(TT.MOD, "float"): ["MODF"],
 	(TT.POW, "int"):   ["POWI"],
 	(TT.POW, "float"): ["POWF"],
-	
+
 	# bitwise
 	(TT.AND, "int"): ["AND"],
 	(TT.OR, "int"):  ["OR"],
 	(TT.XOR, "int"): ["XOR"],
-	
+
 	# logical
 	(TT.ANDL, "bool"): ["AND"],
 	(TT.ORL, "bool"):  ["OR"],
 	(TT.XORL, "bool"): ["XOR"],
-	
+
 	# comparison
 	(TT.EQ, "bool"): ["EQ"],
 	(TT.NE, "bool"): ["NE"],

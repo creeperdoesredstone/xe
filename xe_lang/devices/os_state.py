@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import datetime
 from threading import RLock
+from typing import Callable
 
 from .graphics import GraphicsDevice
 
@@ -68,9 +70,14 @@ class OSDevice:
 	def __init__(
 		self,
 		settings: OSSettings | None = None,
+		now_provider: Callable[[], datetime] | None = None,
 	) -> None:
 		self._settings = settings or OSSettings()
+		self._now_provider = now_provider or datetime.now
 		self._lock = RLock()
+
+	def now(self) -> datetime:
+		return self._now_provider()
 
 	@property
 	def settings(self) -> OSSettings:

@@ -3,20 +3,43 @@
 
 var calculator_window: graphics::Window
 
+enum class FunctionCode {
+	NONE,
+	SIN,
+	COS,
+	TAN,
+	ASIN,
+	ACOS,
+	ATAN,
+	SQRT,
+	POW
+}
+
+enum class ErrorCode {
+	NONE,
+	EXPECTED_VALUE,
+	MALFORMED_NUM,
+	UNK_IDENT,
+	EXPECTED_PR_OR_COMMA,
+	ZERO_DIV_OR_MOD,
+	DOMAIN_ERROR,
+	UNEXPECTED_TRAIL
+}
+
 fn is_whitespace(value: char) bool {
-	return value == ' ' || value == '\t' || value == '\n' || value == 13
+	return value == 32 || value == 9 || value == 10 || value == 13
 }
 
 fn is_digit(value: char) bool {
-	return value >= '0' && value <= '9'
+	return value >= 48 && value <= 57
 }
 
 fn is_letter(value: char) bool {
-	return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z')
+	return (value >= 65 && value <= 90) || (value >= 97 && value <= 122)
 }
 
 fn is_identifier_char(value: char) bool {
-	return is_letter(value) || is_digit(value) || value == '_'
+	return is_letter(value) || is_digit(value) || value == 95
 }
 
 fn is_integral(value: float) bool {
@@ -97,7 +120,7 @@ proc set_error(error_code: int*, error_position: int*, code: int, position: int)
 fn read_operator_code(text: string, position: int) int {
 	var code: int
 	code = peek_code(text, position)
-	
+
 	switch (code) {
 		case '+' { return 1 }
 		case '-' { return 2 }
@@ -107,7 +130,6 @@ fn read_operator_code(text: string, position: int) int {
 		}
 		case '/' { return 4 }
 		case '%' { return 5 }
-		default { return 0 }
 	}
 
 	return 0
@@ -135,22 +157,22 @@ fn apply_function(function_code: int, first: float, second: float, degrees_mode:
 		angle = first * 180.0 / math::pi
 	}
 
-	if (function_code == 1) {
+	if (function_code == FunctionCode.SIN) {
 		return math::sin(angle)
 	}
-	elseif (function_code == 2) {
+	elseif (function_code == FunctionCode.COS) {
 		return math::cos(angle)
 	}
-	elseif (function_code == 3) {
+	elseif (function_code == FunctionCode.TAN) {
 		return math::tan(angle)
 	}
-	elseif (function_code == 4 || function_code == 5) {
+	elseif (function_code == FunctionCode.ASIN || function_code == FunctionCode.ACOS) {
 		if (first < -1.0 || first > 1.0) {
 			call set_error(error_code, error_position, 6, function_position)
 			return 0.0
 		}
 
-		if (function_code == 4) {
+		if (function_code == FunctionCode.ASIN) {
 			result = math::asin(first)
 		}
 		else {
@@ -162,21 +184,21 @@ fn apply_function(function_code: int, first: float, second: float, degrees_mode:
 		}
 		return result
 	}
-	elseif (function_code == 6) {
+	elseif (function_code == FunctionCode.ATAN) {
 		result = math::atan(first)
 		if (!degrees_mode) {
 			result = result * math::pi / 180.0
 		}
 		return result
 	}
-	elseif (function_code == 7) {
+	elseif (function_code == FunctionCode.SQRT) {
 		if (first < 0.0) {
 			call set_error(error_code, error_position, 6, function_position)
 			return 0.0
 		}
 		return math::sqrt(first)
 	}
-	elseif (function_code == 8) {
+	elseif (function_code == FunctionCode.POW) {
 		if (first == 0.0 && second < 0.0) {
 			call set_error(error_code, error_position, 6, function_position)
 			return 0.0
@@ -233,7 +255,7 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 			left = -left
 		}
 	}
-	elseif ((current_code >= '0' && current_code <= '9') || current_code == '-') {
+	elseif ((current_code >= '0' && current_code <= '9') || current_code == '.') {
 		left = 0.0
 		divisor = 1.0
 		has_digit = false
@@ -297,28 +319,28 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 			matched_constant = true
 		}
 		elseif (match_name(text, position, "sin")) {
-			function_code = 1
+			function_code = FunctionCode.SIN
 		}
 		elseif (match_name(text, position, "cos")) {
-			function_code = 2
+			function_code = FunctionCode.COS
 		}
 		elseif (match_name(text, position, "tan")) {
-			function_code = 3
+			function_code = FunctionCode.TAN
 		}
 		elseif (match_name(text, position, "asin")) {
-			function_code = 4
+			function_code = FunctionCode.ASIN
 		}
 		elseif (match_name(text, position, "acos")) {
-			function_code = 5
+			function_code = FunctionCode.ACOS
 		}
 		elseif (match_name(text, position, "atan")) {
-			function_code = 6
+			function_code = FunctionCode.ATAN
 		}
 		elseif (match_name(text, position, "sqrt")) {
-			function_code = 7
+			function_code = FunctionCode.SQRT
 		}
 		elseif (match_name(text, position, "pow")) {
-			function_code = 8
+			function_code = FunctionCode.POW
 		}
 		else {
 			scanning_identifier = true
@@ -355,7 +377,7 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 			second_argument = 0.0
 			if (function_code == 8) {
 				call skip_whitespace(text, position)
-				if (peek_code(text, *position) != ',') {
+				if (peek_code(text, *position) != 44) {
 					call set_error(error_code, error_position, 4, *position)
 					return 0.0
 				}
@@ -391,13 +413,13 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 		operator_position = *position
 		postfix_percentage = false
 
-		if (peek_code(text, *position) == '%') {
+		if (peek_code(text, *position) == 37) {
 			lookahead_position = *position + 1
 			while (lookahead_position < xestring::strlen(text) && is_whitespace(text[lookahead_position])) {
 				lookahead_position += 1
 			}
 			lookahead_code = peek_code(text, lookahead_position)
-			if (!((lookahead_code >= '0' && lookahead_code <= '9') || lookahead_code == '.' || lookahead_code == '(' || (lookahead_code >= 'a' && lookahead_code <= 'z'))) {
+			if (!((lookahead_code >= 48 && lookahead_code <= 57) || lookahead_code == 46 || lookahead_code == 40 || (lookahead_code >= 97 && lookahead_code <= 122))) {
 				left /= 100.0
 				*position += 1
 				postfix_percentage = true
@@ -494,25 +516,25 @@ fn evaluate_expression(text: string, degrees_mode: bool, error_code: int*, error
 proc print_calculator_error(error_code: int, error_position: int) {
 	out << "Error at " << error_position + 1 << ": "
 
-	if (error_code == 1) {
+	if (error_code == ErrorCode.EXPECTED_VALUE) {
 		out << "expected a value"
 	}
-	elseif (error_code == 2) {
+	elseif (error_code == ErrorCode.MALFORMED_NUM) {
 		out << "malformed number"
 	}
-	elseif (error_code == 3) {
+	elseif (error_code == ErrorCode.UNK_IDENT) {
 		out << "unknown identifier or function"
 	}
-	elseif (error_code == 4) {
+	elseif (error_code == ErrorCode.EXPECTED_PR_OR_COMMA) {
 		out << "expected '(', ')', or ','"
 	}
-	elseif (error_code == 5) {
+	elseif (error_code == ErrorCode.ZERO_DIV_MOD) {
 		out << "division or modulo by zero"
 	}
-	elseif (error_code == 6) {
+	elseif (error_code == ErrorCode.DOMAIN_ERROR) {
 		out << "math domain error"
 	}
-	elseif (error_code == 7) {
+	elseif (error_code == ErrorCode.UNEXPECTED_TRAIL) {
 		out << "unexpected trailing input"
 	}
 	else {
@@ -551,103 +573,103 @@ proc draw_calculator_status(x: int, y: int, text: string, result: float, error_c
 }
 
 proc append_editor_key(text: string, key: int) {
-	if (key == '0') {
+	if (key == 48) {
 		call xestring::append(text, "0")
 	}
-	elseif (key == '1') {
+	elseif (key == 49) {
 		call xestring::append(text, "1")
 	}
-	elseif (key == '2') {
+	elseif (key == 50) {
 		call xestring::append(text, "2")
 	}
-	elseif (key == '3') {
+	elseif (key == 51) {
 		call xestring::append(text, "3")
 	}
-	elseif (key == '4') {
+	elseif (key == 52) {
 		call xestring::append(text, "4")
 	}
-	elseif (key == '5') {
+	elseif (key == 53) {
 		call xestring::append(text, "5")
 	}
-	elseif (key == '6') {
+	elseif (key == 54) {
 		call xestring::append(text, "6")
 	}
-	elseif (key == '7') {
+	elseif (key == 55) {
 		call xestring::append(text, "7")
 	}
-	elseif (key == '8') {
+	elseif (key == 56) {
 		call xestring::append(text, "8")
 	}
-	elseif (key == '9') {
+	elseif (key == 57) {
 		call xestring::append(text, "9")
 	}
-	elseif (key == ' ') {
+	elseif (key == 32) {
 		call xestring::append(text, " ")
 	}
-	elseif (key == '%') {
+	elseif (key == 37) {
 		call xestring::append(text, "%")
 	}
-	elseif (key == '(') {
+	elseif (key == 40) {
 		call xestring::append(text, "(")
 	}
-	elseif (key == ')') {
+	elseif (key == 41) {
 		call xestring::append(text, ")")
 	}
-	elseif (key == '*') {
+	elseif (key == 42) {
 		call xestring::append(text, "*")
 	}
-	elseif (key == '+') {
+	elseif (key == 43) {
 		call xestring::append(text, "+")
 	}
-	elseif (key == ',') {
+	elseif (key == 44) {
 		call xestring::append(text, ",")
 	}
-	elseif (key == '-') {
+	elseif (key == 45) {
 		call xestring::append(text, "-")
 	}
-	elseif (key == '.') {
+	elseif (key == 46) {
 		call xestring::append(text, ".")
 	}
-	elseif (key == '/') {
+	elseif (key == 47) {
 		call xestring::append(text, "/")
 	}
-	elseif (key == 'A' || key == 'a') {
+	elseif (key == 65 || key == 97) {
 		call xestring::append(text, "a")
 	}
-	elseif (key == 'B' || key == 'c') {
+	elseif (key == 67 || key == 99) {
 		call xestring::append(text, "c")
 	}
-	elseif (key == 'E' || key == 'e') {
+	elseif (key == 69 || key == 101) {
 		call xestring::append(text, "e")
 	}
-	elseif (key == 'I' || key == 'i') {
+	elseif (key == 73 || key == 105) {
 		call xestring::append(text, "i")
 	}
-	elseif (key == 'N' || key == 'n') {
+	elseif (key == 78 || key == 110) {
 		call xestring::append(text, "n")
 	}
-	elseif (key == 'O' || key == 'o') {
+	elseif (key == 79 || key == 111) {
 		call xestring::append(text, "o")
 	}
-	elseif (key == 'P' || key == 'p') {
+	elseif (key == 80 || key == 112) {
 		call xestring::append(text, "p")
 	}
-	elseif (key == 'Q' || key == 'q') {
+	elseif (key == 81 || key == 113) {
 		call xestring::append(text, "q")
 	}
-	elseif (key == 'R' || key == 'r') {
+	elseif (key == 82 || key == 114) {
 		call xestring::append(text, "r")
 	}
-	elseif (key == 'S' || key == 's') {
+	elseif (key == 83 || key == 115) {
 		call xestring::append(text, "s")
 	}
-	elseif (key == 'T' || key == 't') {
+	elseif (key == 84 || key == 116) {
 		call xestring::append(text, "t")
 	}
-	elseif (key == 'W' || key == 'w') {
+	elseif (key == 87 || key == 119) {
 		call xestring::append(text, "w")
 	}
-	elseif (key == '^') {
+	elseif (key == 94) {
 		call xestring::append(text, "**")
 	}
 	elseif (key == 1001) {
@@ -687,6 +709,14 @@ proc append_editor_key(text: string, key: int) {
 
 proc draw_editor_key(x: int, y: int, width: int, label: string, color: int, key: int, text: string, dirty: bool*, error: int*) {
 	if (graphics::button_tone(calculator_window, x, y, width, 11, label, color)) {
+		call append_editor_key(text, key)
+		*dirty = true
+		*error = 0
+	}
+}
+
+proc draw_editor_key_sized(x: int, y: int, width: int, height: int, label: string, color: int, key: int, text: string, dirty: bool*, error: int*) {
+	if (graphics::button_tone(calculator_window, x, y, width, height, label, color)) {
 		call append_editor_key(text, key)
 		*dirty = true
 		*error = 0
@@ -767,36 +797,41 @@ proc evaluate_editor(text: string, degrees_mode: bool, result: float*, error_cod
 	}
 }
 
-proc draw_standard_keypad(x: int, width: int, text: string, dirty: bool*, error: int*, result: float*, error_position: int*, degrees_mode: bool) {
+proc draw_standard_keypad(x: int, y: int, width: int, height: int, text: string, dirty: bool*, error: int*, result: float*, error_position: int*, degrees_mode: bool) {
 	var key_width: int
+	var key_height: int
+	var row_step: int
 	key_width = (width - 6) / 4
-	call draw_editor_key(x, 42, key_width, "7", graphics::COLOR_5, 55, text, dirty, error)
-	call draw_editor_key(x + key_width + 2, 42, key_width, "8", graphics::COLOR_5, 56, text, dirty, error)
-	call draw_editor_key(x + (key_width + 2) * 2, 42, key_width, "9", graphics::COLOR_5, 57, text, dirty, error)
-	call draw_editor_key(x + (key_width + 2) * 3, 42, key_width, "/", graphics::COLOR_3, 47, text, dirty, error)
-	call draw_editor_key(x, 56, key_width, "4", graphics::COLOR_5, 52, text, dirty, error)
-	call draw_editor_key(x + key_width + 2, 56, key_width, "5", graphics::COLOR_5, 53, text, dirty, error)
-	call draw_editor_key(x + (key_width + 2) * 2, 56, key_width, "6", graphics::COLOR_5, 54, text, dirty, error)
-	call draw_editor_key(x + (key_width + 2) * 3, 56, key_width, "*", graphics::COLOR_3, 42, text, dirty, error)
-	call draw_editor_key(x, 70, key_width, "1", graphics::COLOR_5, 49, text, dirty, error)
-	call draw_editor_key(x + key_width + 2, 70, key_width, "2", graphics::COLOR_5, 50, text, dirty, error)
-	call draw_editor_key(x + (key_width + 2) * 2, 70, key_width, "3", graphics::COLOR_5, 51, text, dirty, error)
-	call draw_editor_key(x + (key_width + 2) * 3, 70, key_width, "-", graphics::COLOR_3, 45, text, dirty, error)
-	call draw_editor_key(x, 84, key_width, "0", graphics::COLOR_5, 48, text, dirty, error)
-	call draw_editor_key(x + key_width + 2, 84, key_width, ".", graphics::COLOR_5, 46, text, dirty, error)
-	call draw_editor_key(x + (key_width + 2) * 2, 84, key_width, "%", graphics::COLOR_1, 37, text, dirty, error)
-	call draw_editor_key(x + (key_width + 2) * 3, 84, key_width, "+", graphics::COLOR_3, 43, text, dirty, error)
-	if (graphics::button_tone(calculator_window, x, 100, key_width, 11, "DEL", graphics::COLOR_4)) {
+	key_height = (height - 8) / 5
+	if (key_height < 7) { key_height = 7 }
+	row_step = key_height + 2
+	call draw_editor_key_sized(x, y, key_width, key_height, "7", graphics::COLOR_5, 55, text, dirty, error)
+	call draw_editor_key_sized(x + key_width + 2, y, key_width, key_height, "8", graphics::COLOR_5, 56, text, dirty, error)
+	call draw_editor_key_sized(x + (key_width + 2) * 2, y, key_width, key_height, "9", graphics::COLOR_5, 57, text, dirty, error)
+	call draw_editor_key_sized(x + (key_width + 2) * 3, y, key_width, key_height, "/", graphics::COLOR_3, 47, text, dirty, error)
+	call draw_editor_key_sized(x, y + row_step, key_width, key_height, "4", graphics::COLOR_5, 52, text, dirty, error)
+	call draw_editor_key_sized(x + key_width + 2, y + row_step, key_width, key_height, "5", graphics::COLOR_5, 53, text, dirty, error)
+	call draw_editor_key_sized(x + (key_width + 2) * 2, y + row_step, key_width, key_height, "6", graphics::COLOR_5, 54, text, dirty, error)
+	call draw_editor_key_sized(x + (key_width + 2) * 3, y + row_step, key_width, key_height, "*", graphics::COLOR_3, 42, text, dirty, error)
+	call draw_editor_key_sized(x, y + row_step * 2, key_width, key_height, "1", graphics::COLOR_5, 49, text, dirty, error)
+	call draw_editor_key_sized(x + key_width + 2, y + row_step * 2, key_width, key_height, "2", graphics::COLOR_5, 50, text, dirty, error)
+	call draw_editor_key_sized(x + (key_width + 2) * 2, y + row_step * 2, key_width, key_height, "3", graphics::COLOR_5, 51, text, dirty, error)
+	call draw_editor_key_sized(x + (key_width + 2) * 3, y + row_step * 2, key_width, key_height, "-", graphics::COLOR_3, 45, text, dirty, error)
+	call draw_editor_key_sized(x, y + row_step * 3, key_width, key_height, "0", graphics::COLOR_5, 48, text, dirty, error)
+	call draw_editor_key_sized(x + key_width + 2, y + row_step * 3, key_width, key_height, ".", graphics::COLOR_5, 46, text, dirty, error)
+	call draw_editor_key_sized(x + (key_width + 2) * 2, y + row_step * 3, key_width, key_height, "%", graphics::COLOR_1, 37, text, dirty, error)
+	call draw_editor_key_sized(x + (key_width + 2) * 3, y + row_step * 3, key_width, key_height, "+", graphics::COLOR_3, 43, text, dirty, error)
+	if (graphics::button_tone(calculator_window, x, y + row_step * 4, key_width, key_height, "DEL", graphics::COLOR_4)) {
 		call erase_last_editor_key(text)
 		*error = 0
 		*dirty = true
 	}
-	if (graphics::button_tone(calculator_window, x + key_width + 2, 100, key_width, 11, "AC", graphics::COLOR_4)) {
+	if (graphics::button_tone(calculator_window, x + key_width + 2, y + row_step * 4, key_width, key_height, "AC", graphics::COLOR_4)) {
 		call clear_editor(text)
 		*error = 0
 		*dirty = true
 	}
-	if (graphics::button_tone(calculator_window, x + (key_width + 2) * 2, 100, key_width * 2 + 2, 11, "=", graphics::COLOR_13)) {
+	if (graphics::button_tone(calculator_window, x + (key_width + 2) * 2, y + row_step * 4, key_width * 2 + 2, key_height, "=", graphics::COLOR_13)) {
 		call evaluate_editor(text, degrees_mode, result, error, error_position)
 		*dirty = false
 	}
@@ -899,15 +934,82 @@ proc draw_programmer_number(x: int, y: int, value: int, base: int) {
 	}
 }
 
+fn programmer_number_width(value: int, base: int) int {
+	var digits: int
+	var divisor: int
+	var started: bool
+	var width: int
+	width = 0
+	if (value < 0) {
+		width = 6
+		value = -value
+	}
+	if (base == 10) {
+		digits = 1
+		while (value >= 10) {
+			value /= 10
+			digits += 1
+		}
+		return width + digits * 6
+	}
+	width += 12
+	if (base == 16) { divisor = 268435456 }
+	else { divisor = 32768 }
+	digits = 0
+	started = false
+	while (divisor > 0) {
+		if ((value / divisor) % base != 0 || started || divisor == 1) {
+			digits += 1
+			started = true
+		}
+		divisor /= base
+	}
+	return width + digits * 6
+}
+
+proc draw_compact_programmer_view(x: int, y: int, width: int, result: float, base: int*) {
+	var selector_width: int
+	var selector_x: int
+	var selected_color: int
+	var number_width: int
+	call graphics::draw_text_small(calculator_window, x + (width - 27) / 2, y, "Integer", graphics::COLOR_8)
+	number_width = programmer_number_width((int)result, *base)
+	call draw_programmer_number(x + (width - number_width) / 2, y + 7, (int)result, *base)
+	selector_width = (width - 4) / 3
+	selector_x = x + (width - (selector_width * 3 + 4)) / 2
+	selected_color = graphics::COLOR_8
+	if (*base == 10) { selected_color = graphics::COLOR_13 }
+	if (graphics::button_flat(calculator_window, selector_x, y + 15, selector_width, 5, "DEC", selected_color)) { *base = 10 }
+	selected_color = graphics::COLOR_8
+	if (*base == 16) { selected_color = graphics::COLOR_13 }
+	if (graphics::button_flat(calculator_window, selector_x + selector_width + 2, y + 15, selector_width, 5, "HEX", selected_color)) { *base = 16 }
+	selected_color = graphics::COLOR_8
+	if (*base == 2) { selected_color = graphics::COLOR_13 }
+	if (graphics::button_flat(calculator_window, selector_x + (selector_width + 2) * 2, y + 15, selector_width, 5, "BIN", selected_color)) { *base = 2 }
+}
+
 proc draw_programmer_view(x: int, width: int, result: float, base: int*) {
-	call graphics::draw_text(calculator_window, x, 45, "Integer display", graphics::COLOR_8)
-	if (graphics::button(calculator_window, x, 56, 42, 11, "DEC")) { *base = 10 }
-	if (graphics::button(calculator_window, x + 45, 56, 42, 11, "HEX")) { *base = 16 }
-	if (graphics::button(calculator_window, x + 90, 56, 42, 11, "BIN")) { *base = 2 }
+	var selector_width: int
+	var selector_x: int
+	var selected_color: int
+	var number_width: int
+	call graphics::draw_text(calculator_window, x + (width - 89) / 2, 45, "Integer display", graphics::COLOR_8)
+	selector_width = (width - 4) / 3
+	selector_x = x + (width - (selector_width * 3 + 4)) / 2
+	selected_color = graphics::COLOR_8
+	if (*base == 10) { selected_color = graphics::COLOR_13 }
+	if (graphics::button_flat(calculator_window, selector_x, 56, selector_width, 11, "DEC", selected_color)) { *base = 10 }
+	selected_color = graphics::COLOR_8
+	if (*base == 16) { selected_color = graphics::COLOR_13 }
+	if (graphics::button_flat(calculator_window, selector_x + selector_width + 2, 56, selector_width, 11, "HEX", selected_color)) { *base = 16 }
+	selected_color = graphics::COLOR_8
+	if (*base == 2) { selected_color = graphics::COLOR_13 }
+	if (graphics::button_flat(calculator_window, selector_x + (selector_width + 2) * 2, 56, selector_width, 11, "BIN", selected_color)) { *base = 2 }
 	call graphics::fill_rect(calculator_window, x, 72, width, 24, graphics::COLOR_1)
 	call graphics::draw_rect(calculator_window, x, 72, width, 24, graphics::COLOR_8)
-	call draw_programmer_number(x + 5, 81, (int)result, *base)
-	call graphics::draw_text(calculator_window, x, 104, "Enter an integer expression above", graphics::COLOR_8)
+	number_width = programmer_number_width((int)result, *base)
+	call draw_programmer_number(x + (width - number_width) / 2, 81, (int)result, *base)
+	call graphics::draw_text_small(calculator_window, x + (width - 131) / 2, 104, "Enter an integer expression above", graphics::COLOR_8)
 }
 
 proc draw_graph_view(x: int, width: int, function_id: int*) {
@@ -982,10 +1084,121 @@ proc draw_compact_graph_view(x: int, y: int, width: int, height: int, function_i
 
 fn draw_swap_button(x: int, y: int, width: int, height: int) bool {
 	var clicked: bool
+	var left: int
+	var right: int
+	var upper: int
+	var lower: int
 	clicked = graphics::button_flat(calculator_window, x, y, width, height, " ", graphics::COLOR_8)
-	call graphics::draw_text_small(calculator_window, x + 2, y + 1, "->", graphics::WHITE)
-	call graphics::draw_text_small(calculator_window, x + 2, y + height - 6, "<-", graphics::WHITE)
+	left = x + (width - 8) / 2
+	right = left + 7
+	upper = y + height / 2 - 2
+	lower = y + height / 2 + 2
+	call graphics::draw_line(calculator_window, left, upper, right, upper, graphics::WHITE)
+	call graphics::set_pixel(calculator_window, right - 1, upper - 1, graphics::WHITE)
+	call graphics::set_pixel(calculator_window, right - 1, upper + 1, graphics::WHITE)
+	call graphics::draw_line(calculator_window, right, lower, left, lower, graphics::WHITE)
+	call graphics::set_pixel(calculator_window, left + 1, lower - 1, graphics::WHITE)
+	call graphics::set_pixel(calculator_window, left + 1, lower + 1, graphics::WHITE)
 	return clicked
+}
+
+proc draw_vertical_arrow(x: int, y: int, direction: int, color: int) {
+	if (direction < 0) {
+		call graphics::set_pixel(calculator_window, x + 1, y, color)
+		call graphics::set_pixel(calculator_window, x, y + 1, color)
+		call graphics::set_pixel(calculator_window, x + 2, y + 1, color)
+	}
+	else {
+		call graphics::set_pixel(calculator_window, x, y, color)
+		call graphics::set_pixel(calculator_window, x + 2, y, color)
+		call graphics::set_pixel(calculator_window, x + 1, y + 1, color)
+	}
+}
+
+fn draw_currency_selector(x: int, y: int, width: int, code: string, open: bool) bool {
+	var clicked: bool
+	var surface: int
+	var foreground: int
+	var label_width: int
+	var direction: int
+	surface = graphics::COLOR_8
+	foreground = graphics::WHITE
+	if (os::theme_mode == os::THEME_LIGHT) {
+		surface = graphics::COLOR_7
+		foreground = graphics::COLOR_1
+	}
+	clicked = graphics::button_flat(calculator_window, x, y, width, 7, " ", surface)
+	label_width = xestring::strlen(code) * 4 - 1
+	call graphics::draw_text_small(calculator_window, x + (width - 7 - label_width) / 2, y + 1, code, foreground)
+	direction = 1
+	if (open) { direction = -1 }
+	call draw_vertical_arrow(x + width - 5, y + 2, direction, foreground)
+	return clicked
+}
+
+var currency_from_menu_open: bool
+var currency_to_menu_open: bool
+var currency_from_scroll: int
+var currency_to_scroll: int
+var currency_graph_progress: int
+var currency_last_from: int
+var currency_last_to: int
+var currency_last_range: int
+var calculator_animation_step: int
+
+proc draw_currency_date(x: int, y: int, text: string, color: int) {
+	var index: int
+	var source_index: int
+	index = 0
+	while (index < 5) {
+		source_index = index + 5
+		if (source_index < xestring::strlen(text)) {
+			call graphics::draw_char_small(calculator_window, x + index * 4, y, text[source_index], color)
+		}
+		index += 1
+	}
+}
+
+proc draw_currency_dropdown(x: int, y: int, width: int, height: int, selected: int*, scroll: int*, open: bool*) {
+	var count: int
+	var visible_rows: int
+	var row: int
+	var item: int
+	var surface: int
+	var foreground: int
+	var clicked: bool
+	count = currency::count()
+	visible_rows = (height - 12) / 6
+	if (visible_rows < 1) { visible_rows = 1 }
+	if (visible_rows > 6) { visible_rows = 6 }
+	if (*scroll > count - visible_rows) { *scroll = count - visible_rows }
+	if (*scroll < 0) { *scroll = 0 }
+	surface = graphics::COLOR_8
+	foreground = graphics::WHITE
+	if (os::theme_mode == os::THEME_LIGHT) {
+		surface = graphics::COLOR_7
+		foreground = graphics::COLOR_1
+	}
+	clicked = graphics::button_flat(calculator_window, x, y, width, 12 + visible_rows * 6, "", surface)
+	if (graphics::button_flat(calculator_window, x + 1, y + 1, width - 2, 5, " ", surface)) {
+		if (*scroll > 0) { *scroll -= 1 }
+	}
+	call draw_vertical_arrow(x + width / 2 - 1, y + 1, -1, foreground)
+	row = 0
+	while (row < visible_rows) {
+		item = *scroll + row
+		if (item < count) {
+			if (graphics::button_flat(calculator_window, x + 1, y + 7 + row * 6, width - 2, 5, currency::code(item), surface)) {
+				*selected = item
+				*open = false
+			}
+		}
+		row += 1
+	}
+	if (graphics::button_flat(calculator_window, x + 1, y + 7 + visible_rows * 6, width - 2, 5, " ", surface)) {
+		if (*scroll < count - visible_rows) { *scroll += 1 }
+	}
+	call draw_vertical_arrow(x + width / 2 - 1, y + 7 + visible_rows * 6, 1, foreground)
 }
 
 proc draw_currency_view(x: int, y: int, width: int, height: int, result: float, from_id: int*, to_id: int*, range_id: int*) {
@@ -995,6 +1208,7 @@ proc draw_currency_view(x: int, y: int, width: int, height: int, result: float, 
 	var status: int
 	var rate: float
 	var converted: float
+	var amount: float
 	var swap_clicked: bool
 	var range_color: int
 	var graph_y: int
@@ -1008,51 +1222,101 @@ proc draw_currency_view(x: int, y: int, width: int, height: int, result: float, 
 	var point_value: float
 	var minimum: float
 	var maximum: float
+	var padding: float
 	var loaded: bool
+	var plot_bottom: int
+	var grid_x: int
+	var grid_index: int
+	var date_index: int
+	var shade_y: int
+	var shade_color: int
+	var visible_points: int
+	var trend_color: int
+	var trend_direction: int
+	var first_value: float
+	var last_value: float
+	var change: float
+	var pointer_x: int
+	var pointer_y: int
+	var hover_index: int
+	var hover_x: int
+	var hover_y: int
+	var hover_span: int
+	var hover_numerator: int
+	var hover_remainder: int
+	var hover_next_index: int
+	var hover_value: float
+	var menu_height: int
+	var date_x: int
+	var hover_label_x: int
+	var hover_label_y: int
+	var hover_label_width: int
 
 	count = currency::count()
 	selector_width = (width - 16) / 2
-	if (graphics::button_flat(calculator_window, x, y, selector_width, 7, currency::code(*from_id), graphics::COLOR_8)) {
-		*from_id += 1
-		if (*from_id >= count) { *from_id = 0 }
+	if (draw_currency_selector(x, y, selector_width, currency::code(*from_id), currency_from_menu_open)) {
+		currency_from_menu_open = !currency_from_menu_open
+		currency_to_menu_open = false
 	}
-	swap_clicked = draw_swap_button(x + selector_width + 2, y, 12, 7)
-	if (swap_clicked) {
-		count = *from_id
-		*from_id = *to_id
-		*to_id = count
+	swap_clicked = false
+	if (!currency_from_menu_open && !currency_to_menu_open) {
+		swap_clicked = draw_swap_button(x + selector_width + 2, y, 12, 7)
+		if (swap_clicked) {
+			count = *from_id
+			*from_id = *to_id
+			*to_id = count
+		}
 	}
-	if (graphics::button_flat(calculator_window, x + selector_width + 16, y, selector_width, 7, currency::code(*to_id), graphics::COLOR_8)) {
-		*to_id += 1
-		if (*to_id >= currency::count()) { *to_id = 0 }
+	else {
+		swap_clicked = draw_swap_button(x + selector_width + 2, y, 12, 7)
+	}
+	if (draw_currency_selector(x + selector_width + 16, y, selector_width, currency::code(*to_id), currency_to_menu_open)) {
+		currency_to_menu_open = !currency_to_menu_open
+		currency_from_menu_open = false
 	}
 
 	range_width = (width - 5) / 6
 	range_color = graphics::COLOR_8
 	if (*range_id == 0) { range_color = graphics::COLOR_13 }
-	if (graphics::button_flat(calculator_window, x, y + 9, range_width, 6, "1d", range_color)) { *range_id = 0 }
+	if (!currency_from_menu_open && !currency_to_menu_open && graphics::button_flat(calculator_window, x, y + 9, range_width, 6, "1d", range_color)) { *range_id = 0 }
 	range_color = graphics::COLOR_8
 	if (*range_id == 1) { range_color = graphics::COLOR_13 }
-	if (graphics::button_flat(calculator_window, x + range_width + 1, y + 9, range_width, 6, "5d", range_color)) { *range_id = 1 }
+	if (!currency_from_menu_open && !currency_to_menu_open && graphics::button_flat(calculator_window, x + range_width + 1, y + 9, range_width, 6, "5d", range_color)) { *range_id = 1 }
 	range_color = graphics::COLOR_8
 	if (*range_id == 2) { range_color = graphics::COLOR_13 }
-	if (graphics::button_flat(calculator_window, x + (range_width + 1) * 2, y + 9, range_width, 6, "1w", range_color)) { *range_id = 2 }
+	if (!currency_from_menu_open && !currency_to_menu_open && graphics::button_flat(calculator_window, x + (range_width + 1) * 2, y + 9, range_width, 6, "1w", range_color)) { *range_id = 2 }
 	range_color = graphics::COLOR_8
 	if (*range_id == 3) { range_color = graphics::COLOR_13 }
-	if (graphics::button_flat(calculator_window, x + (range_width + 1) * 3, y + 9, range_width, 6, "1m", range_color)) { *range_id = 3 }
+	if (!currency_from_menu_open && !currency_to_menu_open && graphics::button_flat(calculator_window, x + (range_width + 1) * 3, y + 9, range_width, 6, "1m", range_color)) { *range_id = 3 }
 	range_color = graphics::COLOR_8
 	if (*range_id == 4) { range_color = graphics::COLOR_13 }
-	if (graphics::button_flat(calculator_window, x + (range_width + 1) * 4, y + 9, range_width, 6, "YTD", range_color)) { *range_id = 4 }
+	if (!currency_from_menu_open && !currency_to_menu_open && graphics::button_flat(calculator_window, x + (range_width + 1) * 4, y + 9, range_width, 6, "YTD", range_color)) { *range_id = 4 }
 	range_color = graphics::COLOR_8
 	if (*range_id == 5) { range_color = graphics::COLOR_13 }
-	if (graphics::button_flat(calculator_window, x + (range_width + 1) * 5, y + 9, range_width, 6, "ALL", range_color)) { *range_id = 5 }
+	if (!currency_from_menu_open && !currency_to_menu_open && graphics::button_flat(calculator_window, x + (range_width + 1) * 5, y + 9, range_width, 6, "ALL", range_color)) { *range_id = 5 }
+	if (currency_from_menu_open || currency_to_menu_open) {
+		call graphics::fill_rect(calculator_window, x, y + 9, width, 6, graphics::COLOR_1)
+	}
+
+	if (*from_id != currency_last_from || *to_id != currency_last_to || *range_id != currency_last_range) {
+		currency_last_from = *from_id
+		currency_last_to = *to_id
+		currency_last_range = *range_id
+		currency_graph_progress = 0
+	}
+	if (currency_graph_progress < 100) {
+		currency_graph_progress += calculator_animation_step
+		if (currency_graph_progress > 100) { currency_graph_progress = 100 }
+	}
 
 	loaded = currency::load(*from_id, *to_id, *range_id)
 	status = currency::status()
 	if (status == currency::STATUS_READY) {
 		rate = currency::rate()
-		converted = result * rate
-		call graphics::draw_float_small(calculator_window, x, y + 17, result, graphics::COLOR_7)
+		amount = result
+		if (xestring::strlen(expression) == 0) { amount = 1.0 }
+		converted = amount * rate
+		call graphics::draw_float_small(calculator_window, x, y + 17, amount, graphics::COLOR_7)
 		call graphics::draw_text_small(calculator_window, x + 42, y + 17, "=", graphics::COLOR_11)
 		call graphics::draw_float_small(calculator_window, x + 49, y + 17, converted, graphics::WHITE)
 		call graphics::draw_text_small(calculator_window, x, y + 23, "Rate", graphics::COLOR_8)
@@ -1060,10 +1324,11 @@ proc draw_currency_view(x: int, y: int, width: int, height: int, result: float, 
 
 		graph_y = y + 30
 		graph_height = height - 31
-		if (graph_height >= 10) {
+		if (graph_height >= 16) {
 			call graphics::fill_rect(calculator_window, x, graph_y, width, graph_height, graphics::COLOR_1)
 			point_count = currency::point_count()
 			if (point_count > 1) {
+				plot_bottom = graph_y + graph_height - 8
 				minimum = currency::point(0)
 				maximum = minimum
 				point_index = 1
@@ -1073,18 +1338,103 @@ proc draw_currency_view(x: int, y: int, width: int, height: int, result: float, 
 					if (point_value > maximum) { maximum = point_value }
 					point_index += 1
 				}
-				if (maximum == minimum) { maximum = minimum + 1.0 }
+				padding = (maximum - minimum) * 0.08
+				if (padding < 0.0) { padding = -padding }
+				if (padding < 0.0001) {
+					padding = minimum * 0.0001
+					if (padding < 0.0) { padding = -padding }
+					if (padding < 0.0001) { padding = 0.0001 }
+				}
+				minimum -= padding
+				maximum += padding
+				first_value = currency::point(0)
+				last_value = currency::point(point_count - 1)
+				change = last_value - first_value
+				trend_color = graphics::COLOR_7
+				shade_color = graphics::COLOR_8
+				trend_direction = 0
+				if (change > padding / 10.0) { trend_color = graphics::COLOR_10; shade_color = graphics::COLOR_2; trend_direction = -1 }
+				elseif (change < -padding / 10.0) { trend_color = graphics::COLOR_12; shade_color = graphics::COLOR_4; trend_direction = 1 }
+				if (trend_direction == 0) {
+					call graphics::draw_line(calculator_window, x + width - 5, y + 25, x + width - 3, y + 25, trend_color)
+				}
+				else {
+					call draw_vertical_arrow(x + width - 5, y + 23, trend_direction, trend_color)
+				}
+				pointer_x = graphics::pointer_x(calculator_window)
+				pointer_y = graphics::pointer_y(calculator_window)
+				if (pointer_x >= x + width - 7 && pointer_x < x + width && pointer_y >= y + 21 && pointer_y < y + 29) {
+					if (change > padding / 10.0) {
+						call graphics::draw_text_small(calculator_window, x + width - 48, y + 17, "Appreciating", trend_color)
+					}
+					elseif (change < -padding / 10.0) {
+						call graphics::draw_text_small(calculator_window, x + width - 48, y + 17, "Depreciating", trend_color)
+					}
+					else {
+						call graphics::draw_text_small(calculator_window, x + width - 32, y + 17, "Stable", trend_color)
+					}
+				}
+				grid_index = 0
+				while (grid_index < 3) {
+					grid_x = x + 2 + grid_index * (width - 5) / 2
+					call graphics::draw_line(calculator_window, grid_x, graph_y + 1, grid_x, plot_bottom, graphics::COLOR_8)
+					date_index = grid_index * (point_count - 1) / 2
+					date_x = grid_x - 9
+					if (date_x < x + 2) { date_x = x + 2 }
+					if (date_x > x + width - 22) { date_x = x + width - 22 }
+					call draw_currency_date(date_x, plot_bottom + 2, currency::point_date(date_index), graphics::COLOR_7)
+					grid_index += 1
+				}
+				visible_points = 1 + (point_count - 1) * currency_graph_progress / 100
 				point_index = 0
-				while (point_index < point_count) {
+				while (point_index < visible_points) {
 					point_value = currency::point(point_index)
 					point_x = x + 2 + point_index * (width - 5) / (point_count - 1)
-					point_y = graph_y + graph_height - 3 - (int)((point_value - minimum) * (float)(graph_height - 5) / (maximum - minimum))
+					point_y = plot_bottom - (int)((point_value - minimum) * (float)(plot_bottom - graph_y - 2) / (maximum - minimum))
+					point_y = plot_bottom - (plot_bottom - point_y) * currency_graph_progress / 100
+					shade_y = point_y + 2
+					while (shade_y < plot_bottom) {
+						call graphics::set_pixel(calculator_window, point_x, shade_y, shade_color)
+						shade_y += 4
+					}
 					if (point_index > 0) {
-						call graphics::draw_line(calculator_window, previous_x, previous_y, point_x, point_y, graphics::COLOR_11)
+						call graphics::draw_line(calculator_window, previous_x, previous_y, point_x, point_y, trend_color)
 					}
 					previous_x = point_x
 					previous_y = point_y
 					point_index += 1
+				}
+				if (!currency_from_menu_open && !currency_to_menu_open && pointer_x >= x + 2 && pointer_x <= x + width - 3 && pointer_y >= graph_y && pointer_y <= plot_bottom) {
+					hover_x = pointer_x
+					hover_span = width - 5
+					hover_numerator = (hover_x - x - 2) * (point_count - 1)
+					hover_index = hover_numerator / hover_span
+					hover_remainder = hover_numerator % hover_span
+					if (hover_index < 0) { hover_index = 0 }
+					if (hover_index >= point_count) { hover_index = point_count - 1 }
+					hover_next_index = hover_index + 1
+					if (hover_next_index >= point_count) { hover_next_index = point_count - 1 }
+					hover_value = currency::point(hover_index)
+					if (hover_next_index != hover_index) {
+						hover_value += (currency::point(hover_next_index) - hover_value) * (float)hover_remainder / (float)hover_span
+					}
+					if (hover_remainder * 2 >= hover_span && hover_next_index != hover_index) { hover_index = hover_next_index }
+					hover_y = graph_y + 1
+					while (hover_y <= plot_bottom) {
+						call graphics::set_pixel(calculator_window, hover_x, hover_y, graphics::WHITE)
+						hover_y += 3
+					}
+					hover_label_width = 74
+					if (hover_label_width > width - 4) { hover_label_width = width - 4 }
+					hover_label_x = hover_x - hover_label_width / 2
+					if (hover_label_x < x + 2) { hover_label_x = x + 2 }
+					if (hover_label_x + hover_label_width > x + width - 2) { hover_label_x = x + width - hover_label_width - 2 }
+					hover_label_y = pointer_y - 9
+					if (hover_label_y < graph_y + 1) { hover_label_y = pointer_y + 3 }
+					if (hover_label_y > plot_bottom - 7) { hover_label_y = plot_bottom - 7 }
+					call graphics::fill_rect(calculator_window, hover_label_x, hover_label_y, hover_label_width, 7, graphics::COLOR_8)
+					call draw_currency_date(hover_label_x + 2, hover_label_y + 1, currency::point_date(hover_index), graphics::WHITE)
+					call graphics::draw_float_small(calculator_window, hover_label_x + 27, hover_label_y + 1, hover_value, graphics::WHITE)
 				}
 			}
 		}
@@ -1094,6 +1444,14 @@ proc draw_currency_view(x: int, y: int, width: int, height: int, result: float, 
 	}
 	else {
 		call graphics::draw_text_small(calculator_window, x, y + 19, "Loading rate snapshot...", graphics::COLOR_8)
+	}
+	menu_height = height - 8
+	if (menu_height > 48) { menu_height = 48 }
+	if (currency_from_menu_open) {
+		call draw_currency_dropdown(x, y + 8, selector_width, menu_height, from_id, &currency_from_scroll, &currency_from_menu_open)
+	}
+	elseif (currency_to_menu_open) {
+		call draw_currency_dropdown(x + selector_width + 16, y + 8, selector_width, menu_height, to_id, &currency_to_scroll, &currency_to_menu_open)
 	}
 }
 
@@ -1207,85 +1565,100 @@ fn ease_mode_menu(value: int) int {
 	return value * (200 - value) / 100
 }
 
-proc draw_mode_switch(x: int, width: int, height: int, mode: int*, menu_open: bool*, progress: int*, flash_frames: int*, page: int*) {
+proc draw_mode_switch(x: int, width: int, height: int, mode: int*, menu_open: bool*, progress: int*, page: int*) {
 	var clicked: bool
 	var menu_eased: int
 	var menu_height: int
 	var button_width: int
+	var button_x: int
 	var menu_block_clicked: bool
 	var menu_surface: int
+	var mode_label: string
+	var arrow_direction: int
+	var mode_foreground: int
 	if (*menu_open && *progress < 100) {
-		*progress += 10
+		*progress += calculator_animation_step
 		if (*progress > 100) { *progress = 100 }
 	}
 	elseif (!*menu_open && *progress > 0) {
-		*progress -= 10
+		*progress -= calculator_animation_step
 		if (*progress < 0) { *progress = 0 }
 	}
 	menu_eased = ease_mode_menu(*progress)
-	menu_height = 5 + 29 * menu_eased / 100
+	menu_height = 7 + 39 * menu_eased / 100
 	if (menu_height > height - 14) { menu_height = height - 14 }
 	if (menu_height < 5) { menu_height = 5 }
 	button_width = 88
 	if (button_width > width - 26) { button_width = width - 26 }
 	if (button_width < 20) { button_width = width }
+	button_x = x + (width - button_width) / 2
 	clicked = false
-	menu_surface = graphics::COLOR_8
-	if (os::theme_mode == os::THEME_LIGHT) { menu_surface = graphics::COLOR_1 }
-	if (*mode == 0) { clicked = graphics::button_flat(calculator_window, x, 6, button_width, 7, "Standard", menu_surface) }
-	elseif (*mode == 1) { clicked = graphics::button_flat(calculator_window, x, 6, button_width, 7, "Scientific", menu_surface) }
-	elseif (*mode == 2) { clicked = graphics::button_flat(calculator_window, x, 6, button_width, 7, "Programmer", menu_surface) }
-	elseif (*mode == 3) { clicked = graphics::button_flat(calculator_window, x, 6, button_width, 7, "Graphing", menu_surface) }
-	elseif (*mode == 4) { clicked = graphics::button_flat(calculator_window, x, 6, button_width, 7, "Currency", menu_surface) }
-	elseif (*mode == 5) { clicked = graphics::button_flat(calculator_window, x, 6, button_width, 7, "Unit convert", menu_surface) }
-	else { clicked = graphics::button_flat(calculator_window, x, 6, button_width, 7, "History", menu_surface) }
+	menu_surface = graphics::COLOR_1
+	mode_foreground = graphics::WHITE
+	if (os::theme_mode == os::THEME_LIGHT) {
+		menu_surface = graphics::COLOR_7
+		mode_foreground = graphics::COLOR_1
+	}
+	if (*mode == 0) { mode_label = "Standard" }
+	elseif (*mode == 1) { mode_label = "Scientific" }
+	elseif (*mode == 2) { mode_label = "Programmer" }
+	elseif (*mode == 3) { mode_label = "Graphing" }
+	elseif (*mode == 4) { mode_label = "Currency" }
+	elseif (*mode == 5) { mode_label = "Unit convert" }
+	else { mode_label = "History" }
+	if (button_width < 58) {
+		if (*mode == 0) { mode_label = "STD" }
+		elseif (*mode == 1) { mode_label = "SCI" }
+		elseif (*mode == 2) { mode_label = "PROG" }
+		elseif (*mode == 3) { mode_label = "GRAPH" }
+		elseif (*mode == 4) { mode_label = "CURR" }
+		elseif (*mode == 5) { mode_label = "UNIT" }
+		else { mode_label = "HIST" }
+	}
+	clicked = graphics::button_flat(calculator_window, button_x, 4, button_width, 9, mode_label, menu_surface)
+	arrow_direction = 1
+	if (*menu_open) { arrow_direction = -1 }
+	call draw_vertical_arrow(button_x + button_width - 5, 7, arrow_direction, mode_foreground)
 	if (clicked) {
 		*menu_open = !*menu_open
 		if (*menu_open) {
 			if (*mode >= 4) { *page = 1 }
 			else { *page = 0 }
 		}
-		*flash_frames = 4
 	}
 	if (*progress > 0) {
-		menu_block_clicked = graphics::button_flat(calculator_window, x, 14, width, menu_height, "", menu_surface)
+		menu_block_clicked = graphics::button_flat(calculator_window, button_x, 14, button_width, menu_height, "", menu_surface)
 		if (*page == 0) {
-			if (menu_height >= 8) {
-				if (graphics::button_flat(calculator_window, x + 3, 17, width - 6, 5, "Standard", menu_surface)) { *mode = 0; *menu_open = false; *flash_frames = 4 }
+			if (menu_height >= 9) {
+				if (graphics::button_flat(calculator_window, button_x + 3, 16, button_width - 6, 7, "Standard", menu_surface)) { *mode = 0; *menu_open = false }
 			}
-			if (menu_height >= 14) {
-				if (graphics::button_flat(calculator_window, x + 3, 23, width - 6, 5, "Scientific", menu_surface)) { *mode = 1; *menu_open = false; *flash_frames = 4 }
+			if (menu_height >= 17) {
+				if (graphics::button_flat(calculator_window, button_x + 3, 24, button_width - 6, 7, "Scientific", menu_surface)) { *mode = 1; *menu_open = false }
 			}
-			if (menu_height >= 20) {
-				if (graphics::button_flat(calculator_window, x + 3, 29, width - 6, 5, "Programmer", menu_surface)) { *mode = 2; *menu_open = false; *flash_frames = 4 }
+			if (menu_height >= 25) {
+				if (graphics::button_flat(calculator_window, button_x + 3, 32, button_width - 6, 7, "Programmer", menu_surface)) { *mode = 2; *menu_open = false }
 			}
-			if (menu_height >= 26) {
-				if (graphics::button_flat(calculator_window, x + 3, 35, width - 6, 5, "Graphing", menu_surface)) { *mode = 3; *menu_open = false; *flash_frames = 4 }
+			if (menu_height >= 33) {
+				if (graphics::button_flat(calculator_window, button_x + 3, 40, button_width - 6, 7, "Graphing", menu_surface)) { *mode = 3; *menu_open = false }
 			}
-			if (menu_height >= 32) {
-				if (graphics::button_flat(calculator_window, x + 3, 41, width - 6, 5, "More", menu_surface)) { *page = 1; *flash_frames = 4 }
+			if (menu_height >= 41) {
+				if (graphics::button_flat(calculator_window, button_x + 3, 48, button_width - 6, 7, "More", menu_surface)) { *page = 1 }
 			}
 		}
 		else {
-			if (menu_height >= 8) {
-				if (graphics::button_flat(calculator_window, x + 3, 17, width - 6, 5, "Currency", menu_surface)) { *mode = 4; *menu_open = false; *flash_frames = 4 }
+			if (menu_height >= 9) {
+				if (graphics::button_flat(calculator_window, button_x + 3, 16, button_width - 6, 7, "Currency", menu_surface)) { *mode = 4; *menu_open = false }
 			}
-			if (menu_height >= 14) {
-				if (graphics::button_flat(calculator_window, x + 3, 23, width - 6, 5, "Unit conversion", menu_surface)) { *mode = 5; *menu_open = false; *flash_frames = 4 }
+			if (menu_height >= 17) {
+				if (graphics::button_flat(calculator_window, button_x + 3, 24, button_width - 6, 7, "Unit conversion", menu_surface)) { *mode = 5; *menu_open = false }
 			}
-			if (menu_height >= 20) {
-				if (graphics::button_flat(calculator_window, x + 3, 29, width - 6, 5, "History", menu_surface)) { *mode = 6; *menu_open = false; *flash_frames = 4 }
+			if (menu_height >= 25) {
+				if (graphics::button_flat(calculator_window, button_x + 3, 32, button_width - 6, 7, "History", menu_surface)) { *mode = 6; *menu_open = false }
 			}
-			if (menu_height >= 26) {
-				if (graphics::button_flat(calculator_window, x + 3, 35, width - 6, 5, "Back", menu_surface)) { *page = 0; *flash_frames = 4 }
+			if (menu_height >= 33) {
+				if (graphics::button_flat(calculator_window, button_x + 3, 40, button_width - 6, 7, "Back", menu_surface)) { *page = 0 }
 			}
 		}
-	}
-	if (*flash_frames > 0) {
-		if (*flash_frames >= 3) {
-			call graphics::draw_line(calculator_window, x, 5, x + button_width - 1, 5, graphics::WHITE)
-		}
-		*flash_frames -= 1
 	}
 }
 
@@ -1313,7 +1686,6 @@ var shift_mode: bool
 var calculator_mode: int
 var mode_menu_open: bool
 var mode_menu_progress: int
-var mode_menu_flash: int
 var mode_menu_page: int
 var programmer_base: int
 var graph_function: int
@@ -1327,6 +1699,9 @@ var history_1: float
 var history_2: float
 var history_3: float
 var history_4: float
+var previous_ticks: int
+var current_ticks: int
+var delta_ms: int
 
 expression = ""
 degrees_mode = true
@@ -1336,13 +1711,21 @@ shift_mode = false
 calculator_mode = 0
 mode_menu_open = false
 mode_menu_progress = 0
-mode_menu_flash = 0
 mode_menu_page = 0
 programmer_base = 10
 graph_function = 0
 currency_from = 0
 currency_to = 1
 currency_range = currency::RANGE_1M
+currency_from_menu_open = false
+currency_to_menu_open = false
+currency_from_scroll = 0
+currency_to_scroll = 0
+currency_graph_progress = 0
+currency_last_from = -1
+currency_last_to = -1
+currency_last_range = -1
+calculator_animation_step = 8
 unit_pair = 0
 unit_swapped = false
 history_count = 0
@@ -1364,15 +1747,31 @@ if (xestring::strlen(expression) > 0) {
 }
 
 if (graphical_mode) {
-	calculator_window.x = 50
-	calculator_window.y = 20
-	calculator_window.width = 320
-	calculator_window.height = 320
+	calculator_window.x = 112
+	calculator_window.y = 58
+	calculator_window.width = 240
+	calculator_window.height = 190
 	calculator_window.title = "Calculator"
+	calculator_window.ui_scale = 1
 	calculator_window.state = graphics::WINDOW_NORMAL
+	previous_ticks = os::ticks()
 
 	while (calculator_window.state != graphics::WINDOW_CLOSED) {
+		current_ticks = os::ticks()
+		delta_ms = current_ticks - previous_ticks
+		if (delta_ms < 1) { delta_ms = 1 }
+		if (delta_ms > 50) { delta_ms = 50 }
+		previous_ticks = current_ticks
+		calculator_animation_step = delta_ms * 100 / 220
+		if (calculator_animation_step < 2) { calculator_animation_step = 2 }
+		if (calculator_animation_step > 24) { calculator_animation_step = 24 }
 		call graphics::begin_draw(calculator_window)
+		if (calculator_window.is_fullscreen()) {
+			calculator_window.ui_scale = 2
+		}
+		else {
+			calculator_window.ui_scale = 1
+		}
 
 		if (!calculator_window.is_minimized()) {
 			content_width = graphics::content_width(calculator_window)
@@ -1417,32 +1816,33 @@ if (graphical_mode) {
 
 			call graphics::fill_rect(calculator_window, panel_x, 4, panel_width, display_height, graphics::COLOR_5)
 			call graphics::draw_rect(calculator_window, panel_x, 4, panel_width, display_height, graphics::COLOR_13)
-			if (shift_mode && calculator_mode == 1) {
-				call graphics::draw_text(calculator_window, panel_x + 94, 6, "SHIFT", graphics::COLOR_14)
-			}
-			if (degrees_mode) {
-				call graphics::draw_text(calculator_window, panel_x + panel_width - 22, 6, "DEG", graphics::COLOR_14)
-			}
-			else {
-				call graphics::draw_text(calculator_window, panel_x + panel_width - 22, 6, "RAD", graphics::COLOR_14)
-			}
-			if (dirty) {
-				call graphics::draw_text(calculator_window, panel_x + panel_width - 52, 6, "EDIT", graphics::COLOR_8)
+			if (panel_width >= 140) {
+				if (shift_mode && calculator_mode == 1) {
+					call graphics::draw_text(calculator_window, panel_x + 6, 6, "SHIFT", graphics::COLOR_14)
+				}
+				elseif (dirty) {
+					call graphics::draw_text(calculator_window, panel_x + 6, 6, "EDIT", graphics::COLOR_8)
+				}
+				if (degrees_mode) {
+					call graphics::draw_text(calculator_window, panel_x + panel_width - 22, 6, "DEG", graphics::COLOR_14)
+				}
+				else {
+					call graphics::draw_text(calculator_window, panel_x + panel_width - 22, 6, "RAD", graphics::COLOR_14)
+				}
 			}
 			call draw_expression_editor(panel_x, editor_y, panel_width, expression, error_code, error_position)
 				call draw_calculator_status(panel_x + 4, status_y, expression, result, error_code, error_position, dirty)
 
-				if (content_width < 150 || content_height < 148) {
+				if (content_width < 90 || content_height < 52) {
+					# The display remains keyboard-operable at the absolute window minimum.
+				}
+				elseif (content_width < 150 || content_height < 148) {
 					keypad_x = panel_x + 3
 					if (calculator_mode == 0 || calculator_mode == 1) {
 						call draw_compact_keypad(keypad_x, 27, panel_width - 6, content_height, expression, &dirty, &error_code, &result, &error_position, degrees_mode)
 					}
 					elseif (calculator_mode == 2) {
-						call graphics::draw_text_small(calculator_window, keypad_x, 29, "Integer", graphics::COLOR_8)
-						call draw_programmer_number(keypad_x, 36, (int)result, programmer_base)
-						if (graphics::button_flat(calculator_window, keypad_x, 44, (panel_width - 10) / 3, 5, "DEC", graphics::COLOR_8)) { programmer_base = 10 }
-						if (graphics::button_flat(calculator_window, keypad_x + (panel_width - 10) / 3 + 2, 44, (panel_width - 10) / 3, 5, "HEX", graphics::COLOR_8)) { programmer_base = 16 }
-						if (graphics::button_flat(calculator_window, keypad_x + ((panel_width - 10) / 3 + 2) * 2, 44, (panel_width - 10) / 3, 5, "BIN", graphics::COLOR_8)) { programmer_base = 2 }
+						call draw_compact_programmer_view(keypad_x, 29, panel_width - 6, result, &programmer_base)
 					}
 					elseif (calculator_mode == 3) {
 						call draw_compact_graph_view(keypad_x, 28, panel_width - 6, content_height - 29, &graph_function)
@@ -1460,7 +1860,7 @@ if (graphical_mode) {
 				else {
 					keypad_x = panel_x + 4
 					if (calculator_mode == 0) {
-						call draw_standard_keypad(keypad_x, panel_width - 8, expression, &dirty, &error_code, &result, &error_position, degrees_mode)
+						call draw_standard_keypad(keypad_x, 42, panel_width - 8, content_height - 46, expression, &dirty, &error_code, &result, &error_position, degrees_mode)
 					}
 					elseif (calculator_mode == 1) {
 						button_width = (panel_width - 8) / 5
@@ -1483,11 +1883,11 @@ if (graphical_mode) {
 					call draw_editor_key(keypad_x + button_width + 2, 42, button_width, "sin", graphics::COLOR_8, 1001, expression, &dirty, &error_code)
 					call draw_editor_key(keypad_x + (button_width + 2) * 2, 42, button_width, "cos", graphics::COLOR_8, 1002, expression, &dirty, &error_code)
 					call draw_editor_key(keypad_x + (button_width + 2) * 3, 42, button_width, "tan", graphics::COLOR_8, 1003, expression, &dirty, &error_code)
-					call draw_editor_key(keypad_x + (button_width + 2) * 4, 42, button_width, "\x001e", graphics::COLOR_8, 1007, expression, &dirty, &error_code)
+					call draw_editor_key(keypad_x + (button_width + 2) * 4, 42, button_width, "sqrt", graphics::COLOR_8, 1007, expression, &dirty, &error_code)
 				}
 
 				call draw_editor_key(keypad_x, 56, button_width, "**", graphics::COLOR_1, 1011, expression, &dirty, &error_code)
-				call draw_editor_key(keypad_x + button_width + 2, 56, button_width, "\x001f", graphics::COLOR_1, 1009, expression, &dirty, &error_code)
+				call draw_editor_key(keypad_x + button_width + 2, 56, button_width, "pi", graphics::COLOR_1, 1009, expression, &dirty, &error_code)
 				call draw_editor_key(keypad_x + (button_width + 2) * 2, 56, button_width, "e", graphics::COLOR_1, 1010, expression, &dirty, &error_code)
 				call draw_editor_key(keypad_x + (button_width + 2) * 3, 56, button_width, "(", graphics::COLOR_1, 40, expression, &dirty, &error_code)
 				call draw_editor_key(keypad_x + (button_width + 2) * 4, 56, button_width, ")", graphics::COLOR_1, 41, expression, &dirty, &error_code)
@@ -1535,7 +1935,7 @@ if (graphical_mode) {
 				call draw_editor_key(keypad_x, 114, button_width, "1", graphics::COLOR_5, 49, expression, &dirty, &error_code)
 				call draw_editor_key(keypad_x + button_width + 2, 114, button_width, "2", graphics::COLOR_5, 50, expression, &dirty, &error_code)
 				call draw_editor_key(keypad_x + (button_width + 2) * 2, 114, button_width, "3", graphics::COLOR_5, 51, expression, &dirty, &error_code)
-				call draw_editor_key(keypad_x + (button_width + 2) * 3, 114, button_width, "**", graphics::COLOR_3, 1011, expression, &dirty, &error_code)
+				call draw_editor_key(keypad_x + (button_width + 2) * 3, 114, button_width, "MOD", graphics::COLOR_3, 37, expression, &dirty, &error_code)
 				if (graphics::button_tone(calculator_window, keypad_x + (button_width + 2) * 4, 114, button_width, 25, "=", graphics::COLOR_13)) {
 					call evaluate_editor(expression, degrees_mode, &result, &error_code, &error_position)
 					dirty = false
@@ -1561,7 +1961,7 @@ if (graphical_mode) {
 						call draw_history_view(keypad_x, panel_width - 8)
 					}
 				}
-			call draw_mode_switch(panel_x + 2, panel_width - 4, content_height, &calculator_mode, &mode_menu_open, &mode_menu_progress, &mode_menu_flash, &mode_menu_page)
+			call draw_mode_switch(panel_x + 2, panel_width - 4, content_height, &calculator_mode, &mode_menu_open, &mode_menu_progress, &mode_menu_page)
 		}
 
 		call graphics::update(calculator_window)

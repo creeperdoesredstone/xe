@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from json import load
+from pathlib import Path
 from threading import RLock
 from typing import Callable, Sequence
-from json import load
 
 from .theme import SCREEN_HEIGHT, SCREEN_WIDTH
 
@@ -37,11 +38,189 @@ class FrameSnapshot:
 	sequence: int
 
 
-with open("xe_lang/devices/font5x7.json", "r") as file:
-	FONT_5X7 = load(file)
+FONT_5X7 = {
+	" ": (0, 0, 0, 0, 0, 0, 0),
+	"!": (4, 4, 4, 4, 4, 0, 4),
+	'"': (10, 10, 10, 0, 0, 0, 0),
+	"#": (10, 31, 10, 10, 31, 10, 0),
+	"$": (4, 15, 20, 14, 5, 30, 4),
+	"%": (17, 2, 4, 8, 17, 0, 0),
+	"&": (12, 18, 20, 8, 21, 18, 13),
+	"'": (4, 4, 8, 0, 0, 0, 0),
+	"(": (2, 4, 8, 8, 8, 4, 2),
+	")": (8, 4, 2, 2, 2, 4, 8),
+	"*": (0, 21, 14, 31, 14, 21, 0),
+	"+": (0, 4, 4, 31, 4, 4, 0),
+	",": (0, 0, 0, 0, 4, 4, 8),
+	"-": (0, 0, 0, 31, 0, 0, 0),
+	".": (0, 0, 0, 0, 0, 12, 12),
+	"/": (1, 2, 4, 8, 16, 0, 0),
+	"0": (14, 17, 19, 21, 25, 17, 14),
+	"1": (4, 12, 4, 4, 4, 4, 14),
+	"2": (14, 17, 1, 2, 4, 8, 31),
+	"3": (30, 1, 1, 14, 1, 1, 30),
+	"4": (2, 6, 10, 18, 31, 2, 2),
+	"5": (31, 16, 16, 30, 1, 1, 30),
+	"6": (6, 8, 16, 30, 17, 17, 14),
+	"7": (31, 1, 2, 4, 8, 8, 8),
+	"8": (14, 17, 17, 14, 17, 17, 14),
+	"9": (14, 17, 17, 15, 1, 2, 12),
+	":": (0, 12, 12, 0, 12, 12, 0),
+	";": (0, 12, 12, 0, 4, 4, 8),
+	"<": (2, 4, 8, 16, 8, 4, 2),
+	"=": (0, 0, 31, 0, 31, 0, 0),
+	">": (8, 4, 2, 1, 2, 4, 8),
+	"?": (14, 17, 1, 2, 4, 0, 4),
+	"@": (14, 17, 23, 21, 23, 16, 14),
+	"A": (14, 17, 17, 31, 17, 17, 17),
+	"B": (30, 17, 17, 30, 17, 17, 30),
+	"C": (14, 17, 16, 16, 16, 17, 14),
+	"D": (28, 18, 17, 17, 17, 18, 28),
+	"E": (31, 16, 16, 30, 16, 16, 31),
+	"F": (31, 16, 16, 30, 16, 16, 16),
+	"G": (14, 17, 16, 23, 17, 17, 15),
+	"H": (17, 17, 17, 31, 17, 17, 17),
+	"I": (14, 4, 4, 4, 4, 4, 14),
+	"J": (7, 2, 2, 2, 2, 18, 12),
+	"K": (17, 18, 20, 24, 20, 18, 17),
+	"L": (16, 16, 16, 16, 16, 16, 31),
+	"M": (17, 27, 21, 21, 17, 17, 17),
+	"N": (17, 25, 21, 19, 17, 17, 17),
+	"O": (14, 17, 17, 17, 17, 17, 14),
+	"P": (30, 17, 17, 30, 16, 16, 16),
+	"Q": (14, 17, 17, 17, 21, 18, 13),
+	"R": (30, 17, 17, 30, 20, 18, 17),
+	"S": (15, 16, 16, 14, 1, 1, 30),
+	"T": (31, 4, 4, 4, 4, 4, 4),
+	"U": (17, 17, 17, 17, 17, 17, 14),
+	"V": (17, 17, 17, 17, 17, 10, 4),
+	"W": (17, 17, 17, 21, 21, 21, 10),
+	"X": (17, 17, 10, 4, 10, 17, 17),
+	"Y": (17, 17, 10, 4, 4, 4, 4),
+	"Z": (31, 1, 2, 4, 8, 16, 31),
+	"[": (14, 8, 8, 8, 8, 8, 14),
+	"\\": (16, 8, 4, 2, 1, 0, 0),
+	"]": (14, 2, 2, 2, 2, 2, 14),
+	"^": (4, 10, 17, 0, 0, 0, 0),
+	"_": (0, 0, 0, 0, 0, 0, 31),
+	"`": (8, 4, 2, 0, 0, 0, 0),
+	"{": (2, 4, 4, 8, 4, 4, 2),
+	"|": (4, 4, 4, 4, 4, 4, 4),
+	"}": (8, 4, 4, 2, 4, 4, 8),
+	"~": (0, 0, 9, 22, 0, 0, 0),
+}
 
-with open("xe_lang/devices/font3x5.json", "r") as file:
-	FONT_3X5 = load(file)
+FONT_5X7.update({
+	"a": (0, 0, 14, 1, 15, 17, 15),
+	"b": (16, 16, 30, 17, 17, 17, 30),
+	"c": (0, 0, 14, 16, 16, 17, 14),
+	"d": (1, 1, 15, 17, 17, 17, 15),
+	"e": (0, 0, 14, 17, 31, 16, 14),
+	"f": (6, 8, 30, 8, 8, 8, 8),
+	"g": (0, 0, 15, 17, 15, 1, 14),
+	"h": (16, 16, 30, 17, 17, 17, 17),
+	"i": (4, 0, 12, 4, 4, 4, 14),
+	"j": (2, 0, 6, 2, 2, 18, 12),
+	"k": (16, 18, 20, 24, 20, 18, 17),
+	"l": (12, 4, 4, 4, 4, 4, 14),
+	"m": (0, 0, 26, 21, 21, 17, 17),
+	"n": (0, 0, 30, 17, 17, 17, 17),
+	"o": (0, 0, 14, 17, 17, 17, 14),
+	"p": (0, 0, 30, 17, 30, 16, 16),
+	"q": (0, 0, 15, 17, 15, 1, 1),
+	"r": (0, 0, 22, 25, 16, 16, 16),
+	"s": (0, 0, 15, 16, 14, 1, 30),
+	"t": (8, 8, 30, 8, 8, 9, 6),
+	"u": (0, 0, 17, 17, 17, 19, 13),
+	"v": (0, 0, 17, 17, 17, 10, 4),
+	"w": (0, 0, 17, 17, 21, 21, 10),
+	"x": (0, 0, 17, 10, 4, 10, 17),
+	"y": (0, 0, 17, 17, 15, 1, 14),
+	"z": (0, 0, 31, 2, 4, 8, 31),
+})
+
+FONT_3X5 = {
+	" ": (0, 0, 0, 0, 0), "!": (2, 2, 2, 0, 2),
+	"(": (1, 2, 2, 2, 1), ")": (4, 2, 2, 2, 4),
+	"*": (0, 5, 2, 5, 0), "+": (0, 2, 7, 2, 0),
+	",": (0, 0, 0, 2, 4), "-": (0, 0, 7, 0, 0),
+	".": (0, 0, 0, 0, 2), "/": (1, 1, 2, 4, 4),
+	"0": (7, 5, 5, 5, 7), "1": (2, 6, 2, 2, 7),
+	"2": (6, 1, 7, 4, 7), "3": (6, 1, 3, 1, 6),
+	"4": (5, 5, 7, 1, 1), "5": (7, 4, 6, 1, 6),
+	"6": (3, 4, 7, 5, 7), "7": (7, 1, 2, 2, 2),
+	"8": (7, 5, 7, 5, 7), "9": (7, 5, 7, 1, 6),
+	"<": (1, 2, 4, 2, 1), "=": (0, 7, 0, 7, 0),
+	">": (4, 2, 1, 2, 4), "%": (5, 1, 2, 4, 5),
+	"A": (2, 5, 7, 5, 5), "B": (6, 5, 6, 5, 6),
+	"C": (3, 4, 4, 4, 3), "D": (6, 5, 5, 5, 6),
+	"E": (7, 4, 6, 4, 7), "F": (7, 4, 6, 4, 4),
+	"G": (3, 4, 5, 5, 3), "H": (5, 5, 7, 5, 5),
+	"I": (7, 2, 2, 2, 7), "J": (1, 1, 1, 5, 2),
+	"K": (5, 5, 6, 5, 5), "L": (4, 4, 4, 4, 7),
+	"M": (5, 7, 7, 5, 5), "N": (5, 7, 7, 7, 5),
+	"O": (2, 5, 5, 5, 2), "P": (6, 5, 6, 4, 4),
+	"Q": (2, 5, 5, 3, 1), "R": (6, 5, 6, 5, 5),
+	"S": (3, 4, 2, 1, 6), "T": (7, 2, 2, 2, 2),
+	"U": (5, 5, 5, 5, 7), "V": (5, 5, 5, 5, 2),
+	"W": (5, 5, 7, 7, 5), "X": (5, 5, 2, 5, 5),
+	"Y": (5, 5, 2, 2, 2), "Z": (7, 1, 2, 4, 7),
+}
+
+FONT_3X5.update({
+	'"': (5, 5, 0, 0, 0), "#": (5, 7, 5, 7, 5),
+	"$": (2, 7, 6, 3, 7), "&": (2, 5, 2, 5, 3),
+	"'": (2, 2, 0, 0, 0), ":": (0, 2, 0, 2, 0),
+	";": (0, 2, 0, 2, 4), "?": (6, 1, 2, 0, 2),
+	"@": (2, 5, 7, 4, 3),
+	"[": (6, 4, 4, 4, 6), "]": (3, 1, 1, 1, 3),
+	"\\": (4, 4, 2, 1, 1), "_": (0, 0, 0, 0, 7),
+	"`": (4, 2, 0, 0, 0), "{": (1, 2, 6, 2, 1),
+	"|": (2, 2, 2, 2, 2), "}": (4, 2, 3, 2, 4),
+	"~": (0, 0, 3, 6, 0), "^": (2, 5, 0, 0, 0),
+	"a": (0, 3, 5, 5, 3), "b": (4, 6, 5, 5, 6),
+	"c": (0, 3, 4, 4, 3), "d": (1, 3, 5, 5, 3),
+	"e": (0, 2, 5, 6, 3), "f": (1, 2, 7, 2, 2),
+	"g": (0, 3, 5, 3, 6), "h": (4, 6, 5, 5, 5),
+	"i": (2, 0, 2, 2, 2), "j": (1, 0, 1, 5, 2),
+	"k": (4, 5, 6, 5, 5), "l": (2, 2, 2, 2, 1),
+	"m": (0, 7, 7, 5, 5), "n": (0, 6, 5, 5, 5),
+	"o": (0, 2, 5, 5, 2), "p": (0, 6, 5, 6, 4),
+	"q": (0, 3, 5, 3, 1), "r": (0, 5, 6, 4, 4),
+	"s": (0, 3, 6, 3, 6), "t": (2, 7, 2, 2, 1),
+	"u": (0, 5, 5, 5, 3), "v": (0, 5, 5, 5, 2),
+	"w": (0, 5, 7, 7, 5), "x": (0, 5, 2, 2, 5),
+	"y": (0, 5, 5, 3, 6), "z": (0, 7, 1, 2, 7),
+})
+
+
+def _load_width_prefixed_font(filename: str, row_count: int) -> dict[str, tuple[int, ...]]:
+	path = Path(__file__).with_name(filename)
+	with path.open("r", encoding="utf-8") as font_file:
+		encoded = load(font_file)
+
+	font: dict[str, tuple[int, ...]] = {}
+	for char, values in encoded.items():
+		glyph = tuple(int(value) for value in values)
+		width = glyph[0]
+		rows = glyph[1:]
+		if not 1 <= width <= 5 or len(rows) != row_count:
+			raise ValueError(f"Invalid glyph {char!r} in {filename}")
+		font[char] = glyph
+	return font
+
+
+# Every entry stores its width first, followed by the five or seven row masks.
+# Keep the legacy nested aliases available for external tooling that inspected
+# the former opt-in proportional fonts.
+FONT_5X7 = _load_width_prefixed_font("font5x7.json", 7)
+FONT_3X5 = _load_width_prefixed_font("font3x5.json", 5)
+VARIABLE_FONT_5X7 = {
+	char: (glyph[0], glyph[1:]) for char, glyph in FONT_5X7.items()
+}
+VARIABLE_FONT_3X5 = {
+	char: (glyph[0], glyph[1:]) for char, glyph in FONT_3X5.items()
+}
 
 
 class GraphicsDevice:
@@ -407,7 +586,12 @@ class GraphicsDevice:
 				x = origin_x
 				y += 8 * scale
 				continue
-			glyph = FONT_5X7.get(char, FONT_5X7.get(char.upper(), FONT_5X7["\u007f"]))
+			if char == "\r":
+				continue
+			if char == "\t":
+				x += 4 * (FONT_5X7[" "][0] + 1) * scale
+				continue
+			glyph = FONT_5X7.get(char, FONT_5X7["\x7f"])
 			remapped_glyph = tuple(map(lambda n: n >> (5 - glyph[0]), glyph[1:]))
 			self._draw_glyph(x, y, remapped_glyph, glyph[0], color, scale)
 			x += (glyph[0] + 1) * scale
@@ -427,10 +611,72 @@ class GraphicsDevice:
 				x = origin_x
 				y += 6 * scale
 				continue
-			glyph = FONT_3X5.get(char, FONT_3X5["\u007f"])
+			if char == "\r":
+				continue
+			if char == "\t":
+				x += 4 * (FONT_3X5[" "][0] + 1) * scale
+				continue
+			glyph = FONT_3X5.get(char, FONT_3X5["\x7f"])
 			remapped_glyph = tuple(map(lambda n: n >> (5 - glyph[0]), glyph[1:]))
 			self._draw_glyph(x, y, remapped_glyph, glyph[0], color, scale)
 			x += (glyph[0] + 1) * scale
+
+	def draw_text_proportional(
+		self,
+		x: int,
+		y: int,
+		text: str,
+		color: int,
+		pixel_scale: int | None = None,
+	) -> None:
+		self.draw_text(x, y, text, color, pixel_scale)
+
+	def draw_text_small_proportional(
+		self,
+		x: int,
+		y: int,
+		text: str,
+		color: int,
+		pixel_scale: int | None = None,
+	) -> None:
+		self.draw_text_small(x, y, text, color, pixel_scale)
+
+	def text_advance(
+		self,
+		char: str,
+		pixel_scale: int | None = None,
+		*,
+		small: bool = False,
+	) -> int:
+		scale = self.text_scale if pixel_scale is None else max(1, int(pixel_scale))
+		font = FONT_3X5 if small else FONT_5X7
+		if char == "\r" or char == "\n":
+			return 0
+		if char == "\t":
+			return 4 * (font[" "][0] + 1) * scale
+		glyph = font.get(char, font["\x7f"])
+		return (glyph[0] + 1) * scale
+
+	def measure_text(
+		self,
+		text: str,
+		pixel_scale: int | None = None,
+		*,
+		small: bool = False,
+		proportional: bool = True,
+	) -> int:
+		scale = self.text_scale if pixel_scale is None else max(1, int(pixel_scale))
+		if not proportional:
+			cell_width = 4 if small else 6
+			return max((len(line) * cell_width for line in text.split("\n")), default=0) * scale
+
+		maximum = 0
+		for line in text.split("\n"):
+			width = 0
+			for char in line:
+				width += self.text_advance(char, 1, small=small)
+			maximum = max(maximum, max(0, width - (1 if line else 0)))
+		return maximum * scale
 
 	def _snapshot(self, palette: Sequence[str]) -> FrameSnapshot:
 		self.sequence += 1

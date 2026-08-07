@@ -82,6 +82,7 @@ class Program(Node):
 		super().__init__(start_pos, end_pos)
 		self.statements: list[Node] = statements
 		self.sub_defs: list[Node] = sub_defs
+		self.static_words: int = 0
 
 	def __repr__(self):
 		return f"Program({self.statements})"
@@ -244,12 +245,11 @@ class ConstantDeclaration(Node):
 		value: Node,
 	):
 		super().__init__(start_pos, end_pos)
-		self.name: str = name
-		self.value: Node = value
+		self.name = name
+		self.value = value
 
 	def __repr__(self):
 		return f"CONST ({self.name}: {self.value})"
-
 
 
 class ForLoop(Node):
@@ -478,7 +478,10 @@ class NewObjectExpression(Node):
 class FreePointer(Node):
 	def __init__(self, start_pos: Position, end_pos: Position, name: str):
 		super().__init__(start_pos, end_pos)
-		self.name: str = name
+		self.name = name
+		self.address = -1
+		self.is_local = False
+		self.is_string = False
 
 
 class TypeCast(Node):
@@ -692,8 +695,8 @@ class EnumDeclaration(Node):
 		start_pos: Position,
 		end_pos: Position,
 		enum_name: str,
-		enum_constants: list[str]
+		enum_constants: list[str],
 	) -> None:
 		super().__init__(start_pos, end_pos)
-		self.enum_name: str = enum_name
-		self.enum_constants: list[str] = enum_constants
+		self.enum_name = enum_name
+		self.enum_constants = enum_constants

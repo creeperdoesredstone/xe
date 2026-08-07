@@ -2,6 +2,7 @@ from xe_lang.helper import TT, Token, Position, LexError
 from string import ascii_letters
 
 DIGITS = "0123456789"
+MAX_NUMERIC_LITERAL_CHARS = 256
 LETTERS = ascii_letters
 VALID_IDEN = LETTERS + DIGITS + "_"
 
@@ -70,10 +71,10 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 					tokens.append(Token(with_char_type[i], None, start_pos, pos.copy()))
 					advance()
 					return
-			
+
 			tokens.append(Token(no_char_type, None, start_pos, operator_end_pos))
 			return
-		
+
 		if current_char == char_to_check:
 			tokens.append(Token(with_char_type, None, start_pos, pos.copy()))
 			advance()
@@ -84,7 +85,7 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 		while current_char != None and current_char != "\n":
 			advance()
 
-	def make_number() -> None:
+	def make_number() -> LexError | None:
 		res: str = ""
 		dot_count: int = 0
 		end_pos: Position = pos.copy()
@@ -99,10 +100,18 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 			end_pos = pos.copy()
 			advance()
 
+		if len(res) > MAX_NUMERIC_LITERAL_CHARS:
+			return LexError(
+				f"Numeric literal exceeds {MAX_NUMERIC_LITERAL_CHARS} characters.",
+				start_pos,
+				end_pos,
+			)
+
 		if dot_count == 0:
 			tokens.append(Token(TT.INT, int(res), start_pos, end_pos))
 		else:
 			tokens.append(Token(TT.FLOAT, float(res), start_pos, end_pos))
+		return None
 
 	def make_iden_or_keyword() -> None:
 		res: str = ""
@@ -131,36 +140,35 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 			tokens[-1].end_pos = pos.copy()
 
 			advance()
-	
+
 	escape_map: dict[str, str] = {
 		"0": "\0",
 		"n": "\n",
 		"t": "\t",
 		"\n": "",
 	}
-
-	HEX_DIGITS = "0123456789abcdefABCDEF"
+	hex_digits = "0123456789abcdefABCDEF"
 
 	def read_hex_escape() -> tuple[str, None] | tuple[None, LexError]:
 		nonlocal current_char
-		escape_start: Position = pos.copy()
-		advance()  # consume 'x'
+		escape_start = pos.copy()
+		advance()
 
-		hex_digits: str = ""
+		digits = ""
 		for _ in range(4):
-			if current_char is None or current_char not in HEX_DIGITS:
+			if current_char is None or current_char not in hex_digits:
 				break
-			hex_digits += current_char
+			digits += current_char
 			advance()
 
-		if len(hex_digits) == 0:
+		if len(digits) == 0:
 			return None, LexError(
 				"Expected hexadecimal digits after '\\x' escape.",
 				escape_start,
 				pos.copy(),
 			)
 
-		return chr(int(hex_digits, 16)), None
+		return chr(int(digits, 16)), None
 
 	# lex
 	while current_char != None:
@@ -235,16 +243,16 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 				if current_char == "\\":
 					advance()
 					if current_char == "x":
-						char, hex_err = read_hex_escape()
-						if hex_err is not None:
-							return tokens, hex_err
+						char, hex_error = read_hex_escape()
+						if hex_error is not None:
+							return tokens, hex_error
 					else:
 						char = escape_map.get(current_char, current_char)
 						advance()
 				else:
 					char = current_char
 					advance()
-				
+
 				if current_char != "'":
 					return tokens, LexError(
 						f"Expected ' to terminate character, found '{current_char}' instead.",
@@ -261,22 +269,21 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 			while current_char not in (None, "\n") and current_char != '"' or escape:
 				if escape:
 					if current_char == "x":
-						hex_char, hex_err = read_hex_escape()
-						if hex_err is not None:
-							return tokens, hex_err
+						hex_char, hex_error = read_hex_escape()
+						if hex_error is not None:
+							return tokens, hex_error
 						string += hex_char
 						escape = False
-						continue  # read_hex_escape already advanced past the escape
-					else:
-						string += escape_map.get(current_char, current_char)
-						escape = False
+						continue
+					string += escape_map.get(current_char, current_char)
+					escape = False
 				else:
 					if current_char == "\\":
 						escape = True
 					else:
 						string += current_char
 				advance()
-			
+
 			if current_char != '"':
 				return tokens, LexError(
 					f"Expected '\"' to terminate string, found '{current_char}' instead.",
@@ -287,7 +294,9 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 			tokens.append(Token(TT.STRING, string, start_pos, end_pos))
 			advance()
 		elif current_char in DIGITS:
-			make_number()
+			number_error = make_number()
+			if number_error is not None:
+				return tokens, number_error
 		elif current_char in VALID_IDEN:
 			make_iden_or_keyword()
 		else:

@@ -15,6 +15,7 @@ from xe_lang.devices.currency_snapshot import (
 class CurrencySnapshot:
 	rate: float
 	points: tuple[float, ...]
+	dates: tuple[str, ...]
 
 
 class CurrencyDevice:
@@ -25,7 +26,7 @@ class CurrencyDevice:
 
 	def __init__(self) -> None:
 		self._cache: dict[tuple[int, int, int], CurrencySnapshot] = {}
-		self._active = CurrencySnapshot(0.0, ())
+		self._active = CurrencySnapshot(0.0, (), ())
 		self._status = self.STATUS_IDLE
 
 	@property
@@ -55,6 +56,9 @@ class CurrencyDevice:
 		if 0 <= index < len(self._active.points):
 			return self._active.points[index]
 		return 0.0
+
+	def point_date(self, index: int) -> str:
+		return self._active.dates[index] if 0 <= index < len(self._active.dates) else ""
 
 	def load(self, base_index: int, quote_index: int, range_id: int) -> bool:
 		key = (int(base_index), int(quote_index), int(range_id))
@@ -96,11 +100,15 @@ class CurrencyDevice:
 	) -> CurrencySnapshot:
 		rows = self._range_rows(range_id)
 		if base_index == quote_index:
-			return CurrencySnapshot(1.0, tuple(1.0 for _ in rows))
+			return CurrencySnapshot(
+				1.0,
+				tuple(1.0 for _ in rows),
+				tuple(date for date, _ in rows),
+			)
 
 		def cross_rate(rates: tuple[float, ...]) -> float:
 			return rates[quote_index] / rates[base_index]
 
 		current_rate = cross_rate(DAILY_RATES[-1][1])
 		points = tuple(cross_rate(rates) for _, rates in rows)
-		return CurrencySnapshot(current_rate, points)
+		return CurrencySnapshot(current_rate, points, tuple(date for date, _ in rows))

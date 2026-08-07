@@ -1,8 +1,20 @@
 from xe_lang.helper import Result, SemanticError, TT
 from xe_lang.nodes import *
+from xe_lang.executable import MAX_STATIC_WORDS
 from xe_lang.lexer import DATA_TYPES
 from xe_lang.rules import BINARY_RULES, UNARY_RULES
 from xe_lang.symbols import *
+import math
+
+
+def _constant_number(node: Node) -> int | float | None:
+	if isinstance(node, (IntLiteral, FloatLiteral)):
+		return node.value
+	if isinstance(node, UnaryOperation) and node.op._type in (TT.ADD, TT.SUB):
+		value = _constant_number(node.value)
+		if value is not None:
+			return value if node.op._type == TT.ADD else -value
+	return None
 
 
 class SemanticAnalyzer:
@@ -80,7 +92,7 @@ class SemanticAnalyzer:
 
 		raise Exception(f"Unknown type {_type}")
 
-	def visit(self, node: Node) -> Result:
+	def analyze(self, node: Node) -> Result:
 		method = getattr(
 			self,
 			f"visit_{type(node).__name__}",
@@ -98,43 +110,61 @@ class SemanticAnalyzer:
 
 		return method(node)
 
+	def visit(self, node: Node) -> Result:
+		return self.analyze(node)
+
 	def visit_Program(self, node: Program) -> Result:
 		res = Result()
+		parent_scope = self.scope
+		is_root_program = parent_scope is None
+		if is_root_program:
+			self.next_address = 0
+			self.string_literals = []
+			self.current_function = None
 		self.push_scope()
-		init_libraries(self.scope)
+		if is_root_program:
+			init_libraries(self.scope)
+		try:
+			for defn in node.sub_defs:
+				if isinstance(defn, (StructDefinition, ClassDefinition, EnumDeclaration)):
+					res.register(self.analyze(defn))
+					if res.error:
+						return res
 
-		# Define structs & classes
-		for defn in node.sub_defs:
-			if isinstance(defn, (StructDefinition, ClassDefinition)):
-				res.register(self.visit(defn))
+			for stmt in node.statements:
+				if isinstance(stmt, (ConstantDeclaration, VariableDeclaration, ArrayDeclaration)):
+					res.register(self.analyze(stmt))
+					if res.error:
+						return res
+
+			for defn in node.sub_defs:
+				if isinstance(defn, (StructDefinition, ClassDefinition, EnumDeclaration)):
+					continue
+				res.register(self.analyze(defn))
 				if res.error:
 					return res
 
-		# Define global storage
-		for stmt in node.statements:
-			if isinstance(stmt, (VariableDeclaration, ArrayDeclaration)):
-				res.register(self.visit(stmt))
+			for stmt in node.statements:
+				if isinstance(stmt, (ConstantDeclaration, VariableDeclaration, ArrayDeclaration)):
+					continue
+				res.register(self.analyze(stmt))
 				if res.error:
 					return res
 
-		# Define subroutines
-		for defn in node.sub_defs:
-			if not isinstance(defn, (StructDefinition, ClassDefinition)):
-				res.register(self.visit(defn))
-				if res.error:
-					return res
-
-		# Define rest of program
-		for stmt in node.statements:
-			if isinstance(stmt, (VariableDeclaration, ArrayDeclaration)):
-				continue
-			res.register(self.visit(stmt))
-			if res.error:
-				return res
-
-		self.pop_scope()
-		node.string_literals = self.string_literals
-		return res.success(None)
+			node.string_literals = self.string_literals
+			if is_root_program:
+				if self.next_address > MAX_STATIC_WORDS:
+					return res.fail(
+						SemanticError(
+							"Static data exceeds the 65536-word XAssembly address space.",
+							node.start_pos,
+							node.end_pos,
+						)
+					)
+				node.static_words = self.next_address
+			return res.success(None)
+		finally:
+			self.scope = parent_scope
 
 	def visit_IntLiteral(self, node: IntLiteral) -> Result:
 		node.type = Type("int")
@@ -210,7 +240,7 @@ class SemanticAnalyzer:
 
 	def visit_UnaryOperation(self, node: UnaryOperation) -> Result:
 		res = Result()
-		value_type: Type = res.register(self.visit(node.value))
+		value_type: Type = res.register(self.analyze(node.value))
 		if res.error:
 			return res
 
@@ -281,11 +311,11 @@ class SemanticAnalyzer:
 	def visit_BinaryOperation(self, node: BinaryOperation) -> Result:
 		res = Result()
 
-		left_type: Type = res.register(self.visit(node.left))
+		left_type: Type = res.register(self.analyze(node.left))
 		if res.error:
 			return res
 
-		right_type: Type = res.register(self.visit(node.right))
+		right_type: Type = res.register(self.analyze(node.right))
 		if res.error:
 			return res
 
@@ -321,6 +351,34 @@ class SemanticAnalyzer:
 		result_type = Type(base_type)
 		node.type = result_type
 
+		if node.op._type == TT.POW:
+			left_value = _constant_number(node.left)
+			right_value = _constant_number(node.right)
+			if left_value is not None and right_value is not None:
+				if result_type.base == "int" and right_value < 0:
+					return res.fail(
+						SemanticError(
+							"Integer exponent must be non-negative.",
+							node.start_pos,
+							node.end_pos,
+						)
+					)
+				if result_type.base == "float":
+					try:
+						value = math.pow(float(left_value), float(right_value))
+					except ValueError:
+						return res.fail(
+							SemanticError("Power domain error.", node.start_pos, node.end_pos)
+						)
+					except OverflowError:
+						return res.fail(
+							SemanticError("Power result is outside float range.", node.start_pos, node.end_pos)
+						)
+					if not math.isfinite(value):
+						return res.fail(
+							SemanticError("Power result is outside float range.", node.start_pos, node.end_pos)
+						)
+
 		if left_type == Type("string") and right_type == Type("string"):
 			node.__class__ = StringOperation
 			if node.op._type not in (TT.ADD, TT.EQ, TT.NE):
@@ -340,25 +398,22 @@ class SemanticAnalyzer:
 
 	def visit_ConstantDeclaration(self, node: ConstantDeclaration) -> Result:
 		res = Result()
-
 		if node.name in self.scope.symbols:
 			return res.fail(
 				SemanticError(
-					f"Variable '{node.name}' already declared.",
+					f"Symbol '{node.name}' already declared.",
 					node.start_pos,
 					node.end_pos,
 				)
 			)
-
-		value_type = res.register(self.visit(node.value))
-		if res.error: return res
-
-		const_symbol = VariableSymbol(
+		value_type = res.register(self.analyze(node.value))
+		if res.error:
+			return res
+		self.scope.symbols[node.name] = VariableSymbol(
 			node.name,
 			value_type,
-			const_value=node.value
+			const_value=node.value,
 		)
-		self.scope.symbols[node.name] = const_symbol
 		return res.success(None)
 
 	def visit_VariableDeclaration(self, node: VariableDeclaration) -> Result:
@@ -470,7 +525,7 @@ class SemanticAnalyzer:
 					node.struct_symbol = owning_class
 					node.type = field.type
 
-					value_type = res.register(self.visit(node.value))
+					value_type = res.register(self.analyze(node.value))
 					if res.error:
 						return res
 
@@ -491,7 +546,7 @@ class SemanticAnalyzer:
 									)
 								)
 						return res.success(None)
-					
+
 					if node.operator._type in COMPOUND_OPS:
 						if node.type.pointer_layers != 0 or node.type.base not in ("int", "float"):
 							return res.fail(
@@ -535,7 +590,7 @@ class SemanticAnalyzer:
 		node.is_local = symbol.is_local
 		node.struct_symbol = getattr(symbol, "struct_symbol", None)
 
-		value_type = res.register(self.visit(node.value))
+		value_type = res.register(self.analyze(node.value))
 
 		if res.error:
 			return res
@@ -624,11 +679,11 @@ class SemanticAnalyzer:
 	def visit_PointerAssign(self, node: PointerAssign) -> Result:
 		res = Result()
 
-		target_type = res.register(self.visit(node.target))
+		target_type = res.register(self.analyze(node.target))
 		if res.error:
 			return res
 
-		value_type = res.register(self.visit(node.value))
+		value_type = res.register(self.analyze(node.value))
 		if res.error:
 			return res
 
@@ -701,11 +756,11 @@ class SemanticAnalyzer:
 	def visit_ForLoop(self, node: ForLoop) -> Result:
 		res = Result()
 
-		res.register(self.visit(node.init_expr))
+		res.register(self.analyze(node.init_expr))
 		if res.error:
 			return res
 
-		condition_type: Type = res.register(self.visit(node.condition_expr))
+		condition_type: Type = res.register(self.analyze(node.condition_expr))
 		if res.error:
 			return res
 
@@ -718,12 +773,12 @@ class SemanticAnalyzer:
 				)
 			)
 
-		res.register(self.visit(node.step_expr))
+		res.register(self.analyze(node.step_expr))
 		if res.error:
 			return res
 
 		self.push_scope()
-		res.register(self.visit(node.body))
+		res.register(self.analyze(node.body))
 		if res.error:
 			self.pop_scope()
 			return res
@@ -734,7 +789,7 @@ class SemanticAnalyzer:
 	def visit_WhileLoop(self, node: WhileLoop) -> Result:
 		res = Result()
 
-		condition_type: Type = res.register(self.visit(node.condition_expr))
+		condition_type: Type = res.register(self.analyze(node.condition_expr))
 		if res.error:
 			return res
 
@@ -748,7 +803,7 @@ class SemanticAnalyzer:
 			)
 
 		self.push_scope()
-		res.register(self.visit(node.body))
+		res.register(self.analyze(node.body))
 		if res.error:
 			self.pop_scope()
 			return res
@@ -759,7 +814,7 @@ class SemanticAnalyzer:
 	def visit_RepeatLoop(self, node: RepeatLoop) -> Result:
 		res = Result()
 
-		condition_type: Type = res.register(self.visit(node.condition_expr))
+		condition_type: Type = res.register(self.analyze(node.condition_expr))
 		if res.error:
 			return res
 
@@ -773,7 +828,7 @@ class SemanticAnalyzer:
 			)
 
 		self.push_scope()
-		res.register(self.visit(node.body))
+		res.register(self.analyze(node.body))
 		if res.error:
 			self.pop_scope()
 			return res
@@ -785,7 +840,7 @@ class SemanticAnalyzer:
 		res = Result()
 
 		for condition, body in node.cases:
-			condition_type: Type = res.register(self.visit(condition))
+			condition_type: Type = res.register(self.analyze(condition))
 			if res.error:
 				return res
 
@@ -799,7 +854,7 @@ class SemanticAnalyzer:
 				)
 
 			self.push_scope()
-			res.register(self.visit(body))
+			res.register(self.analyze(body))
 			if res.error:
 				self.pop_scope()
 				return res
@@ -807,7 +862,7 @@ class SemanticAnalyzer:
 
 		if node.else_case:
 			self.push_scope()
-			res.register(self.visit(node.else_case))
+			res.register(self.analyze(node.else_case))
 			if res.error:
 				self.pop_scope()
 				return res
@@ -818,32 +873,30 @@ class SemanticAnalyzer:
 	def visit_SwitchStatement(self, node: SwitchStatement) -> Result:
 		res = Result()
 
-		match_type: Type = res.register(self.visit(node.match_expr))
+		match_type: Type = res.register(self.analyze(node.match_expr))
 		if res.error:
 			return res
-
-		ALLOWED_MATCH_TYPES = (
-			("int","char"),
-			("char","int")
-		)
+		compatible_scalar_types = {("int", "char"), ("char", "int")}
 
 		for case_expr, body in node.cases:
-			case_type: Type = res.register(self.visit(case_expr))
+			case_type: Type = res.register(self.analyze(case_expr))
 			if res.error:
 				return res
 
-			if case_type != match_type:
-				if match_type.pointer_layers != 0 or (match_type.base, case_type.base) not in ALLOWED_MATCH_TYPES:
-					return res.fail(
-						SemanticError(
-							f"Case expression type '{case_type}' does not match switch expression type '{match_type}'.",
-							case_expr.start_pos,
-							case_expr.end_pos,
-						)
+			if case_type != match_type and (
+				match_type.pointer_layers != 0
+				or (match_type.base, case_type.base) not in compatible_scalar_types
+			):
+				return res.fail(
+					SemanticError(
+						f"Case expression type '{case_type}' does not match switch expression type '{match_type}'.",
+						case_expr.start_pos,
+						case_expr.end_pos,
 					)
+				)
 
 			self.push_scope()
-			res.register(self.visit(body))
+			res.register(self.analyze(body))
 			if res.error:
 				self.pop_scope()
 				return res
@@ -851,7 +904,7 @@ class SemanticAnalyzer:
 
 		if node.default_case:
 			self.push_scope()
-			res.register(self.visit(node.default_case))
+			res.register(self.analyze(node.default_case))
 			if res.error:
 				self.pop_scope()
 				return res
@@ -904,7 +957,7 @@ class SemanticAnalyzer:
 						p.end_pos
 					)
 				)
-			
+
 			param_type, resolved_param_symbol = self._resolve_param_or_return_type(
 				p.type, p.pointer_layers, getattr(p, "library_name", None)
 			)
@@ -916,7 +969,7 @@ class SemanticAnalyzer:
 						p.end_pos,
 					)
 				)
-			
+
 			param_names.append(p.name)
 			param_types.append(param_type)
 			p.struct_symbol = resolved_param_symbol
@@ -1019,7 +1072,7 @@ class SemanticAnalyzer:
 
 			self.scope.symbols[param.name] = var_symbol
 
-		res.register(self.visit(node.body))
+		res.register(self.analyze(node.body))
 		if res.error:
 			self.pop_scope()
 			self.current_function = prev_function
@@ -1163,7 +1216,7 @@ class SemanticAnalyzer:
 			self.scope.symbols[param.name] = var_symbol
 
 		self.current_function.owning_class = class_sym
-		res.register(self.visit(node.body))
+		res.register(self.analyze(node.body))
 		if res.error:
 			self.pop_scope()
 			self.current_function = prev_function
@@ -1219,7 +1272,7 @@ class SemanticAnalyzer:
 				)
 			)
 
-		value_type: Type = res.register(self.visit(node.value))
+		value_type: Type = res.register(self.analyze(node.value))
 		if res.error:
 			return res
 
@@ -1251,7 +1304,7 @@ class SemanticAnalyzer:
 
 		if isinstance(node, FunctionCall):
 			# Evaluates identifiers, nested calls like foo()(), etc.
-			caller_type: Type = res.register(self.visit(node.caller))
+			caller_type: Type = res.register(self.analyze(node.caller))
 			if res.error:
 				return res
 
@@ -1302,7 +1355,7 @@ class SemanticAnalyzer:
 			)
 
 		for i, (arg, expected_type) in enumerate(zip(node.arguments, expected_params)):
-			arg_type: Type = res.register(self.visit(arg))
+			arg_type: Type = res.register(self.analyze(arg))
 			if res.error:
 				return res
 
@@ -1341,7 +1394,7 @@ class SemanticAnalyzer:
 		res = Result()
 
 		for expr in node.values:
-			res.register(self.visit(expr))
+			res.register(self.analyze(expr))
 			if res.error:
 				return res
 
@@ -1385,7 +1438,7 @@ class SemanticAnalyzer:
 	def visit_TypeCast(self, node: TypeCast) -> Result:
 		res = Result()
 
-		expr_type: Type = res.register(self.visit(node.value))
+		expr_type: Type = res.register(self.analyze(node.value))
 		if res.error:
 			return res
 
@@ -1452,7 +1505,7 @@ class SemanticAnalyzer:
 				)
 			)
 
-		size_type = res.register(self.visit(node.size))
+		size_type = res.register(self.analyze(node.size))
 		if res.error:
 			return res
 
@@ -1493,7 +1546,7 @@ class SemanticAnalyzer:
 		element_type = None
 
 		for elem in node.elements:
-			t = res.register(self.visit(elem))
+			t = res.register(self.analyze(elem))
 			if res.error:
 				return res
 
@@ -1513,11 +1566,11 @@ class SemanticAnalyzer:
 	def visit_ArrayIndex(self, node: ArrayIndex) -> Result:
 		res = Result()
 
-		array_type = res.register(self.visit(node.array))
+		array_type = res.register(self.analyze(node.array))
 		if res.error:
 			return res
 
-		index_type = res.register(self.visit(node.index))
+		index_type = res.register(self.analyze(node.index))
 		if res.error:
 			return res
 
@@ -1530,7 +1583,8 @@ class SemanticAnalyzer:
 				)
 			)
 
-		if array_type.pointer_layers == 0 and array_type.base != "string":
+		is_string_value = array_type.base == "string" and not array_type.is_array
+		if array_type.pointer_layers == 0 and not is_string_value:
 			return res.fail(
 				SemanticError(
 					f"Cannot index a non-array type '{array_type}'.",
@@ -1538,21 +1592,21 @@ class SemanticAnalyzer:
 					node.array.end_pos,
 				)
 			)
-		elif array_type.base == "string":
+		elif is_string_value:
 			result_type = Type("char")
 		else:
-			result_type = Type(array_type.base, min(array_type.pointer_layers - 1, 0))
+			result_type = Type(array_type.base, max(array_type.pointer_layers - 1, 0))
 		node.type = result_type
 		return res.success(result_type)
 
 	def visit_ArrayAssign(self, node: ArrayAssign) -> Result:
 		res = Result()
 
-		array_type = res.register(self.visit(node.array))
+		array_type = res.register(self.analyze(node.array))
 		if res.error:
 			return res
 
-		is_string = array_type == Type("string")
+		is_string = array_type.base == "string" and not array_type.is_array
 		if array_type.pointer_layers == 0 and not is_string:
 			return res.fail(
 				SemanticError(
@@ -1562,7 +1616,7 @@ class SemanticAnalyzer:
 				)
 			)
 
-		index_type = res.register(self.visit(node.index))
+		index_type = res.register(self.analyze(node.index))
 		if res.error:
 			return res
 
@@ -1575,7 +1629,7 @@ class SemanticAnalyzer:
 				)
 			)
 
-		value_type = res.register(self.visit(node.value))
+		value_type = res.register(self.analyze(node.value))
 		if res.error:
 			return res
 
@@ -1724,10 +1778,10 @@ class SemanticAnalyzer:
 	def visit_MemberAccess(self, node: MemberAccess) -> Result:
 		res = Result()
 
-		parent_type: Type = res.register(self.visit(node.parent))
+		parent_type: Type = res.register(self.analyze(node.parent))
 		if res.error:
 			return res
-		
+
 		op_error = self._check_member_access_operator(parent_type, node)
 		if op_error:
 			return res.fail(op_error)
@@ -1782,11 +1836,11 @@ class SemanticAnalyzer:
 				node.end_pos,
 			)
 		)
-	
+
 	def visit_MemberAssign(self, node: MemberAssign) -> Result:
 		res = Result()
 
-		parent_type: Type = res.register(self.visit(node.obj))
+		parent_type: Type = res.register(self.analyze(node.obj))
 		if res.error:
 			return res
 
@@ -1842,7 +1896,7 @@ class SemanticAnalyzer:
 
 		node.type = field_type
 
-		value_type: Type = res.register(self.visit(node.value))
+		value_type: Type = res.register(self.analyze(node.value))
 		if res.error:
 			return res
 
@@ -1901,7 +1955,7 @@ class SemanticAnalyzer:
 				node.end_pos,
 			)
 		)
-	
+
 	def visit_ClassDefinition(self, node: ClassDefinition) -> Result:
 		res = Result()
 
@@ -1991,7 +2045,7 @@ class SemanticAnalyzer:
 							member.end_pos,
 						)
 					)
-				
+
 				res.register(
 					self._analyze_method(member, is_proc, class_sym)
 				)
@@ -2016,34 +2070,24 @@ class SemanticAnalyzer:
 		return res.success(None)
 
 	def visit_EnumDeclaration(self, node: EnumDeclaration) -> Result:
-		res = Result()
-
 		if node.enum_name in self.scope.symbols:
-			return res.fail(
+			return Result().fail(
 				SemanticError(
-					f"'{node.name}' is already declared.",
+					f"'{node.enum_name}' is already declared.",
 					node.start_pos,
 					node.end_pos,
 				)
 			)
-
-		enum_sym = ClassSymbol(
-			name=node.enum_name,
-			type=Type(node.enum_name)
-		)
-		self.scope.symbols[node.enum_name] = enum_sym
-
-		for i, const in enumerate(node.enum_constants):
-			const_symbol = VariableSymbol(
-				name=const,
+		enum_symbol = ClassSymbol(name=node.enum_name, type=Type(node.enum_name))
+		for index, name in enumerate(node.enum_constants):
+			enum_symbol.fields[name] = VariableSymbol(
+				name=name,
 				type=Type("int"),
-				const_value=IntLiteral(None, None, i),
+				const_value=IntLiteral(node.start_pos, node.end_pos, index),
 			)
-			enum_sym.fields[const] = const_symbol
-
-		node.symbol = enum_sym
-
-		return res.success(None)
+		self.scope.symbols[node.enum_name] = enum_symbol
+		node.symbol = enum_symbol
+		return Result().success(None)
 
 	def visit_NewArrayExpression(self, node: NewArrayExpression) -> Result:
 		res = Result()
@@ -2058,7 +2102,7 @@ class SemanticAnalyzer:
 				)
 			)
 
-		size_type = res.register(self.visit(node.size_expr))
+		size_type = res.register(self.analyze(node.size_expr))
 		if res.error:
 			return res
 
@@ -2110,7 +2154,7 @@ class SemanticAnalyzer:
 				)
 
 			for i, (arg, expected_type) in enumerate(zip(node.args, expected_params)):
-				arg_type = res.register(self.visit(arg))
+				arg_type = res.register(self.analyze(arg))
 				if res.error:
 					return res
 
@@ -2158,7 +2202,7 @@ class SemanticAnalyzer:
 			)
 
 		for i, arg in enumerate(node.args):
-			arg_type = res.register(self.visit(arg))
+			arg_type = res.register(self.analyze(arg))
 			if res.error:
 				return res
 
@@ -2185,11 +2229,38 @@ class SemanticAnalyzer:
 		allocated_type = Type(node.type_name, 1)
 		node.type = allocated_type
 		return res.success(allocated_type)
-	
+
+	def visit_FreePointer(self, node: FreePointer) -> Result:
+		symbol = self.scope.lookup(node.name)
+		if not isinstance(symbol, VariableSymbol):
+			return Result().fail(
+				SemanticError(
+					f"Undefined variable '{node.name}'" if symbol is None else f"'{node.name}' is not a variable.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		symbol_type = symbol.type
+		is_string = symbol_type.base == "string" and symbol_type.pointer_layers == 0
+		if symbol_type.pointer_layers == 0 and not is_string:
+			return Result().fail(
+				SemanticError(
+					f"Variable '{node.name}' must be a pointer or a string.",
+					node.start_pos,
+					node.end_pos,
+				)
+			)
+
+		node.address = symbol.address
+		node.is_local = symbol.is_local
+		node.is_string = is_string
+		return Result().success(None)
+
 	def visit_MethodCall(self, node: MethodCall) -> Result:
 		res = Result()
 
-		obj_type: Type = res.register(self.visit(node.obj))
+		obj_type: Type = res.register(self.analyze(node.obj))
 		if res.error:
 			return res
 
@@ -2232,7 +2303,7 @@ class SemanticAnalyzer:
 			)
 
 		for i, (arg, expected_type) in enumerate(zip(node.arguments, expected_params)):
-			arg_type = res.register(self.visit(arg))
+			arg_type = res.register(self.analyze(arg))
 			if res.error:
 				return res
 
@@ -2346,7 +2417,7 @@ class SemanticAnalyzer:
 				)
 			)
 
-		value_type = res.register(self.visit(node.value))
+		value_type = res.register(self.analyze(node.value))
 		if res.error:
 			return res
 		if value_type != member_sym.type:
@@ -2415,7 +2486,7 @@ class SemanticAnalyzer:
 
 		reference_parameters = member_sym.reference_parameters
 		for i, (arg, expected_type) in enumerate(zip(node.arguments, expected_params)):
-			arg_type = res.register(self.visit(arg))
+			arg_type = res.register(self.analyze(arg))
 			if res.error:
 				return res
 
@@ -2451,37 +2522,7 @@ class SemanticAnalyzer:
 		node.type = member_sym.return_type if member_sym.return_type is not None else Type("none")
 		return res.success(node.type)
 
-	def visit_FreePointer(self, node: FreePointer) -> Result:
-		res: Result = Result()
-		symbol: BaseSymbol | None = self.scope.lookup(node.name)
-		
-		if symbol is None:
-			return res.fail(
-				SemanticError(
-					f"Undefined variable '{node.name}'",
-					node.start_pos,
-					node.end_pos,
-				)
-			)
-
-		sym_type: Type = symbol.type
-		node.is_string = False
-		if sym_type.pointer_layers == 0:
-			if sym_type.base != "string":
-				return res.fail(
-					SemanticError(
-						f"Variable '{node.name}' must be a pointer or a string.",
-						node.start_pos,
-						node.end_pos,
-					)
-				)
-			else:
-				node.is_string = True
-
-		node.address = symbol.address
-		return res.success(None)
-
 
 def analyze(ast: Node) -> Result:
 	analyzer = SemanticAnalyzer()
-	return analyzer.visit(ast)
+	return analyzer.analyze(ast)

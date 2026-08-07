@@ -1,0 +1,931 @@
+# Xenon Text Editor: safe, responsive file editing with optional Xe syntax feedback.
+
+var editor_window: graphics::Window
+var editor_text: string
+var editor_path: string
+var editor_status: string
+var editor_tooltip: string
+var editor_clipboard: string
+var undo_text: string
+var editor_scratch: string
+var editor_insert: string
+var editor_file: os::File
+var syntax_highlighting: bool
+var dirty: bool
+var compile_pending: bool
+var compile_ok: bool
+var selected_all: bool
+var cursor_index: int
+var selection_start: int
+var selection_end: int
+var selection_dragging: bool
+var undo_available: bool
+var font_large: bool
+var effective_font_large: bool
+var scroll_line: int
+var scroll_column: int
+var key: int
+var width: int
+var height: int
+var previous_ticks: int
+var current_ticks: int
+var delta_ms: int
+var edit_menu_open: bool
+var edit_menu_progress: int
+var edit_button_x: int
+var edit_button_width: int
+var toolbar_height: int
+var edit_toggle_lock: bool
+
+proc clear_text(target: string) {
+	if (xestring::strlen(target) > 0) {
+		target[0] = '\0'
+		call xestring::update_length(target)
+	}
+}
+
+proc set_text(target: string, value: string) {
+	call clear_text(target)
+	call xestring::append(target, value)
+}
+
+fn editor_selection_begin() int {
+	if (selection_start < selection_end) { return selection_start }
+	return selection_end
+}
+
+fn editor_selection_finish() int {
+	if (selection_start > selection_end) { return selection_start }
+	return selection_end
+}
+
+fn editor_has_selection() bool {
+	return selection_start != selection_end
+}
+
+proc clear_editor_selection() {
+	selection_start = cursor_index
+	selection_end = cursor_index
+	selected_all = false
+}
+
+proc copy_text_prefix(target: string, value: string, limit: int) {
+	var index: int
+	call clear_text(target)
+	index = 0
+	while (index < xestring::strlen(value) && index < limit) {
+		call xestring::append_char(target, value[index])
+		index += 1
+	}
+	if (index < xestring::strlen(value) && limit > 3) {
+		call xestring::append(target, "...")
+	}
+}
+
+proc record_undo() {
+	call set_text(undo_text, editor_text)
+	undo_available = true
+}
+
+proc mark_content_changed() {
+	dirty = true
+	compile_pending = true
+}
+
+proc replace_editor_selection(value: string) {
+	var begin_index: int
+	var finish_index: int
+	var index: int
+	begin_index = editor_selection_begin()
+	finish_index = editor_selection_finish()
+	call record_undo()
+	call clear_text(editor_scratch)
+	index = 0
+	while (index < begin_index && index < xestring::strlen(editor_text)) {
+		call xestring::append_char(editor_scratch, editor_text[index])
+		index += 1
+	}
+	call xestring::append(editor_scratch, value)
+	index = finish_index
+	while (index < xestring::strlen(editor_text)) {
+		call xestring::append_char(editor_scratch, editor_text[index])
+		index += 1
+	}
+	call set_text(editor_text, editor_scratch)
+	cursor_index = begin_index + xestring::strlen(value)
+	call clear_editor_selection()
+	call mark_content_changed()
+}
+
+proc clear_editor_contents() {
+	if (xestring::strlen(editor_text) > 0) {
+		selection_start = 0
+		selection_end = xestring::strlen(editor_text)
+		call replace_editor_selection("")
+	}
+	else {
+		cursor_index = 0
+		call clear_editor_selection()
+	}
+}
+
+proc erase_editor_character() {
+	if (editor_has_selection()) {
+		call replace_editor_selection("")
+	}
+	elseif (cursor_index > 0 && xestring::strlen(editor_text) > 0) {
+		selection_start = cursor_index - 1
+		selection_end = cursor_index
+		call replace_editor_selection("")
+	}
+}
+
+proc delete_editor_character() {
+	if (editor_has_selection()) {
+		call replace_editor_selection("")
+	}
+	elseif (cursor_index < xestring::strlen(editor_text)) {
+		selection_start = cursor_index
+		selection_end = cursor_index + 1
+		call replace_editor_selection("")
+	}
+}
+
+proc append_editor_character(character: char) {
+	call clear_text(editor_insert)
+	call xestring::append_char(editor_insert, character)
+	call replace_editor_selection(editor_insert)
+}
+
+proc append_editor_indent() {
+	call replace_editor_selection("    ")
+}
+
+proc copy_selection() {
+	var index: int
+	if (editor_has_selection()) {
+		call clear_text(editor_clipboard)
+		index = editor_selection_begin()
+		while (index < editor_selection_finish()) {
+			call xestring::append_char(editor_clipboard, editor_text[index])
+			index += 1
+		}
+		call set_text(editor_status, "Copied selection")
+	}
+	else {
+		call set_text(editor_status, "Nothing selected")
+	}
+}
+
+proc cut_selection() {
+	if (editor_has_selection()) {
+		call copy_selection()
+		call replace_editor_selection("")
+		call set_text(editor_status, "Cut selection")
+	}
+	else {
+		call set_text(editor_status, "Nothing selected")
+	}
+}
+
+proc paste_clipboard() {
+	if (xestring::strlen(editor_clipboard) > 0) {
+		call replace_editor_selection(editor_clipboard)
+		call set_text(editor_status, "Pasted")
+	}
+	else {
+		call set_text(editor_status, "Clipboard empty")
+	}
+}
+
+proc undo_editor_change() {
+	if (undo_available) {
+		call set_text(editor_text, undo_text)
+		undo_available = false
+		cursor_index = xestring::strlen(editor_text)
+		call clear_editor_selection()
+		dirty = true
+		compile_pending = true
+		call set_text(editor_status, "Undo")
+	}
+	else {
+		call set_text(editor_status, "Nothing to undo")
+	}
+}
+
+proc new_editor_file() {
+	if (xestring::strlen(editor_text) > 0) {
+		call record_undo()
+	}
+	call clear_text(editor_text)
+	cursor_index = 0
+	call clear_editor_selection()
+	dirty = false
+	compile_pending = true
+	scroll_line = 0
+	scroll_column = 0
+	call set_text(editor_status, "New file")
+}
+
+proc open_editor_file() {
+	call record_undo()
+	editor_file = os::open_read(editor_path)
+	call set_text(editor_text, os::read(editor_file))
+	call os::close(editor_path)
+	cursor_index = xestring::strlen(editor_text)
+	call clear_editor_selection()
+	dirty = false
+	compile_pending = true
+	scroll_line = 0
+	scroll_column = 0
+	call set_text(editor_status, "Opened")
+}
+
+proc save_editor_file() {
+	editor_file = os::open_write(editor_path)
+	if (os::write(editor_file, editor_text)) {
+		call set_text(editor_status, "Saved")
+		dirty = false
+	}
+	else {
+		call set_text(editor_status, "Save failed")
+	}
+	call os::close(editor_path)
+}
+
+fn editor_line_count() int {
+	var index: int
+	var count: int
+	index = 0
+	count = 1
+	while (index < xestring::strlen(editor_text)) {
+		if ((int)(editor_text[index]) == 10) { count += 1 }
+		index += 1
+	}
+	return count
+}
+
+fn editor_last_column() int {
+	var index: int
+	var column: int
+	index = 0
+	column = 0
+	while (index < xestring::strlen(editor_text)) {
+		if ((int)(editor_text[index]) == 10) { column = 0 }
+		elseif ((int)(editor_text[index]) == 9) { column += 4 - column % 4 }
+		else { column += 1 }
+		index += 1
+	}
+	return column
+}
+
+fn editor_cursor_line() int {
+	var index: int
+	var line: int
+	index = 0
+	line = 0
+	while (index < cursor_index && index < xestring::strlen(editor_text)) {
+		if ((int)(editor_text[index]) == 10) { line += 1 }
+		index += 1
+	}
+	return line
+}
+
+fn editor_cursor_column() int {
+	var index: int
+	var column: int
+	index = 0
+	column = 0
+	while (index < cursor_index && index < xestring::strlen(editor_text)) {
+		if ((int)(editor_text[index]) == 10) { column = 0 }
+		elseif ((int)(editor_text[index]) == 9) { column += 4 - column % 4 }
+		else { column += 1 }
+		index += 1
+	}
+	return column
+}
+
+fn editor_row_height() int {
+	if (effective_font_large) { return 8 }
+	return 6
+}
+
+fn editor_character_width() int {
+	if (effective_font_large) { return 6 }
+	return 4
+}
+
+fn editor_gutter_width() int {
+	if (effective_font_large) { return 28 }
+	return 22
+}
+
+proc keep_editor_cursor_visible(draw_width: int, draw_height: int) {
+	var rows: int
+	var columns: int
+	var last_line: int
+	var last_column: int
+	rows = draw_height / editor_row_height()
+	columns = (draw_width - editor_gutter_width()) / editor_character_width()
+	if (rows < 1) { rows = 1 }
+	if (columns < 1) { columns = 1 }
+	last_line = editor_cursor_line()
+	last_column = editor_cursor_column()
+	if (last_line < rows) { scroll_line = 0 }
+	if (scroll_line > last_line) { scroll_line = last_line }
+	if (last_line < scroll_line) { scroll_line = last_line }
+	if (last_line >= scroll_line + rows) { scroll_line = last_line - rows + 1 }
+	if (scroll_line < 0) { scroll_line = 0 }
+	if (last_column < columns) { scroll_column = 0 }
+	if (scroll_column > last_column) { scroll_column = last_column }
+	if (last_column < scroll_column) { scroll_column = last_column }
+	if (last_column >= scroll_column + columns) { scroll_column = last_column - columns + 1 }
+	if (scroll_column < 0) { scroll_column = 0 }
+}
+
+proc draw_editor_character(x: int, y: int, character: char, color: int) {
+	if (effective_font_large) {
+		call graphics::draw_char(editor_window, x, y, character, color)
+	}
+	else {
+		call graphics::draw_char_small(editor_window, x, y, character, color)
+	}
+}
+
+proc draw_editor_number(x: int, y: int, value: int, color: int) {
+	if (effective_font_large) {
+		call graphics::draw_int(editor_window, x, y, value, color)
+	}
+	else {
+		call graphics::draw_int_small(editor_window, x, y, value, color)
+	}
+}
+
+proc draw_editor_vertical_chevron(x: int, y: int, button_width: int, button_height: int, direction: int) {
+	var center_x: int
+	var center_y: int
+	center_x = x + button_width / 2
+	center_y = y + button_height / 2
+	if (direction < 0) {
+		call graphics::draw_line(editor_window, center_x - 2, center_y + 1, center_x, center_y - 1, graphics::WHITE)
+		call graphics::draw_line(editor_window, center_x, center_y - 1, center_x + 2, center_y + 1, graphics::WHITE)
+	}
+	else {
+		call graphics::draw_line(editor_window, center_x - 2, center_y - 1, center_x, center_y + 1, graphics::WHITE)
+		call graphics::draw_line(editor_window, center_x, center_y + 1, center_x + 2, center_y - 1, graphics::WHITE)
+	}
+}
+
+fn editor_scroll_button(x: int, y: int, button_width: int, button_height: int, direction: int) bool {
+	var clicked: bool
+	clicked = graphics::button_flat(editor_window, x, y, button_width, button_height, " ", graphics::COLOR_8)
+	call draw_editor_vertical_chevron(x, y, button_width, button_height, direction)
+	return clicked
+}
+
+proc draw_error_marker(x: int, y: int, draw_width: int, row_y: int, gutter: int) {
+	var marker_x: int
+	var marker_y: int
+	var pointer_x: int
+	var pointer_y: int
+	var tooltip_width: int
+	var tooltip_x: int
+	var tooltip_y: int
+	var character_limit: int
+	marker_x = x + gutter - editor_character_width() - 2
+	marker_y = y + row_y
+	call draw_editor_character(marker_x, marker_y, '!', graphics::COLOR_12)
+	pointer_x = graphics::pointer_x(editor_window)
+	pointer_y = graphics::pointer_y(editor_window)
+	if (pointer_x >= marker_x - 1 && pointer_x < marker_x + editor_character_width() + 2 && pointer_y >= marker_y - 1 && pointer_y < marker_y + editor_row_height() + 1 && !edit_menu_open) {
+		character_limit = (draw_width - 8) / 4
+		if (character_limit < 4) { character_limit = 4 }
+		call copy_text_prefix(editor_tooltip, compiler::error(), character_limit - 3)
+		tooltip_width = xestring::strlen(editor_tooltip) * 4 + 4
+		if (tooltip_width > draw_width - 4) { tooltip_width = draw_width - 4 }
+		if (tooltip_width < 8) { tooltip_width = 8 }
+		tooltip_x = marker_x + editor_character_width() + 2
+		if (tooltip_x + tooltip_width > x + draw_width - 2) { tooltip_x = x + draw_width - tooltip_width - 2 }
+		if (tooltip_x < x + 2) { tooltip_x = x + 2 }
+		tooltip_y = marker_y + editor_row_height()
+		if (tooltip_y + 8 > height - 10) { tooltip_y = marker_y - 8 }
+		if (tooltip_y < y) { tooltip_y = y }
+		call graphics::fill_rect(editor_window, tooltip_x, tooltip_y, tooltip_width, 7, graphics::COLOR_8)
+		call graphics::draw_text_small(editor_window, tooltip_x + 2, tooltip_y + 1, editor_tooltip, graphics::WHITE)
+	}
+}
+
+proc draw_editor_source(x: int, y: int, draw_width: int, draw_height: int) {
+	var index: int
+	var line: int
+	var column: int
+	var visible_columns: int
+	var visible_rows: int
+	var color: int
+	var in_string: bool
+	var in_comment: bool
+	var cursor_x: int
+	var cursor_y: int
+	var cursor_found: bool
+	var text_end_line: int
+	var text_end_column: int
+	var row_height: int
+	var character_width: int
+	var gutter: int
+	var error_row: int
+	var selection_begin: int
+	var selection_finish: int
+	var tab_width: int
+	row_height = editor_row_height()
+	character_width = editor_character_width()
+	gutter = editor_gutter_width()
+	visible_columns = (draw_width - gutter) / character_width
+	visible_rows = draw_height / row_height
+	if (visible_columns < 1) { visible_columns = 1 }
+	if (visible_rows < 1) { visible_rows = 1 }
+	index = 0
+	line = 0
+	column = 0
+	cursor_x = 0
+	cursor_y = 0
+	cursor_found = false
+	selection_begin = editor_selection_begin()
+	selection_finish = editor_selection_finish()
+	in_string = false
+	in_comment = false
+	while (index < xestring::strlen(editor_text)) {
+		if (index == cursor_index) {
+			cursor_x = column
+			cursor_y = line
+			cursor_found = true
+		}
+		if ((int)(editor_text[index]) == 10) {
+			line += 1
+			column = 0
+			in_string = false
+			in_comment = false
+		}
+		else {
+			if ((int)(editor_text[index]) == 9) {
+				tab_width = 4 - column % 4
+				if (line >= scroll_line && line < scroll_line + visible_rows && column >= scroll_column && column < scroll_column + visible_columns && index >= selection_begin && index < selection_finish) {
+					if (tab_width > scroll_column + visible_columns - column) { tab_width = scroll_column + visible_columns - column }
+					call graphics::fill_rect(editor_window, x + gutter + (column - scroll_column) * character_width, y + (line - scroll_line) * row_height, tab_width * character_width, row_height, graphics::COLOR_5)
+				}
+				column += 4 - column % 4
+			}
+			else {
+				if ((int)(editor_text[index]) == 35 && !in_string) { in_comment = true }
+				if ((int)(editor_text[index]) == 34 && !in_comment) { in_string = !in_string }
+				if (line >= scroll_line && line < scroll_line + visible_rows && column >= scroll_column && column < scroll_column + visible_columns) {
+					color = graphics::COLOR_10
+					if (!syntax_highlighting) { color = graphics::WHITE }
+					elseif (in_comment) { color = graphics::COLOR_8 }
+					elseif (in_string || (int)(editor_text[index]) == 34) { color = graphics::COLOR_11 }
+					elseif ((int)(editor_text[index]) >= 48 && (int)(editor_text[index]) <= 57) { color = graphics::COLOR_14 }
+					elseif ((int)(editor_text[index]) == 35 || (int)(editor_text[index]) == 60 || (int)(editor_text[index]) == 62) { color = graphics::COLOR_13 }
+					if (index >= selection_begin && index < selection_finish) {
+						call graphics::fill_rect(editor_window, x + gutter + (column - scroll_column) * character_width, y + (line - scroll_line) * row_height, character_width, row_height, graphics::COLOR_5)
+						color = graphics::WHITE
+					}
+					call draw_editor_character(x + gutter + (column - scroll_column) * character_width, y + (line - scroll_line) * row_height, editor_text[index], color)
+				}
+				column += 1
+			}
+		}
+		index += 1
+	}
+	text_end_line = line
+	text_end_column = column
+	if (cursor_index >= xestring::strlen(editor_text)) {
+		cursor_x = text_end_column
+		cursor_y = text_end_line
+		cursor_found = true
+	}
+	line = 0
+	while (line < visible_rows) {
+		call draw_editor_number(x + 2, y + line * row_height, scroll_line + line + 1, graphics::COLOR_8)
+		line += 1
+	}
+	if (!compile_ok && compiler::error_line() > scroll_line && compiler::error_line() <= scroll_line + visible_rows) {
+		error_row = compiler::error_line() - scroll_line - 1
+		call draw_error_marker(x, y, draw_width, error_row * row_height, gutter)
+	}
+	if (cursor_found && !editor_has_selection() && cursor_y >= scroll_line && cursor_y < scroll_line + visible_rows && cursor_x >= scroll_column && cursor_x < scroll_column + visible_columns && (current_ticks / 450) % 2 == 0) {
+		call graphics::draw_line(editor_window, x + gutter + (cursor_x - scroll_column) * character_width, y + (cursor_y - scroll_line) * row_height, x + gutter + (cursor_x - scroll_column) * character_width, y + (cursor_y - scroll_line) * row_height + row_height - 2, graphics::COLOR_13)
+	}
+}
+
+fn editor_index_at(pointer_x: int, pointer_y: int, x: int, y: int) int {
+	var target_line: int
+	var target_column: int
+	var index: int
+	var line: int
+	var column: int
+	target_line = scroll_line + (pointer_y - y) / editor_row_height()
+	if (target_line < 0) { target_line = 0 }
+	target_column = scroll_column + (pointer_x - x - editor_gutter_width() + editor_character_width() / 2) / editor_character_width()
+	if (target_column < 0) { target_column = 0 }
+	index = 0
+	line = 0
+	column = 0
+	while (index < xestring::strlen(editor_text)) {
+		if (line == target_line && (column >= target_column || (int)(editor_text[index]) == 10)) { return index }
+		if ((int)(editor_text[index]) == 10) {
+			if (line >= target_line) { return index }
+			line += 1
+			column = 0
+		}
+		elseif ((int)(editor_text[index]) == 9) { column += 4 - column % 4 }
+		else { column += 1 }
+		index += 1
+	}
+	return xestring::strlen(editor_text)
+}
+
+fn control_is_down() bool {
+	return (graphics::modifiers() & graphics::MOD_CTRL) != 0
+}
+
+proc select_all_editor_text() {
+	selection_start = 0
+	selection_end = xestring::strlen(editor_text)
+	cursor_index = selection_end
+	selected_all = selection_end > 0
+	if (selected_all) {
+		call set_text(editor_status, "Selected all")
+	}
+	else {
+		call set_text(editor_status, "Document empty")
+	}
+}
+
+proc handle_control_shortcut(shortcut: int) {
+	if (shortcut == 1 || shortcut == 65 || shortcut == 97) {
+		call select_all_editor_text()
+	}
+	elseif (shortcut == 3 || shortcut == 67 || shortcut == 99) {
+		call copy_selection()
+	}
+	elseif (shortcut == 24 || shortcut == 88 || shortcut == 120) {
+		call cut_selection()
+	}
+	elseif (shortcut == 22 || shortcut == 86 || shortcut == 118) {
+		call paste_clipboard()
+	}
+	elseif (shortcut == 19 || shortcut == 83 || shortcut == 115) {
+		call save_editor_file()
+	}
+	elseif (shortcut == 15 || shortcut == 79 || shortcut == 111) {
+		call open_editor_file()
+	}
+	elseif (shortcut == 14 || shortcut == 78 || shortcut == 110) {
+		call new_editor_file()
+	}
+	elseif (shortcut == 26 || shortcut == 90 || shortcut == 122) {
+		call undo_editor_change()
+	}
+}
+
+proc apply_editor_key(input_key: int) {
+	if (input_key == graphics::KEY_BACKSPACE) {
+		call erase_editor_character()
+	}
+	elseif (input_key == graphics::KEY_DELETE) {
+		call delete_editor_character()
+	}
+	elseif (input_key == graphics::KEY_ENTER) {
+		call append_editor_character('\n')
+	}
+	elseif (input_key == graphics::KEY_TAB) {
+		call append_editor_indent()
+	}
+	elseif (input_key >= 32 && input_key <= 126) {
+		call append_editor_character((char)input_key)
+	}
+}
+
+proc draw_edit_menu(menu_x: int, menu_y: int, content_width: int, content_height: int) {
+	var menu_width: int
+	var menu_height: int
+	var target_height: int
+	var row_height: int
+	var row_y: int
+	var column_width: int
+	var compact: bool
+	var grid: bool
+	var menu_interactive: bool
+	menu_width = 92
+	if (menu_width > content_width - 4) { menu_width = content_width - 4 }
+	if (menu_width < 20) { menu_width = 20 }
+	if (menu_x + menu_width > content_width - 2) { menu_x = content_width - menu_width - 2 }
+	if (menu_x < 2) { menu_x = 2 }
+	compact = content_height < 92 || menu_width < 68
+	grid = content_height < 64
+	row_height = 9
+	if (compact) { row_height = 7 }
+	target_height = row_height * 7 + 2
+	if (grid) { target_height = row_height * 4 + 2 }
+	menu_height = target_height * edit_menu_progress / 100
+	if (menu_height < 1) { menu_height = 1 }
+	call graphics::fill_rect(editor_window, menu_x, menu_y, menu_width, menu_height, graphics::COLOR_8)
+	menu_interactive = edit_menu_open
+	row_y = menu_y + 1
+	if (grid) {
+		column_width = (menu_width - 2) / 2
+		if (menu_interactive && menu_height >= row_height + 1 && graphics::button_flat(editor_window, menu_x + 1, row_y, column_width, row_height, "Undo", graphics::COLOR_8)) {
+			call undo_editor_change()
+			edit_menu_open = false
+		}
+		if (menu_interactive && menu_height >= row_height + 1 && graphics::button_flat(editor_window, menu_x + 1 + column_width, row_y, menu_width - column_width - 2, row_height, "Cut", graphics::COLOR_8)) {
+			call cut_selection()
+			edit_menu_open = false
+		}
+		row_y += row_height
+		if (menu_interactive && menu_height >= row_y - menu_y + row_height && graphics::button_flat(editor_window, menu_x + 1, row_y, column_width, row_height, "Copy", graphics::COLOR_8)) {
+			call copy_selection()
+			edit_menu_open = false
+		}
+		if (menu_interactive && menu_height >= row_y - menu_y + row_height && graphics::button_flat(editor_window, menu_x + 1 + column_width, row_y, menu_width - column_width - 2, row_height, "Paste", graphics::COLOR_8)) {
+			call paste_clipboard()
+			edit_menu_open = false
+		}
+		row_y += row_height
+		if (menu_interactive && menu_height >= row_y - menu_y + row_height && graphics::button_flat(editor_window, menu_x + 1, row_y, column_width, row_height, "All", graphics::COLOR_8)) {
+			call select_all_editor_text()
+			edit_menu_open = false
+		}
+		if (menu_interactive && menu_height >= row_y - menu_y + row_height && graphics::button_flat(editor_window, menu_x + 1 + column_width, row_y, menu_width - column_width - 2, row_height, "Font +", graphics::COLOR_8)) {
+			font_large = true
+			call set_text(editor_status, "Large editor text")
+			edit_menu_open = false
+		}
+		row_y += row_height
+		if (menu_interactive && menu_height >= row_y - menu_y + row_height && graphics::button_flat(editor_window, menu_x + 1, row_y, column_width, row_height, "Font -", graphics::COLOR_8)) {
+			font_large = false
+			call set_text(editor_status, "Compact editor text")
+			edit_menu_open = false
+		}
+	}
+	else {
+		if (menu_interactive && menu_height >= row_height + 1 && graphics::button_flat(editor_window, menu_x + 1, row_y, menu_width - 2, row_height, "Undo", graphics::COLOR_8)) {
+			call undo_editor_change()
+			edit_menu_open = false
+		}
+		row_y += row_height
+		if (menu_interactive && menu_height >= row_y - menu_y + row_height && graphics::button_flat(editor_window, menu_x + 1, row_y, menu_width - 2, row_height, "Cut", graphics::COLOR_8)) {
+			call cut_selection()
+			edit_menu_open = false
+		}
+		row_y += row_height
+		if (menu_interactive && menu_height >= row_y - menu_y + row_height && graphics::button_flat(editor_window, menu_x + 1, row_y, menu_width - 2, row_height, "Copy", graphics::COLOR_8)) {
+			call copy_selection()
+			edit_menu_open = false
+		}
+		row_y += row_height
+		if (menu_interactive && menu_height >= row_y - menu_y + row_height && graphics::button_flat(editor_window, menu_x + 1, row_y, menu_width - 2, row_height, "Paste", graphics::COLOR_8)) {
+			call paste_clipboard()
+			edit_menu_open = false
+		}
+		row_y += row_height
+		if (menu_interactive && menu_height >= row_y - menu_y + row_height && graphics::button_flat(editor_window, menu_x + 1, row_y, menu_width - 2, row_height, "Select All", graphics::COLOR_8)) {
+			call select_all_editor_text()
+			edit_menu_open = false
+		}
+		row_y += row_height
+		if (menu_interactive && menu_height >= row_y - menu_y + row_height && graphics::button_flat(editor_window, menu_x + 1, row_y, menu_width - 2, row_height, "Font Larger", graphics::COLOR_8)) {
+			font_large = true
+			call set_text(editor_status, "Large editor text")
+			edit_menu_open = false
+		}
+		row_y += row_height
+		if (menu_interactive && menu_height >= row_y - menu_y + row_height && graphics::button_flat(editor_window, menu_x + 1, row_y, menu_width - 2, row_height, "Font Smaller", graphics::COLOR_8)) {
+			font_large = false
+			call set_text(editor_status, "Compact editor text")
+			edit_menu_open = false
+		}
+	}
+}
+
+editor_text = "# Xe source\nout << \"Hello, world!\""
+editor_path = "workspace.xe"
+editor_status = "Ready"
+editor_tooltip = ""
+editor_clipboard = ""
+undo_text = ""
+editor_scratch = ""
+editor_insert = ""
+syntax_highlighting = true
+dirty = false
+compile_pending = false
+selected_all = false
+cursor_index = xestring::strlen(editor_text)
+selection_start = cursor_index
+selection_end = cursor_index
+selection_dragging = false
+undo_available = false
+font_large = true
+effective_font_large = true
+scroll_line = 0
+scroll_column = 0
+compile_ok = compiler::check(editor_text)
+edit_menu_open = false
+edit_menu_progress = 0
+edit_toggle_lock = false
+
+editor_window.x = 70
+editor_window.y = 46
+editor_window.width = 300
+editor_window.height = 210
+editor_window.title = "Text Editor"
+editor_window.ui_scale = 1
+editor_window.state = graphics::WINDOW_NORMAL
+previous_ticks = os::ticks()
+
+while (editor_window.state != graphics::WINDOW_CLOSED) {
+	current_ticks = os::ticks()
+	delta_ms = current_ticks - previous_ticks
+	if (delta_ms < 1) { delta_ms = 1 }
+	if (delta_ms > 50) { delta_ms = 50 }
+	previous_ticks = current_ticks
+	if (edit_menu_open && edit_menu_progress < 100) {
+		edit_menu_progress += delta_ms * 100 / 150
+		if (edit_menu_progress > 100) { edit_menu_progress = 100 }
+	}
+	elseif (!edit_menu_open && edit_menu_progress > 0) {
+		edit_menu_progress -= delta_ms * 100 / 120
+		if (edit_menu_progress < 0) { edit_menu_progress = 0 }
+	}
+
+	call graphics::begin_draw(editor_window)
+	if (!editor_window.is_minimized()) {
+		var body_y: int
+		var body_height: int
+		var body_width: int
+		var button_x: int
+		var edit_clicked: bool
+		var pointer_x: int
+		var pointer_y: int
+		var menu_left: int
+		var menu_width: int
+		var menu_height: int
+		var edit_button_event: bool
+		width = graphics::content_width(editor_window)
+		height = graphics::content_height(editor_window)
+		pointer_x = graphics::pointer_x(editor_window)
+		pointer_y = graphics::pointer_y(editor_window)
+		call graphics::fill_rect(editor_window, 0, 0, width, height, graphics::COLOR_1)
+		toolbar_height = 9
+		button_x = 3
+		edit_clicked = false
+		if (width >= 262) {
+			if (graphics::button_flat(editor_window, button_x, 2, 30, toolbar_height, "New", graphics::COLOR_8)) {
+				call new_editor_file()
+			}
+			button_x += 32
+			if (graphics::button_flat(editor_window, button_x, 2, 34, toolbar_height, "Open", graphics::COLOR_8)) {
+				call open_editor_file()
+			}
+			button_x += 36
+			if (graphics::button_flat(editor_window, button_x, 2, 34, toolbar_height, "Save", graphics::COLOR_8)) {
+				call save_editor_file()
+			}
+			button_x += 36
+			if (graphics::button_flat(editor_window, button_x, 2, 48, toolbar_height, "Save As", graphics::COLOR_8)) {
+				call set_text(editor_path, "workspace-copy.xe")
+				call save_editor_file()
+			}
+			button_x += 50
+			edit_button_x = button_x
+			edit_button_width = 34
+			edit_button_event = graphics::button_flat(editor_window, edit_button_x, 2, edit_button_width, toolbar_height, "Edit", graphics::COLOR_8)
+			button_x += 36
+			if (graphics::button_flat(editor_window, button_x, 2, 38, toolbar_height, "Check", graphics::COLOR_8)) {
+				compile_pending = true
+				call set_text(editor_status, "Checking")
+			}
+			button_x += 40
+			if (graphics::button_flat(editor_window, button_x, 2, 24, toolbar_height, "Xe", graphics::COLOR_8)) { syntax_highlighting = !syntax_highlighting }
+		}
+		elseif (width >= 138) {
+			toolbar_height = 7
+			if (graphics::button_flat(editor_window, button_x, 2, 24, toolbar_height, "New", graphics::COLOR_8)) {
+				call new_editor_file()
+			}
+			button_x += 26
+			if (graphics::button_flat(editor_window, button_x, 2, 28, toolbar_height, "Open", graphics::COLOR_8)) {
+				call open_editor_file()
+			}
+			button_x += 30
+			if (graphics::button_flat(editor_window, button_x, 2, 28, toolbar_height, "Save", graphics::COLOR_8)) {
+				call save_editor_file()
+			}
+			button_x += 30
+			edit_button_x = button_x
+			edit_button_width = 28
+			edit_button_event = graphics::button_flat(editor_window, edit_button_x, 2, edit_button_width, toolbar_height, "Edit", graphics::COLOR_8)
+			button_x += 30
+			if (graphics::button_flat(editor_window, button_x, 2, width - button_x - 3, toolbar_height, "Check", graphics::COLOR_8)) { compile_pending = true }
+		}
+		else {
+			toolbar_height = 7
+			if (graphics::button_flat(editor_window, 3, 2, 28, toolbar_height, "Save", graphics::COLOR_8)) {
+				call save_editor_file()
+			}
+			edit_button_x = 33
+			edit_button_width = width - 36
+			if (edit_button_width < 20) { edit_button_width = 20 }
+			edit_button_event = graphics::button_flat(editor_window, edit_button_x, 2, edit_button_width, toolbar_height, "Edit", graphics::COLOR_8)
+		}
+		if (!edit_toggle_lock && (edit_button_event || (graphics::mouse_pressed() && pointer_x >= edit_button_x && pointer_x < edit_button_x + edit_button_width && pointer_y >= 2 && pointer_y < 2 + toolbar_height))) {
+			edit_menu_open = !edit_menu_open
+			edit_clicked = true
+			edit_toggle_lock = true
+		}
+
+		body_y = toolbar_height + 4
+		body_height = height - body_y - 12
+		if (body_height < 1) { body_height = 1 }
+		body_width = width - 12
+		if (body_width < 8) { body_width = 8 }
+		effective_font_large = font_large
+		if (width < 126 || height < 76) { effective_font_large = false }
+		if (!edit_menu_open && graphics::mouse_pressed() && pointer_x >= 3 && pointer_x < 3 + body_width && pointer_y >= body_y && pointer_y < body_y + body_height) {
+			cursor_index = editor_index_at(pointer_x, pointer_y, 3, body_y + 2)
+			selection_start = cursor_index
+			selection_end = cursor_index
+			selected_all = false
+			selection_dragging = true
+		}
+		if (selection_dragging && graphics::mouse_down() && !edit_menu_open) {
+			selection_end = editor_index_at(pointer_x, pointer_y, 3, body_y + 2)
+			cursor_index = selection_end
+			selected_all = selection_start == 0 && selection_end == xestring::strlen(editor_text)
+		}
+		if (graphics::mouse_released()) {
+			selection_dragging = false
+			edit_toggle_lock = false
+		}
+		call keep_editor_cursor_visible(body_width, body_height - 4)
+		call graphics::fill_rect(editor_window, 3, body_y, body_width, body_height, graphics::COLOR_0)
+		call graphics::draw_line(editor_window, 3 + editor_gutter_width() - 2, body_y, 3 + editor_gutter_width() - 2, body_y + body_height - 1, graphics::COLOR_8)
+		call draw_editor_source(3, body_y + 2, body_width, body_height - 4)
+		if (editor_scroll_button(width - 8, body_y, 6, 7, -1)) {
+			if (scroll_line > 0) { scroll_line -= 1 }
+		}
+		if (editor_scroll_button(width - 8, body_y + body_height - 7, 6, 7, 1)) {
+			if (scroll_line < editor_line_count() - 1) { scroll_line += 1 }
+		}
+		call graphics::draw_text_small(editor_window, 4, height - 9, editor_status, graphics::COLOR_7)
+		if (width >= 180) {
+			call graphics::draw_text_small(editor_window, width - xestring::strlen(editor_path) * 4 - 4, height - 9, editor_path, graphics::COLOR_8)
+		}
+
+		if (edit_menu_progress > 0) {
+			call draw_edit_menu(edit_button_x, toolbar_height + 3, width, height)
+		}
+		if (edit_menu_open && graphics::mouse_pressed() && !edit_clicked) {
+			pointer_x = graphics::pointer_x(editor_window)
+			pointer_y = graphics::pointer_y(editor_window)
+			menu_width = 92
+			if (menu_width > width - 4) { menu_width = width - 4 }
+			menu_left = edit_button_x
+			if (menu_left + menu_width > width - 2) { menu_left = width - menu_width - 2 }
+			if (menu_left < 2) { menu_left = 2 }
+			menu_height = 65
+			if (height < 92 || menu_width < 68) { menu_height = 51 }
+			if (height < 64) { menu_height = 30 }
+			if (pointer_x < menu_left || pointer_x >= menu_left + menu_width || pointer_y < toolbar_height + 3 || pointer_y >= toolbar_height + 3 + menu_height) {
+				edit_menu_open = false
+			}
+		}
+
+		key = graphics::read_key()
+		while (key != 0) {
+			if (control_is_down()) {
+				call handle_control_shortcut(key)
+				edit_menu_open = false
+			}
+		elseif (key == graphics::KEY_ESCAPE) {
+			edit_menu_open = false
+			call clear_editor_selection()
+			}
+			elseif (!edit_menu_open) {
+				call apply_editor_key(key)
+			}
+			key = graphics::read_key()
+		}
+		if (compile_pending) {
+			compile_ok = compiler::check(editor_text)
+			compile_pending = false
+			if (compile_ok) {
+				call set_text(editor_status, "No errors")
+			}
+			elseif (xestring::strlen(editor_status) == 0 || editor_status == "Checking") {
+				call set_text(editor_status, "Error - hover !")
+			}
+		}
+	}
+	call graphics::update(editor_window)
+	call os::sleep(16)
+}

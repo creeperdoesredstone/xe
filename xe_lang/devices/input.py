@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from threading import RLock
+import time
+from typing import Callable
 
 from xe_lang.syscall_abi import KeyboardEvent, MouseEvent
 
@@ -34,11 +36,33 @@ class InputFrame:
 	def left_released(self) -> bool:
 		return bool(self.released & LEFT_BUTTON)
 
+	@property
+	def right_down(self) -> bool:
+		return bool(self.buttons & RIGHT_BUTTON)
+
+	@property
+	def right_pressed(self) -> bool:
+		return bool(self.pressed & RIGHT_BUTTON)
+
+	@property
+	def right_released(self) -> bool:
+		return bool(self.released & RIGHT_BUTTON)
+
 
 class InputDevice:
-	def __init__(self, width: int, height: int) -> None:
+	def __init__(
+		self,
+		width: int,
+		height: int,
+		clock: Callable[[], float] | None = None,
+		repeat_delay: float = 0.38,
+		repeat_interval: float = 0.045,
+	) -> None:
 		self.width = width
 		self.height = height
+		self._clock = clock or time.monotonic
+		self._repeat_delay = max(0.0, float(repeat_delay))
+		self._repeat_interval = max(0.001, float(repeat_interval))
 		self._lock = RLock()
 		self._x = 0
 		self._y = 0
@@ -47,6 +71,8 @@ class InputDevice:
 		self._pending_released = 0
 		self._keys_down: set[int] = set()
 		self._key_queue: deque[int] = deque()
+		self._repeat_next: dict[int, float] = {}
+		self._key_modifiers: dict[int, int] = {}
 		self._mouse_events: deque[tuple[int, int, int]] = deque()
 		self._keyboard_events: deque[tuple[int, int, int]] = deque()
 		self._last_mouse_event = int(MouseEvent.NONE)
@@ -105,23 +131,58 @@ class InputDevice:
 				if key not in self._keys_down:
 					self._keys_down.add(key)
 					self._key_queue.append(key)
+					self._key_modifiers[key] = self._modifiers
+					self._repeat_next[key] = self._clock() + self._repeat_delay
 					self._last_keyboard_event = int(KeyboardEvent.PRESS)
 					self._keyboard_events.append((self._last_keyboard_event, key, self._modifiers))
 			else:
 				if key in self._keys_down:
 					self._keys_down.discard(key)
+					self._repeat_next.pop(key, None)
+					self._key_modifiers.pop(key, None)
 					self._last_keyboard_event = int(KeyboardEvent.RELEASE)
 					self._keyboard_events.append((self._last_keyboard_event, key, self._modifiers))
+
+	def repeat_key(self, key: int, modifiers: int = 0) -> None:
+		"""Accept a native repeat without creating a second held-key state."""
+		key = int(key)
+		with self._lock:
+			self._modifiers = int(modifiers)
+			if key not in self._keys_down or self._modifiers & 6:
+				return
+			self._key_queue.append(key)
+			self._repeat_next[key] = self._clock() + self._repeat_interval
+
+	def _queue_repeats_locked(self) -> None:
+		now = self._clock()
+		for key in tuple(self._keys_down):
+			deadline = self._repeat_next.get(key)
+			if deadline is None or now < deadline:
+				continue
+			if self._key_modifiers.get(key, 0) & 6:
+				self._repeat_next[key] = now + self._repeat_interval
+				continue
+			pending = 1 + int((now - deadline) / self._repeat_interval)
+			count = min(8, pending)
+			self._key_queue.extend((key,) * count)
+			self._repeat_next[key] = (
+				now + self._repeat_interval
+				if pending > count
+				else deadline + count * self._repeat_interval
+			)
 
 	def release_all(self) -> None:
 		with self._lock:
 			self._pending_released |= self._buttons
 			self._buttons = 0
 			self._keys_down.clear()
+			self._repeat_next.clear()
+			self._key_modifiers.clear()
 			self._modifiers = 0
 
 	def frame(self) -> InputFrame:
 		with self._lock:
+			self._queue_repeats_locked()
 			if self._latched is None:
 				self._latched = InputFrame(
 					self._x,
@@ -142,6 +203,7 @@ class InputDevice:
 
 	def read_key(self) -> int:
 		with self._lock:
+			self._queue_repeats_locked()
 			return self._key_queue.popleft() if self._key_queue else 0
 
 	def poll_mouse(self) -> tuple[int, int, int]:

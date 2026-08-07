@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import random
 import struct
 import time
 from pathlib import Path
@@ -10,6 +11,7 @@ from xe_lang.helper import Position, VMError
 from xe_lang.syscall_abi import ImageFormat, SyscallID
 
 from .currency import CurrencyDevice
+from .compiler import CompilerDevice
 from .filesystem import FileSystemDevice
 from .graphics import FrameSnapshot, GraphicsDevice
 from .input import InputDevice
@@ -28,6 +30,7 @@ WINDOW_HEIGHT = 3
 WINDOW_TITLE = 4
 WINDOW_STATE = 5
 WINDOW_HANDLE = 6
+WINDOW_UI_SCALE = 7
 WINDOW_WORDS = 10
 
 
@@ -56,9 +59,17 @@ class DeviceRuntime:
 		self.graphics = GraphicsDevice(width, height, frame_handler)
 		self.os = os_device or OSDevice()
 		self.currency = CurrencyDevice()
+		self.compiler = CompilerDevice()
 		self.windows = WindowManager(self.graphics, self.input, appearance=self.os)
 		self.files = FileSystemDevice(filesystem_root)
+		self._rng = random.Random()
+		self._raw_slider_capture: tuple[int, int, int] | None = None
 		self._handlers = {
+			SyscallID.OS_RAND32: self._raw_rand32,
+			SyscallID.OS_RANDF: self._raw_randf,
+			SyscallID.OS_RSEED: self._raw_seed,
+			SyscallID.OS_GET_HOUR: self._raw_get_hour,
+			SyscallID.OS_GET_MINUTE: self._raw_get_min,
 			SyscallID.GRAPHICS_CLEAR: self._raw_clear,
 			SyscallID.GRAPHICS_CLEAR_BUFFER: self._raw_clear_buffer,
 			SyscallID.GRAPHICS_CLEAR_SCREEN: self._raw_clear_screen,
@@ -84,6 +95,7 @@ class DeviceRuntime:
 			SyscallID.GRAPHICS_TASKBAR: self._raw_taskbar,
 			SyscallID.GRAPHICS_TASK_ATOM: self._raw_task_atom,
 			SyscallID.GRAPHICS_BUTTON: self._raw_button,
+			SyscallID.GRAPHICS_SLIDER: self._raw_slider,
 			SyscallID.MOUSE_POLL: self._raw_mouse_poll,
 			SyscallID.INPUT_PREVIOUS_EVENT: self._raw_previous_event,
 			SyscallID.KEYBOARD_POLL: self._raw_keyboard_poll,
@@ -122,6 +134,11 @@ class DeviceRuntime:
 			SyscallID.APP_GRAPHICS_DRAW_INT_SMALL: self._graphics_draw_int_small,
 			SyscallID.APP_GRAPHICS_DRAW_FLOAT_SMALL: self._graphics_draw_float_small,
 			SyscallID.APP_GRAPHICS_BUTTON_FLAT: self._graphics_button_flat,
+			SyscallID.APP_GRAPHICS_DRAW_ATOM: self._graphics_draw_atom,
+			SyscallID.APP_GRAPHICS_MODIFIERS: self._graphics_modifiers,
+			SyscallID.APP_GRAPHICS_RIGHT_MOUSE_DOWN: self._graphics_right_mouse_down,
+			SyscallID.APP_GRAPHICS_RIGHT_MOUSE_PRESSED: self._graphics_right_mouse_pressed,
+			SyscallID.APP_GRAPHICS_RIGHT_MOUSE_RELEASED: self._graphics_right_mouse_released,
 			SyscallID.APP_OS_GET_VOLUME: self._os_get_volume,
 			SyscallID.APP_OS_SET_VOLUME: self._os_set_volume,
 			SyscallID.APP_OS_GET_BACKGROUND: self._os_get_background,
@@ -134,6 +151,9 @@ class DeviceRuntime:
 			SyscallID.APP_OS_BACKGROUND_COUNT: self._os_background_count,
 			SyscallID.APP_OS_PALETTE_COUNT: self._os_palette_count,
 			SyscallID.APP_OS_TICKS: self._os_ticks,
+			SyscallID.APP_OS_YEAR: self._os_year,
+			SyscallID.APP_OS_MONTH: self._os_month,
+			SyscallID.APP_OS_DAY: self._os_day,
 			SyscallID.APP_WINDOW_CLOSE: self._window_close,
 			SyscallID.APP_WINDOW_IS_FULLSCREEN: self._window_is_fullscreen,
 			SyscallID.APP_WINDOW_IS_MINIMIZED: self._window_is_minimized,
@@ -168,6 +188,41 @@ class DeviceRuntime:
 			SyscallID.APP_CURRENCY_RATE: self._currency_rate,
 			SyscallID.APP_CURRENCY_POINT_COUNT: self._currency_point_count,
 			SyscallID.APP_CURRENCY_POINT: self._currency_point,
+			SyscallID.APP_CURRENCY_POINT_DATE: self._currency_point_date,
+			SyscallID.APP_OS_ENTRY_COUNT: self._os_entry_count,
+			SyscallID.APP_OS_ENTRY_NAME: self._os_entry_name,
+			SyscallID.APP_OS_ENTRY_IS_DIRECTORY: self._os_entry_is_directory,
+			SyscallID.APP_OS_PATH_EXISTS: self._os_path_exists,
+			SyscallID.APP_OS_MAKE_FILE: self._os_make_file,
+			SyscallID.APP_OS_MAKE_DIRECTORY: self._os_make_directory,
+			SyscallID.APP_OS_RENAME: self._os_rename,
+			SyscallID.APP_OS_DELETE: self._os_delete,
+			SyscallID.APP_COMPILER_CHECK: self._compiler_check,
+			SyscallID.APP_COMPILER_ERROR: self._compiler_error,
+			SyscallID.APP_COMPILER_ERROR_LINE: self._compiler_error_line,
+			SyscallID.APP_COMPILER_ERROR_COLUMN: self._compiler_error_column,
+			SyscallID.APP_COMPILER_ASSEMBLY: self._compiler_assembly,
+			SyscallID.APP_COMPILER_BYTECODE_SIZE: self._compiler_bytecode_size,
+			SyscallID.APP_COMPILER_LOAD_VISUAL: self._compiler_load_visual,
+			SyscallID.APP_COMPILER_ATOM_COUNT: self._compiler_atom_count,
+			SyscallID.APP_COMPILER_ATOM_TEXT: self._compiler_atom_text,
+			SyscallID.APP_COMPILER_ATOM_KIND: self._compiler_atom_kind,
+			SyscallID.APP_COMPILER_ATOM_LINE: self._compiler_atom_line,
+			SyscallID.APP_COMPILER_ATOM_ENABLED: self._compiler_atom_enabled,
+			SyscallID.APP_COMPILER_SET_ATOM_ENABLED: self._compiler_set_atom_enabled,
+			SyscallID.APP_COMPILER_VISUAL_SOURCE: self._compiler_visual_source,
+			SyscallID.APP_COMPILER_SCRIPT_COUNT: self._compiler_script_count,
+			SyscallID.APP_COMPILER_SCRIPT_NAME: self._compiler_script_name,
+			SyscallID.APP_COMPILER_SCRIPT_SHELL: self._compiler_script_shell,
+			SyscallID.APP_COMPILER_SCRIPT_LINE: self._compiler_script_line,
+			SyscallID.APP_COMPILER_SCRIPT_ENABLED: self._compiler_script_enabled,
+			SyscallID.APP_COMPILER_LOAD_DOCUMENT: self._compiler_load_document,
+			SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_COUNT: self._compiler_document_script_count,
+			SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_NAME: self._compiler_document_script_name,
+			SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_SHELL: self._compiler_document_script_shell,
+			SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_LINE: self._compiler_document_script_line,
+			SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_ENABLED: self._compiler_document_script_enabled,
+			SyscallID.APP_COMPILER_DOCUMENT_SOURCE: self._compiler_document_source,
 		}
 
 	def set_frame_handler(self, handler: Callable[[FrameSnapshot], None] | None) -> None:
@@ -228,6 +283,7 @@ class DeviceRuntime:
 				_signed(memory[pointer + WINDOW_WIDTH]),
 				_signed(memory[pointer + WINDOW_HEIGHT]),
 				self._read_string(vm, memory[pointer + WINDOW_TITLE]),
+				_signed(memory[pointer + WINDOW_UI_SCALE]),
 			)
 			return handle
 		if memory[pointer + WINDOW_STATE] == WindowState.CLOSED:
@@ -238,6 +294,7 @@ class DeviceRuntime:
 			_signed(memory[pointer + WINDOW_WIDTH]),
 			_signed(memory[pointer + WINDOW_HEIGHT]),
 			self._read_string(vm, memory[pointer + WINDOW_TITLE]),
+			_signed(memory[pointer + WINDOW_UI_SCALE]),
 		)
 		memory[pointer + WINDOW_HANDLE] = handle
 		return handle
@@ -268,6 +325,23 @@ class DeviceRuntime:
 
 	def _origin(self, handle: int) -> tuple[int, int]:
 		return self.windows.draw_origin(handle)
+
+	def _raw_rand32(self, vm: Any, result: Any) -> None:
+		vm.push(self._rng.getrandbits(32))
+
+	def _raw_randf(self, vm: Any, result: Any) -> None:
+		vm.push(_float_bits(self._rng.random()))
+
+	def _raw_seed(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._rng.seed(args[0] & TRUE)
+
+	def _raw_get_hour(self, vm: Any, result: Any) -> None:
+		vm.push(self.os.now().hour)
+
+	def _raw_get_min(self, vm: Any, result: Any) -> None:
+		vm.push(self.os.now().minute)
 
 	@property
 	def _raw_scale(self) -> int:
@@ -433,13 +507,14 @@ class DeviceRuntime:
 		origin_x = cursor_x
 		maximum_x = self.graphics.clip_rect[2] // scale
 		for char in text:
-			if char == "\n" or (wrap and cursor_x + 5 >= maximum_x):
+			advance = self.graphics.text_advance(char, 1)
+			if char == "\n" or (wrap and cursor_x + advance > maximum_x):
 				cursor_x = origin_x
 				cursor_y += 8
 				if char == "\n":
 					continue
 			self.graphics.draw_text(cursor_x * scale, cursor_y * scale, char, 15, scale)
-			cursor_x += 6
+			cursor_x += advance
 
 	def _raw_window(self, vm: Any, result: Any) -> None:
 		args = self._args(vm, result, 1)
@@ -494,14 +569,45 @@ class DeviceRuntime:
 		scale = self._raw_scale
 		self.graphics.fill_rect(x * scale, y * scale, width * scale, height * scale, color)
 		self.graphics.draw_rect_scaled(0, 0, x, y, width, height, 15, scale)
-		text_width = len(label) * 6
+		text_width = self.graphics.measure_text(label, scale)
 		self.graphics.draw_text(
-			(x + max(1, (width - text_width) // 2)) * scale,
+			x * scale + max(scale, (width * scale - text_width) // 2),
 			(y + max(1, (height - 7) // 2)) * scale,
 			label,
 			15,
 			scale,
 		)
+
+	def _raw_slider(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 6)
+		if args is None:
+			return
+		x, y, width, value, minimum, maximum = (_signed(item) for item in args)
+		if maximum < minimum:
+			minimum, maximum = maximum, minimum
+		width = max(3, width)
+		value = max(minimum, min(maximum, value))
+		frame = self.input.frame()
+		scale = self._raw_scale
+		left = x * scale
+		top = y * scale
+		pixel_width = width * scale
+		inside = left <= frame.x < left + pixel_width and top <= frame.y < top + 7 * scale
+		key = (x, y, width)
+		if frame.left_pressed and inside:
+			self._raw_slider_capture = key
+		if self._raw_slider_capture == key and (frame.left_down or frame.left_released):
+			span = max(1, maximum - minimum)
+			relative = max(0, min(pixel_width - 1, frame.x - left))
+			value = minimum + round(relative * span / max(1, pixel_width - 1))
+		if frame.left_released and self._raw_slider_capture == key:
+			self._raw_slider_capture = None
+		span = max(1, maximum - minimum)
+		knob = x + round((value - minimum) * (width - 1) / span)
+		self.graphics.fill_rect(left, (y + 3) * scale, pixel_width, scale, 8)
+		self.graphics.fill_rect(left, (y + 3) * scale, max(scale, (knob - x + 1) * scale), scale, 11)
+		self.graphics.fill_rect(knob * scale, (y + 1) * scale, scale, 5 * scale, 15)
+		vm.push(value & TRUE)
 
 	def _raw_mouse_poll(self, vm: Any, result: Any) -> None:
 		event, x, y = self.input.poll_mouse()
@@ -572,10 +678,14 @@ class DeviceRuntime:
 		if not handle:
 			self.graphics.set_clip(0, 0, 0, 0)
 			return
+		self.windows.begin_widget_frame(handle)
 		self.windows.update(handle)
 		self._sync_window(vm, pointer, handle)
 		self.windows.draw(handle)
-		if self.windows.is_open(handle) and not self.windows.is_minimized(handle):
+		if (
+			self.windows.is_open(handle)
+			and not self.windows.is_minimized(handle)
+		):
 			self.graphics.set_clip(
 				self.windows.content_x(handle),
 				self.windows.content_y(handle),
@@ -592,6 +702,7 @@ class DeviceRuntime:
 		pointer, handle, _ = entry
 		self.graphics.reset_clip()
 		if handle:
+			self.windows.finish_draw(handle)
 			self.windows.draw_drag_outline(handle)
 			self._sync_window(vm, pointer, handle)
 		self.graphics.present(self.os.palette)
@@ -788,6 +899,76 @@ class DeviceRuntime:
 			False,
 		))
 
+	def _graphics_draw_atom(self, vm: Any, result: Any) -> None:
+		entry = self._window_args(vm, result, 7)
+		if not entry or not entry[1]:
+			return
+		_, handle, values = entry
+		cx, cy, radius, state, ring_style, phase = (_signed(value) for value in values)
+		radius = max(4, radius)
+		scale = self.windows.ui_scale(handle)
+		ox, oy = self._origin(handle)
+		center_x = ox + cx * scale
+		center_y = oy + cy * scale
+		phase %= 360
+		ring_color = 10
+		if state == 1:
+			ring_color = 14
+		elif state == 2:
+			ring_color = 11
+			radius += 1 if phase % 24 < 12 else 0
+		elif state == 3:
+			ring_color = 12
+		elif state == 4:
+			ring_color = 8
+
+		ring_radius = radius + 4
+		if ring_style and state not in (1, 3):
+			if ring_style == 1:
+				self.graphics.draw_circle_scaled(ox, oy, cx, cy, ring_radius, ring_color, scale)
+			else:
+				for angle in range(0, 360, 30):
+					x = center_x + round(math.cos(math.radians(angle)) * ring_radius * scale)
+					y = center_y + round(math.sin(math.radians(angle)) * ring_radius * scale)
+					self.graphics.fill_rect(x, y, scale, scale, ring_color)
+		elif state in (1, 3):
+			for angle in range(0, 360, 45):
+				for offset in (0, 7):
+					point_angle = angle + offset
+					x = center_x + round(math.cos(math.radians(point_angle)) * ring_radius * scale)
+					y = center_y + round(math.sin(math.radians(point_angle)) * ring_radius * scale)
+					self.graphics.fill_rect(x, y, scale, scale, ring_color)
+
+		orbit_radius = radius + 7
+		previous: tuple[int, int] | None = None
+		for angle in range(0, 361, 15):
+			radians = math.radians(angle)
+			x = center_x + round(math.cos(radians) * orbit_radius * scale)
+			y = center_y + round(math.sin(radians) * orbit_radius * scale * 0.42)
+			if previous is not None:
+				self.graphics.draw_line(previous[0], previous[1], x, y, 8)
+			previous = (x, y)
+
+		nucleus_color = 8 if state == 4 else 13
+		highlight_color = 8 if state == 4 else (12 if state == 3 else 11)
+		self.graphics.fill_circle_scaled(ox, oy, cx + 1, cy + 1, max(2, radius - 1), 8, scale)
+		self.graphics.fill_circle_scaled(ox, oy, cx, cy, max(2, radius - 2), nucleus_color, scale)
+		self.graphics.fill_circle_scaled(ox, oy, cx, cy, max(1, radius - 5), highlight_color, scale)
+		self.graphics.fill_rect(
+			ox + (cx - max(1, radius // 3)) * scale,
+			oy + (cy - max(1, radius // 3)) * scale,
+			scale,
+			scale,
+			15 if state != 4 else 8,
+		)
+		for electron_index, electron_phase in enumerate((phase, phase + 180)):
+			x = center_x + round(math.cos(math.radians(electron_phase)) * orbit_radius * scale)
+			y = center_y + round(math.sin(math.radians(electron_phase)) * orbit_radius * scale * 0.42)
+			electron_color = 14 if electron_index == 0 else 10
+			if state == 4:
+				electron_color = 8
+			self.graphics.fill_rect(x - scale, y - scale, 2 * scale, 2 * scale, electron_color)
+
 	def _graphics_slider(self, vm: Any, result: Any) -> None:
 		entry = self._window_args(vm, result, 7)
 		if not entry or not entry[1]:
@@ -836,6 +1017,18 @@ class DeviceRuntime:
 	def _graphics_read_key(self, vm: Any, result: Any) -> None:
 		vm.push(self.input.read_key() & TRUE)
 
+	def _graphics_modifiers(self, vm: Any, result: Any) -> None:
+		vm.push(self.input.frame().modifiers & TRUE)
+
+	def _graphics_right_mouse_down(self, vm: Any, result: Any) -> None:
+		self._push_bool(vm, self.input.frame().right_down)
+
+	def _graphics_right_mouse_pressed(self, vm: Any, result: Any) -> None:
+		self._push_bool(vm, self.input.frame().right_pressed)
+
+	def _graphics_right_mouse_released(self, vm: Any, result: Any) -> None:
+		self._push_bool(vm, self.input.frame().right_released)
+
 	def _os_get_volume(self, vm: Any, result: Any) -> None:
 		vm.push(self.os.volume)
 
@@ -869,7 +1062,7 @@ class DeviceRuntime:
 		args = self._args(vm, result, 1)
 		if args is not None:
 			vm.exit_code = _signed(args[0])
-			vm.cancel_event.set()
+			vm.halt_requested = True
 
 	def _os_apply_settings(self, vm: Any, result: Any) -> None:
 		args = self._args(vm, result, 3)
@@ -884,6 +1077,15 @@ class DeviceRuntime:
 
 	def _os_ticks(self, vm: Any, result: Any) -> None:
 		vm.push(int((time.monotonic() - vm.start_time) * 1000) & TRUE)
+
+	def _os_year(self, vm: Any, result: Any) -> None:
+		vm.push(self.os.now().year)
+
+	def _os_month(self, vm: Any, result: Any) -> None:
+		vm.push(self.os.now().month)
+
+	def _os_day(self, vm: Any, result: Any) -> None:
+		vm.push(self.os.now().day)
 
 	def _window_close(self, vm: Any, result: Any) -> None:
 		args = self._args(vm, result, 1)
@@ -935,6 +1137,46 @@ class DeviceRuntime:
 		args = self._args(vm, result, 1)
 		if args is not None:
 			self.files.close_path(self._read_string(vm, args[0]))
+
+	def _os_entry_count(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			vm.push(self.files.entry_count(self._read_string(vm, args[0])))
+
+	def _os_entry_name(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 2)
+		if args is not None:
+			self._push_string(vm, result, self.files.entry_name(self._read_string(vm, args[0]), _signed(args[1])))
+
+	def _os_entry_is_directory(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 2)
+		if args is not None:
+			self._push_bool(vm, self.files.entry_is_directory(self._read_string(vm, args[0]), _signed(args[1])))
+
+	def _os_path_exists(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_bool(vm, self.files.exists(self._read_string(vm, args[0])))
+
+	def _os_make_file(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_bool(vm, self.files.make_file(self._read_string(vm, args[0])))
+
+	def _os_make_directory(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_bool(vm, self.files.make_directory(self._read_string(vm, args[0])))
+
+	def _os_rename(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 2)
+		if args is not None:
+			self._push_bool(vm, self.files.rename(self._read_string(vm, args[0]), self._read_string(vm, args[1])))
+
+	def _os_delete(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_bool(vm, self.files.delete(self._read_string(vm, args[0])))
 
 	def _os_get_music_volume(self, vm: Any, result: Any) -> None:
 		vm.push(self.os.music_volume)
@@ -1032,6 +1274,127 @@ class DeviceRuntime:
 		args = self._args(vm, result, 1)
 		if args is not None:
 			vm.push(_float_bits(self.currency.point(_signed(args[0]))))
+
+	def _currency_point_date(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_string(vm, result, self.currency.point_date(_signed(args[0])))
+
+	def _compiler_check(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_bool(vm, self.compiler.compile(self._read_string(vm, args[0])))
+
+	def _compiler_error(self, vm: Any, result: Any) -> None:
+		self._push_string(vm, result, self.compiler.snapshot.error)
+
+	def _compiler_error_line(self, vm: Any, result: Any) -> None:
+		vm.push(self.compiler.snapshot.line)
+
+	def _compiler_error_column(self, vm: Any, result: Any) -> None:
+		vm.push(self.compiler.snapshot.column)
+
+	def _compiler_assembly(self, vm: Any, result: Any) -> None:
+		self._push_string(vm, result, self.compiler.snapshot.assembly)
+
+	def _compiler_bytecode_size(self, vm: Any, result: Any) -> None:
+		vm.push(self.compiler.snapshot.bytecode_size)
+
+	def _compiler_load_visual(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			vm.push(self.compiler.load_visual(self._read_string(vm, args[0])))
+
+	def _compiler_atom_count(self, vm: Any, result: Any) -> None:
+		vm.push(self.compiler.atom_count())
+
+	def _compiler_atom_text(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_string(vm, result, self.compiler.atom_text(_signed(args[0])))
+
+	def _compiler_atom_kind(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			vm.push(self.compiler.atom_kind(_signed(args[0])))
+
+	def _compiler_atom_line(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			vm.push(self.compiler.atom_line(_signed(args[0])))
+
+	def _compiler_atom_enabled(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_bool(vm, self.compiler.atom_enabled(_signed(args[0])))
+
+	def _compiler_set_atom_enabled(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 2)
+		if args is not None:
+			self._push_bool(vm, self.compiler.set_atom_enabled(_signed(args[0]), bool(args[1])))
+
+	def _compiler_visual_source(self, vm: Any, result: Any) -> None:
+		self._push_string(vm, result, self.compiler.visual_source)
+
+	def _compiler_script_count(self, vm: Any, result: Any) -> None:
+		vm.push(self.compiler.script_count())
+
+	def _compiler_script_name(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_string(vm, result, self.compiler.script_name(_signed(args[0])))
+
+	def _compiler_script_shell(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			vm.push(self.compiler.script_shell(_signed(args[0])))
+
+	def _compiler_script_line(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			vm.push(self.compiler.script_line(_signed(args[0])))
+
+	def _compiler_script_enabled(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_bool(vm, self.compiler.script_enabled(_signed(args[0])))
+
+	def _compiler_load_document(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 3)
+		if args is not None:
+			vm.push(self.compiler.load_document(
+				_signed(args[0]), self._read_string(vm, args[1]), self._read_string(vm, args[2])
+			))
+
+	def _compiler_document_script_count(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			vm.push(self.compiler.document_script_count(_signed(args[0])))
+
+	def _compiler_document_script_name(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 2)
+		if args is not None:
+			self._push_string(vm, result, self.compiler.document_script_name(_signed(args[0]), _signed(args[1])))
+
+	def _compiler_document_script_shell(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 2)
+		if args is not None:
+			vm.push(self.compiler.document_script_shell(_signed(args[0]), _signed(args[1])))
+
+	def _compiler_document_script_line(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 2)
+		if args is not None:
+			vm.push(self.compiler.document_script_line(_signed(args[0]), _signed(args[1])))
+
+	def _compiler_document_script_enabled(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 2)
+		if args is not None:
+			self._push_bool(vm, self.compiler.document_script_enabled(_signed(args[0]), _signed(args[1])))
+
+	def _compiler_document_source(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_string(vm, result, self.compiler.document_source(_signed(args[0])))
 
 	def _string_append(self, vm: Any, result: Any) -> None:
 		args = self._args(vm, result, 2)
