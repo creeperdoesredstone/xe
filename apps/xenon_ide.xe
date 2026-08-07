@@ -1,0 +1,2387 @@
+# Xenon IDE. Change visual_ring_style to RING_NONE or RING_DOTTED if preferred.
+
+var visual_ring_style: int
+visual_ring_style = graphics::RING_SOLID
+var ide_max_shells: int
+var ide_max_shell_items: int
+ide_max_shells = 4
+ide_max_shell_items = 4
+
+var ide_window: graphics::Window
+var source: string
+var source_path: string
+var status_text: string
+var terminal_text: string
+var terminal_command: string
+var file_handle: os::File
+var visual_mode: bool
+var explorer_open: bool
+var explorer_width_preferred: int
+var explorer_resizing: bool
+var plus_menu_open: bool
+var file_menu_open: bool
+var file_menu_path: string
+var rename_active: bool
+var rename_path: string
+var rename_text: string
+var rename_scratch: string
+var rename_insert: string
+var rename_document_scratch: string
+var rename_cursor: int
+var rename_selection_start: int
+var rename_selection_end: int
+var rename_field_x: int
+var rename_field_y: int
+var rename_field_width: int
+var delete_confirm: bool
+var terminal_open: bool
+var ide_font_large: bool
+var edit_menu_open: bool
+var editor_focus: int
+var selected_all: bool
+var clipboard_text: string
+var source_scratch: string
+var source_insert: string
+var cursor_index: int
+var selection_start: int
+var selection_end: int
+var selection_dragging: bool
+var compile_ok: bool
+var dirty: bool
+var running: bool
+var run_started: int
+var rotating_view: int
+var last_pointer_x: int
+var last_pointer_y: int
+var hovered_atom: int
+var hovered_view: int
+var hover_started: int
+var selected_atom: int
+var pinned_atom: int
+var pinned_view: int
+var explorer_scroll: int
+var operation_ok: bool
+var status_is_error: bool
+var status_expires: int
+var visual_atom_count: int
+var width: int
+var height: int
+var current_ticks: int
+var previous_ticks: int
+var delta_ms: int
+var animation_step: int
+var key: int
+var view_update: int
+var view_rotation_step: int
+var view_tilt_step: int
+var view_orbit_step: int
+var ui_input_blocked: bool
+var explorer_popup_active: bool
+var explorer_toggle_lock: bool
+var edit_pointer_inside: bool
+var main_pointer_x: int
+var main_pointer_y: int
+array view_path: string[16]
+array view_is_folder: int[16]
+array view_rotation: int[16]
+array view_tilt: int[16]
+array view_rotation_target: int[16]
+array view_tilt_target: int[16]
+array view_orbit_phase: int[16]
+array view_orbit_speed: int[16]
+array view_orbit_target: int[16]
+array view_relationships: int[4096]
+array explorer_expanded: int[64]
+var view_count: int
+var active_view: int
+var tab_scroll: int
+var ide_camera_bank: int
+
+proc ide_clear(target: string) {
+	if (xestring::strlen(target) > 0) {
+		target[0] = '\0'
+		call xestring::update_length(target)
+	}
+}
+
+proc ide_set(target: string, value: string) {
+	call ide_clear(target)
+	call xestring::append(target, value)
+}
+
+fn ide_strings_equal(left: string, right: string) bool {
+	var index: int
+	if (xestring::strlen(left) != xestring::strlen(right)) { return false }
+	index = 0
+	while (index < xestring::strlen(left)) {
+		if (left[index] != right[index]) { return false }
+		index += 1
+	}
+	return true
+}
+
+fn ide_rename_selection_begin() int {
+	if (rename_selection_start < rename_selection_end) { return rename_selection_start }
+	return rename_selection_end
+}
+
+fn ide_rename_selection_finish() int {
+	if (rename_selection_start > rename_selection_end) { return rename_selection_start }
+	return rename_selection_end
+}
+
+fn ide_rename_has_selection() bool {
+	return rename_selection_start != rename_selection_end
+}
+
+proc ide_clear_rename_selection() {
+	rename_selection_start = rename_cursor
+	rename_selection_end = rename_cursor
+}
+
+fn ide_name_is_valid(name: string) bool {
+	var index: int
+	var value: int
+	if (xestring::strlen(name) == 0) { return false }
+	index = 0
+	while (index < xestring::strlen(name)) {
+		value = (int)(name[index])
+		if (value == 47 || value == 92) { return false }
+		index += 1
+	}
+	return true
+}
+
+proc ide_begin_rename(path: string) {
+	var index: int
+	call ide_set(rename_path, path)
+	call ide_clear(rename_text)
+	index = xestring::strlen(path) - 1
+	while (index >= 0 && (int)(path[index]) != 47 && (int)(path[index]) != 92) { index -= 1 }
+	index += 1
+	while (index < xestring::strlen(path)) {
+		call xestring::append_char(rename_text, path[index])
+		index += 1
+	}
+	rename_cursor = xestring::strlen(rename_text)
+	rename_selection_start = 0
+	rename_selection_end = rename_cursor
+	rename_field_x = -1
+	rename_field_y = -1
+	rename_field_width = 0
+	rename_active = true
+	file_menu_open = false
+}
+
+proc ide_replace_rename_selection(value: string) {
+	var begin_index: int
+	var finish_index: int
+	var index: int
+	begin_index = ide_rename_selection_begin()
+	finish_index = ide_rename_selection_finish()
+	call ide_clear(rename_scratch)
+	index = 0
+	while (index < begin_index && index < xestring::strlen(rename_text)) {
+		call xestring::append_char(rename_scratch, rename_text[index])
+		index += 1
+	}
+	call xestring::append(rename_scratch, value)
+	index = finish_index
+	while (index < xestring::strlen(rename_text)) {
+		call xestring::append_char(rename_scratch, rename_text[index])
+		index += 1
+	}
+	call ide_set(rename_text, rename_scratch)
+	rename_cursor = begin_index + xestring::strlen(value)
+	call ide_clear_rename_selection()
+}
+
+proc ide_insert_rename_character(value: char) {
+	call ide_clear(rename_insert)
+	call xestring::append_char(rename_insert, value)
+	call ide_replace_rename_selection(rename_insert)
+}
+
+fn ide_path_is_same_or_child(path: string, parent: string) bool {
+	var index: int
+	if (xestring::strlen(path) < xestring::strlen(parent)) { return false }
+	index = 0
+	while (index < xestring::strlen(parent)) {
+		if (path[index] != parent[index]) { return false }
+		index += 1
+	}
+	if (xestring::strlen(path) == xestring::strlen(parent)) { return true }
+	return (int)(path[xestring::strlen(parent)]) == 47 || (int)(path[xestring::strlen(parent)]) == 92
+}
+
+proc ide_report(value: string, is_error: bool) {
+	call ide_set(status_text, value)
+	status_is_error = is_error
+	status_expires = current_ticks + 2600
+}
+
+fn ide_selection_begin() int {
+	if (selection_start < selection_end) { return selection_start }
+	return selection_end
+}
+
+fn ide_selection_finish() int {
+	if (selection_start > selection_end) { return selection_start }
+	return selection_end
+}
+
+fn ide_has_selection() bool {
+	return selection_start != selection_end
+}
+
+proc ide_clear_selection() {
+	selection_start = cursor_index
+	selection_end = cursor_index
+	selected_all = false
+}
+
+proc ide_select_all() {
+	selection_start = 0
+	selection_end = xestring::strlen(source)
+	cursor_index = selection_end
+	selected_all = selection_end > 0
+	if (selected_all) {
+		call ide_report("Selected all", false)
+	}
+	else {
+		call ide_report("Document empty", false)
+	}
+}
+
+proc ide_replace_selection(value: string) {
+	var begin_index: int
+	var finish_index: int
+	var index: int
+	begin_index = ide_selection_begin()
+	finish_index = ide_selection_finish()
+	call ide_clear(source_scratch)
+	index = 0
+	while (index < begin_index && index < xestring::strlen(source)) {
+		call xestring::append_char(source_scratch, source[index])
+		index += 1
+	}
+	call xestring::append(source_scratch, value)
+	index = finish_index
+	while (index < xestring::strlen(source)) {
+		call xestring::append_char(source_scratch, source[index])
+		index += 1
+	}
+	call ide_set(source, source_scratch)
+	cursor_index = begin_index + xestring::strlen(value)
+	call ide_clear_selection()
+	dirty = true
+}
+
+proc ide_insert_character(value: char) {
+	call ide_clear(source_insert)
+	call xestring::append_char(source_insert, value)
+	call ide_replace_selection(source_insert)
+}
+
+proc ide_backspace() {
+	if (ide_has_selection()) {
+		call ide_replace_selection("")
+	}
+	elseif (cursor_index > 0 && xestring::strlen(source) > 0) {
+		selection_start = cursor_index - 1
+		selection_end = cursor_index
+		call ide_replace_selection("")
+	}
+}
+
+proc ide_delete() {
+	if (ide_has_selection()) {
+		call ide_replace_selection("")
+	}
+	elseif (cursor_index < xestring::strlen(source)) {
+		selection_start = cursor_index
+		selection_end = cursor_index + 1
+		call ide_replace_selection("")
+	}
+}
+
+proc ide_copy() {
+	var index: int
+	if (ide_has_selection()) {
+		call ide_clear(clipboard_text)
+		index = ide_selection_begin()
+		while (index < ide_selection_finish()) {
+			call xestring::append_char(clipboard_text, source[index])
+			index += 1
+		}
+		call ide_report("Copied selection", false)
+	}
+	else {
+		call ide_report("Nothing selected", false)
+	}
+}
+
+proc ide_cut() {
+	if (ide_has_selection()) {
+		call ide_copy()
+		call ide_replace_selection("")
+		call ide_report("Cut selection", false)
+	}
+	else {
+		call ide_report("Nothing selected", false)
+	}
+}
+
+proc ide_paste() {
+	if (xestring::strlen(clipboard_text) == 0) {
+		call ide_report("Clipboard empty", false)
+		return
+	}
+	call ide_replace_selection(clipboard_text)
+	call ide_report("Pasted", false)
+}
+
+fn ide_find_view(name: string) int {
+	var index: int
+	index = 0
+	while (index < view_count) {
+		if (view_path[index] == name) { return index }
+		index += 1
+	}
+	return -1
+}
+
+fn ide_add_view(name: string, is_folder: bool) int {
+	var slot: int
+	slot = ide_find_view(name)
+	if (slot >= 0) {
+		active_view = slot
+		tab_scroll = slot
+		return slot
+	}
+	if (view_count < 16) {
+		slot = view_count
+		view_count += 1
+	}
+	else {
+		call ide_report("Tab limit reached", true)
+		return -1
+	}
+	view_path[slot] = name
+	if (is_folder) { view_is_folder[slot] = 1 }
+	else { view_is_folder[slot] = 0 }
+	view_rotation[slot] = 0
+	view_tilt[slot] = 28
+	view_rotation_target[slot] = 0
+	view_tilt_target[slot] = 28
+	view_orbit_phase[slot] = 0
+	view_orbit_speed[slot] = 24
+	view_orbit_target[slot] = 24
+	active_view = slot
+	tab_scroll = slot
+	return slot
+}
+
+fn ide_file_view_count() int {
+	var index: int
+	var count: int
+	index = 0
+	count = 0
+	while (index < view_count) {
+		if (view_is_folder[index] == 0) { count += 1 }
+		index += 1
+	}
+	return count
+}
+
+fn ide_file_view_at(position: int) int {
+	var index: int
+	var found: int
+	index = 0
+	found = 0
+	while (index < view_count) {
+		if (view_is_folder[index] == 0) {
+			if (found == position) { return index }
+			found += 1
+		}
+		index += 1
+	}
+	return -1
+}
+
+fn ide_identifier_character(value: int) bool {
+	if (value >= 48 && value <= 57) { return true }
+	if (value >= 65 && value <= 90) { return true }
+	if (value >= 97 && value <= 122) { return true }
+	return value == 95
+}
+
+fn ide_source_name_at(text: string, position: int, name: string) bool {
+	var index: int
+	var after_name: int
+	if (position < 0 || position + xestring::strlen(name) > xestring::strlen(text)) { return false }
+	if (position > 0 && ide_identifier_character((int)(text[position - 1]))) { return false }
+	index = 0
+	while (index < xestring::strlen(name)) {
+		if (text[position + index] != name[index]) { return false }
+		index += 1
+	}
+	after_name = position + xestring::strlen(name)
+	while (after_name < xestring::strlen(text) && ((int)(text[after_name]) == 32 || (int)(text[after_name]) == 9)) {
+		after_name += 1
+	}
+	return after_name < xestring::strlen(text) && (int)(text[after_name]) == 40
+}
+
+fn ide_document_script_calls(slot: int, caller: int, callee: int) bool {
+	var text: string
+	var target_name: string
+	var index: int
+	var line: int
+	var scan: int
+	var owner: int
+	var main_script: int
+	var depth: int
+	var quote: int
+	var value: int
+	var at_line_start: bool
+	var in_string: bool
+	var in_comment: bool
+	var escaped: bool
+	if (caller == callee) { return false }
+	text = compiler::document_source(slot)
+	target_name = compiler::document_script_name(slot, callee)
+	if (xestring::strlen(text) == 0 || xestring::strlen(target_name) == 0) { return false }
+	main_script = -1
+	scan = 0
+	while (scan < compiler::document_script_count(slot)) {
+		if (compiler::document_script_name(slot, scan) == "main") { main_script = scan }
+		scan += 1
+	}
+	owner = main_script
+	index = 0
+	line = 1
+	depth = 0
+	quote = 0
+	at_line_start = true
+	in_string = false
+	in_comment = false
+	escaped = false
+	while (index < xestring::strlen(text)) {
+		if (at_line_start) {
+			scan = 0
+			while (scan < compiler::document_script_count(slot)) {
+				if (scan != main_script && compiler::document_script_line(slot, scan) == line) {
+					owner = scan
+					depth = 0
+				}
+				scan += 1
+			}
+			at_line_start = false
+		}
+		value = (int)(text[index])
+		if (value == 10) {
+			if (owner != main_script && depth <= 0) { owner = main_script }
+			line += 1
+			at_line_start = true
+			in_comment = false
+			in_string = false
+			escaped = false
+		}
+		elseif (in_comment) { }
+		elseif (in_string) {
+			if (escaped) { escaped = false }
+			elseif (value == 92) { escaped = true }
+			elseif (value == quote) { in_string = false }
+		}
+		elseif (value == 35) { in_comment = true }
+		elseif (value == 34 || value == 39) {
+			in_string = true
+			quote = value
+		}
+		else {
+			if (owner == caller && ide_source_name_at(text, index, target_name)) { return true }
+			if (value == 123) { depth += 1 }
+			elseif (value == 125) { depth -= 1 }
+		}
+		index += 1
+	}
+	return false
+}
+
+fn ide_relationship_index(slot: int, caller: int, callee: int) int {
+	return slot * 256 + caller * 16 + callee
+}
+
+proc ide_refresh_relationships(slot: int) {
+	var caller: int
+	var callee: int
+	var count: int
+	var relation_slot: int
+	count = compiler::document_script_count(slot)
+	if (count > 16) { count = 16 }
+	caller = 0
+	while (caller < 16) {
+		callee = 0
+		while (callee < 16) {
+			relation_slot = ide_relationship_index(slot, caller, callee)
+			view_relationships[relation_slot] = 0
+			if (caller < count && callee < count && ide_document_script_calls(slot, caller, callee)) {
+				view_relationships[relation_slot] = 1
+			}
+			callee += 1
+		}
+		caller += 1
+	}
+}
+
+proc ide_close_view(slot: int) {
+	var index: int
+	var old_active: int
+	if (slot < 0 || slot >= view_count) {
+		return
+	}
+	if (view_count <= 1) {
+		call ide_report("Keep one tab open", false)
+		return
+	}
+	if (dirty) {
+		call ide_report("Save before closing a tab", true)
+		return
+	}
+	old_active = active_view
+	index = slot
+	while (index < view_count - 1) {
+		view_path[index] = view_path[index + 1]
+		view_is_folder[index] = view_is_folder[index + 1]
+		view_rotation[index] = view_rotation[index + 1]
+		view_tilt[index] = view_tilt[index + 1]
+		view_rotation_target[index] = view_rotation_target[index + 1]
+		view_tilt_target[index] = view_tilt_target[index + 1]
+		view_orbit_phase[index] = view_orbit_phase[index + 1]
+		view_orbit_speed[index] = view_orbit_speed[index + 1]
+		view_orbit_target[index] = view_orbit_target[index + 1]
+		if (view_is_folder[index] == 0) {
+			visual_atom_count = compiler::load_document(index, view_path[index], compiler::document_source(index + 1))
+			call ide_refresh_relationships(index)
+		}
+		index += 1
+	}
+	view_count -= 1
+	view_path[view_count] = ""
+	view_is_folder[view_count] = 0
+	if (old_active > slot) { active_view = old_active - 1 }
+	elseif (old_active == slot) {
+		active_view = slot
+		if (active_view >= view_count) { active_view = view_count - 1 }
+	}
+	if (tab_scroll >= view_count) { tab_scroll = view_count - 1 }
+	if (tab_scroll < 0) { tab_scroll = 0 }
+	if (view_is_folder[active_view] != 0) {
+		visual_mode = false
+		editor_focus = 2
+	}
+	else {
+		source_path = xestring::concat("", view_path[active_view])
+		call ide_set(source, compiler::document_source(active_view))
+		compile_ok = compiler::check(source)
+		visual_atom_count = compiler::load_visual(source)
+		cursor_index = xestring::strlen(source)
+		call ide_clear_selection()
+		if (visual_mode) { editor_focus = 2 }
+		else { editor_focus = 0 }
+	}
+	selection_dragging = false
+	call ide_report("Tab closed", false)
+}
+
+proc ide_open_folder(name: string) {
+	var slot: int
+	slot = ide_add_view(name, true)
+	if (slot < 0) {
+		return
+	}
+	active_view = slot
+	visual_mode = false
+	editor_focus = 2
+	selection_dragging = false
+	call ide_report(xestring::concat("Folder opened: ", name), false)
+}
+
+proc ide_open_file(name: string) {
+	var slot: int
+	slot = ide_add_view(name, false)
+	if (slot < 0) {
+		return
+	}
+	source_path = xestring::concat("", name)
+	file_handle = os::open_read(source_path)
+	call ide_set(source, os::read(file_handle))
+	call os::close(source_path)
+	compile_ok = compiler::check(source)
+	visual_atom_count = compiler::load_visual(source)
+	visual_atom_count = compiler::load_document(slot, source_path, source)
+	call ide_refresh_relationships(slot)
+	dirty = false
+	visual_mode = false
+	editor_focus = 0
+	cursor_index = xestring::strlen(source)
+	call ide_clear_selection()
+	selection_dragging = false
+	call ide_report(xestring::concat("Opened ", name), false)
+}
+
+proc ide_activate_view(slot: int) {
+	if (slot < 0 || slot >= view_count || slot == active_view) {
+		return
+	}
+	if (dirty && view_is_folder[active_view] == 0) {
+		call ide_report("Save before switching views", true)
+		return
+	}
+	active_view = slot
+	tab_scroll = slot
+	if (view_is_folder[slot] != 0) {
+		visual_mode = false
+		editor_focus = 2
+		selection_dragging = false
+		call ide_report("Folder active", false)
+		return
+	}
+	source_path = xestring::concat("", view_path[slot])
+	call ide_set(source, compiler::document_source(slot))
+	compile_ok = compiler::check(source)
+	visual_atom_count = compiler::load_visual(source)
+	visual_atom_count = compiler::load_document(slot, source_path, source)
+	call ide_refresh_relationships(slot)
+	dirty = false
+	cursor_index = xestring::strlen(source)
+	call ide_clear_selection()
+	selection_dragging = false
+	if (!visual_mode) { editor_focus = 0 }
+	call ide_report(xestring::concat("Active: ", view_path[slot]), false)
+}
+
+proc ide_save() {
+	file_handle = os::open_write(source_path)
+	if (os::write(file_handle, source)) {
+		dirty = false
+		call ide_report("Saved", false)
+	}
+	else {
+		call ide_report("Save failed", true)
+	}
+	call os::close(source_path)
+}
+
+proc ide_check_and_run() {
+	compile_ok = compiler::check(source)
+	if (compile_ok) {
+		running = true
+		run_started = current_ticks
+		if (visual_mode) {
+			call ide_report("Reaction started", false)
+		}
+		else {
+			call ide_report("Program started", false)
+		}
+		call ide_set(terminal_text, "Build succeeded. Bytecode words: ")
+	}
+	else {
+		running = false
+		call ide_report(compiler::error(), true)
+		call ide_set(terminal_text, compiler::error())
+	}
+}
+
+proc ide_enter_code_mode() {
+	if (view_is_folder[active_view] == 0 && visual_mode) {
+		call ide_set(source, compiler::visual_source())
+		compile_ok = compiler::check(source)
+	}
+	visual_mode = false
+	selection_dragging = false
+	if (view_is_folder[active_view] == 0) {
+		cursor_index = xestring::strlen(source)
+		call ide_clear_selection()
+		editor_focus = 0
+		call ide_report("Code editor active", false)
+	}
+	else { editor_focus = 2 }
+}
+
+proc ide_enter_visual_mode() {
+	var file_slot: int
+	if (view_is_folder[active_view] != 0) {
+		file_slot = ide_file_view_at(0)
+		if (file_slot < 0) {
+			visual_mode = false
+			editor_focus = 2
+			call ide_report("Open a code file for Visual mode", true)
+			return
+		}
+		visual_mode = true
+		selection_dragging = false
+		editor_focus = 2
+		call ide_report("Visual mode shows code files only", false)
+		return
+	}
+	visual_atom_count = compiler::load_visual(source)
+	visual_atom_count = compiler::load_document(active_view, source_path, source)
+	call ide_refresh_relationships(active_view)
+	visual_mode = true
+	selection_dragging = false
+	editor_focus = 2
+}
+
+proc ide_terminal_execute() {
+	if (terminal_command == "clear") {
+		call ide_clear(terminal_text)
+	}
+	elseif (terminal_command == "help") {
+		call ide_set(terminal_text, "help clear check run dir")
+	}
+	elseif (terminal_command == "check") {
+		compile_ok = compiler::check(source)
+		if (compile_ok) {
+			call ide_set(terminal_text, "No compiler errors")
+		}
+		else {
+			call ide_set(terminal_text, compiler::error())
+		}
+	}
+	elseif (terminal_command == "run") {
+		call ide_check_and_run()
+	}
+	elseif (terminal_command == "dir") {
+		call ide_set(terminal_text, "Use the workspace explorer to browse files")
+	}
+	else {
+		call ide_set(terminal_text, "Unknown IDE command")
+	}
+	call ide_clear(terminal_command)
+}
+
+proc ide_handle_key(value: int, target: int) {
+	var control_down: bool
+	control_down = (graphics::modifiers() & graphics::MOD_CTRL) != 0
+	if (control_down) {
+		if (target == 0) {
+			if (value == 1 || value == 65 || value == 97) {
+				call ide_select_all()
+			}
+			elseif (value == 3 || value == 67 || value == 99) {
+				call ide_copy()
+			}
+			elseif (value == 24 || value == 88 || value == 120) {
+				call ide_cut()
+			}
+			elseif (value == 22 || value == 86 || value == 118) {
+				call ide_paste()
+			}
+			elseif (value == 19 || value == 83 || value == 115) {
+				call ide_save()
+			}
+			elseif (value == 18 || value == 82 || value == 114) {
+				call ide_check_and_run()
+			}
+		}
+		return
+	}
+	if (target == 1) {
+		if ((value == graphics::KEY_BACKSPACE || value == graphics::KEY_DELETE) && xestring::strlen(terminal_command) > 0) {
+			terminal_command[xestring::strlen(terminal_command) - 1] = '\0'
+			call xestring::update_length(terminal_command)
+		}
+		elseif (value == graphics::KEY_ENTER) {
+			call ide_terminal_execute()
+		}
+		elseif (value >= 32 && value <= 126) {
+			call xestring::append_char(terminal_command, (char)value)
+		}
+		return
+	}
+	if (target == 0 && !visual_mode && view_is_folder[active_view] == 0) {
+		if (value == graphics::KEY_BACKSPACE) {
+			call ide_backspace()
+		}
+		elseif (value == graphics::KEY_DELETE) {
+			call ide_delete()
+		}
+		elseif (value == graphics::KEY_TAB) {
+			call ide_replace_selection("    ")
+		}
+		elseif (value == graphics::KEY_ENTER) {
+			call ide_insert_character('\n')
+		}
+		elseif (value >= 32 && value <= 126) {
+			call ide_insert_character((char)value)
+		}
+		if (dirty) { compile_ok = compiler::check(source) }
+	}
+}
+
+proc draw_ide_text_clipped(x: int, y: int, text: string, maximum: int, color: int) {
+	var index: int
+	index = 0
+	while (index < xestring::strlen(text) && index < maximum) {
+		call graphics::draw_char_small(ide_window, x + index * 4, y, text[index], color)
+		index += 1
+	}
+}
+
+proc draw_ide_text_clipped_large(x: int, y: int, text: string, maximum: int, color: int) {
+	var index: int
+	index = 0
+	while (index < xestring::strlen(text) && index < maximum) {
+		call graphics::draw_char(ide_window, x + index * 6, y, text[index], color)
+		index += 1
+	}
+}
+
+proc draw_ide_inline_rename(x: int, y: int, field_width: int) {
+	var visible_chars: int
+	var first_char: int
+	var index: int
+	var draw_index: int
+	var selection_begin: int
+	var selection_finish: int
+	var caret_column: int
+	if (field_width < 12) { field_width = 12 }
+	rename_field_x = x
+	rename_field_y = y
+	rename_field_width = field_width
+	visible_chars = (field_width - 4) / 4
+	if (visible_chars < 1) { visible_chars = 1 }
+	first_char = 0
+	if (rename_cursor >= visible_chars) { first_char = rename_cursor - visible_chars + 1 }
+	selection_begin = ide_rename_selection_begin()
+	selection_finish = ide_rename_selection_finish()
+	call graphics::fill_rect(ide_window, x, y, field_width, 7, graphics::COLOR_1)
+	call graphics::draw_rect(ide_window, x, y, field_width, 7, graphics::COLOR_13)
+	index = first_char
+	draw_index = 0
+	while (index < xestring::strlen(rename_text) && draw_index < visible_chars) {
+		if (index >= selection_begin && index < selection_finish) {
+			call graphics::fill_rect(ide_window, x + 2 + draw_index * 4, y + 1, 4, 5, graphics::COLOR_5)
+		}
+		call graphics::draw_char_small(ide_window, x + 2 + draw_index * 4, y + 1, rename_text[index], graphics::WHITE)
+		index += 1
+		draw_index += 1
+	}
+	if ((current_ticks / 450) % 2 == 0) {
+		caret_column = rename_cursor - first_char
+		if (caret_column < 0) { caret_column = 0 }
+		if (caret_column > visible_chars) { caret_column = visible_chars }
+		call graphics::draw_line(ide_window, x + 2 + caret_column * 4, y + 1, x + 2 + caret_column * 4, y + 5, graphics::COLOR_13)
+	}
+}
+
+proc draw_ide_source(x: int, y: int, area_width: int, area_height: int, show_cursor: bool) {
+	var index: int
+	var line: int
+	var column: int
+	var columns: int
+	var rows: int
+	var color: int
+	var advance: int
+	var row_height: int
+	var in_string: bool
+	var in_comment: bool
+	var end_line: int
+	var end_column: int
+	var cursor_line: int
+	var cursor_column: int
+	var selection_begin: int
+	var selection_finish: int
+	var cursor_found: bool
+	var error_y: int
+	var tooltip_y: int
+	var pointer_x: int
+	var pointer_y: int
+	var tab_width: int
+	advance = 4
+	row_height = 6
+	if (ide_font_large) { advance = 6; row_height = 8 }
+	columns = (area_width - 22) / advance
+	rows = area_height / row_height
+	if (columns < 1) { columns = 1 }
+	if (rows < 1) { rows = 1 }
+	index = 0
+	line = 0
+	column = 0
+	cursor_line = 0
+	cursor_column = 0
+	cursor_found = false
+	selection_begin = ide_selection_begin()
+	selection_finish = ide_selection_finish()
+	in_string = false
+	in_comment = false
+	while (index < xestring::strlen(source) && line < rows) {
+		if (index == cursor_index) {
+			cursor_line = line
+			cursor_column = column
+			cursor_found = true
+		}
+		if ((int)(source[index]) == 10) {
+			line += 1
+			column = 0
+			in_string = false
+			in_comment = false
+		}
+		else {
+			if ((int)(source[index]) == 9) {
+				tab_width = 4 - column % 4
+				if (column < columns && index >= selection_begin && index < selection_finish) {
+					if (tab_width > columns - column) { tab_width = columns - column }
+					call graphics::fill_rect(ide_window, x + 22 + column * advance, y + line * row_height, tab_width * advance, row_height, graphics::COLOR_5)
+				}
+				column += 4 - column % 4
+			}
+			else {
+				if ((int)(source[index]) == 35 && !in_string) { in_comment = true }
+				if ((int)(source[index]) == 34 && !in_comment) { in_string = !in_string }
+				if (column < columns) {
+					color = graphics::COLOR_10
+					if (in_comment) { color = graphics::COLOR_8 }
+					elseif (in_string || (int)(source[index]) == 34) { color = graphics::COLOR_11 }
+					elseif ((int)(source[index]) >= 48 && (int)(source[index]) <= 57) { color = graphics::COLOR_14 }
+					if (index >= selection_begin && index < selection_finish) {
+						call graphics::fill_rect(ide_window, x + 22 + column * advance, y + line * row_height, advance, row_height, graphics::COLOR_5)
+						color = graphics::WHITE
+					}
+					if (ide_font_large) {
+						call graphics::draw_char(ide_window, x + 22 + column * advance, y + line * row_height, source[index], color)
+					}
+					else {
+						call graphics::draw_char_small(ide_window, x + 22 + column * advance, y + line * row_height, source[index], color)
+					}
+				}
+				column += 1
+			}
+		}
+		index += 1
+	}
+	end_line = line
+	end_column = column
+	if (cursor_index >= xestring::strlen(source) && end_line < rows) {
+		cursor_line = end_line
+		cursor_column = end_column
+		cursor_found = true
+	}
+	line = 0
+	while (line < rows) {
+		call graphics::draw_int_small(ide_window, x + 2, y + line * row_height, line + 1, graphics::COLOR_8)
+		line += 1
+	}
+	if (!compile_ok && compiler::error_line() > 0 && compiler::error_line() <= rows) {
+		error_y = y + (compiler::error_line() - 1) * row_height
+		call graphics::fill_rect(ide_window, x + 13, error_y, 6, row_height - 1, graphics::COLOR_4)
+		call graphics::draw_text_small(ide_window, x + 14, error_y, "!", graphics::WHITE)
+		pointer_x = graphics::pointer_x(ide_window)
+		pointer_y = graphics::pointer_y(ide_window)
+		if (area_width >= 36 && pointer_x >= x + 12 && pointer_x < x + 20 && pointer_y >= error_y && pointer_y < error_y + row_height) {
+			tooltip_y = error_y + row_height + 1
+			if (tooltip_y + 8 > y + area_height) { tooltip_y = error_y - 8 }
+			call graphics::fill_rect(ide_window, x + 21, tooltip_y, area_width - 23, 7, graphics::COLOR_4)
+			call draw_ide_text_clipped(x + 23, tooltip_y + 1, compiler::error(), (area_width - 27) / 4, graphics::WHITE)
+		}
+	}
+	if (show_cursor && cursor_found && !ide_has_selection() && (current_ticks / 450) % 2 == 0 && cursor_column < columns && cursor_line < rows) {
+		call graphics::draw_line(ide_window, x + 22 + cursor_column * advance, y + cursor_line * row_height, x + 22 + cursor_column * advance, y + cursor_line * row_height + row_height - 2, graphics::COLOR_13)
+	}
+}
+
+fn ide_source_index_at(pointer_x: int, pointer_y: int, x: int, y: int, area_width: int, area_height: int) int {
+	var advance: int
+	var row_height: int
+	var target_line: int
+	var target_column: int
+	var index: int
+	var line: int
+	var column: int
+	advance = 4
+	row_height = 6
+	if (ide_font_large) { advance = 6; row_height = 8 }
+	target_line = (pointer_y - y) / row_height
+	if (target_line < 0) { target_line = 0 }
+	target_column = (pointer_x - x - 22 + advance / 2) / advance
+	if (target_column < 0) { target_column = 0 }
+	index = 0
+	line = 0
+	column = 0
+	while (index < xestring::strlen(source)) {
+		if (line == target_line) {
+			if (column >= target_column || (int)(source[index]) == 10) { return index }
+		}
+		if ((int)(source[index]) == 10) {
+			if (line >= target_line) { return index }
+			line += 1
+			column = 0
+		}
+		elseif ((int)(source[index]) == 9) { column += 4 - column % 4 }
+		else { column += 1 }
+		index += 1
+	}
+	return xestring::strlen(source)
+}
+
+proc draw_ide_chevron(x: int, y: int, button_width: int, button_height: int, direction: int) {
+	var center_x: int
+	var center_y: int
+	center_x = x + button_width / 2
+	center_y = y + button_height / 2
+	if (direction == 0) {
+		call graphics::draw_line(ide_window, center_x - 1, center_y - 2, center_x + 1, center_y, graphics::WHITE)
+		call graphics::draw_line(ide_window, center_x + 1, center_y, center_x - 1, center_y + 2, graphics::WHITE)
+	}
+	elseif (direction == 1) {
+		call graphics::draw_line(ide_window, center_x - 2, center_y + 1, center_x, center_y - 1, graphics::WHITE)
+		call graphics::draw_line(ide_window, center_x, center_y - 1, center_x + 2, center_y + 1, graphics::WHITE)
+	}
+	elseif (direction == 2) {
+		call graphics::draw_line(ide_window, center_x - 2, center_y - 1, center_x, center_y + 1, graphics::WHITE)
+		call graphics::draw_line(ide_window, center_x, center_y + 1, center_x + 2, center_y - 1, graphics::WHITE)
+	}
+	else {
+		call graphics::draw_line(ide_window, center_x + 1, center_y - 2, center_x - 1, center_y, graphics::WHITE)
+		call graphics::draw_line(ide_window, center_x - 1, center_y, center_x + 1, center_y + 2, graphics::WHITE)
+	}
+}
+
+fn ide_chevron_button(x: int, y: int, button_width: int, button_height: int, direction: int, tone: int) bool {
+	var clicked: bool
+	clicked = graphics::button_flat(ide_window, x, y, button_width, button_height, " ", tone)
+	call draw_ide_chevron(x, y, button_width, button_height, direction)
+	return clicked
+}
+
+proc draw_ide_passive_button(x: int, y: int, button_width: int, button_height: int, label: string, tone: int) {
+	var ignored: bool
+	ignored = graphics::button_flat(ide_window, x, y, button_width, button_height, label, tone)
+}
+
+fn ide_join_path(parent: string, child: string) string {
+	if (parent == "" || parent == ".") { return child }
+	return xestring::concat(xestring::concat(parent, "/"), child)
+}
+
+proc ide_reset_explorer_expansion() {
+	var index: int
+	index = 0
+	while (index < 64) {
+		explorer_expanded[index] = 0
+		index += 1
+	}
+	explorer_scroll = 0
+}
+
+proc ide_update_paths_after_rename(old_path: string, new_path: string) {
+	var slot: int
+	var index: int
+	var updated: string
+	updated = ""
+	call ide_clear(updated)
+	slot = 0
+	while (slot < view_count) {
+		if (ide_path_is_same_or_child(view_path[slot], old_path)) {
+			call ide_clear(updated)
+			call xestring::append(updated, new_path)
+			index = xestring::strlen(old_path)
+			while (index < xestring::strlen(view_path[slot])) {
+				call xestring::append_char(updated, view_path[slot][index])
+				index += 1
+			}
+			view_path[slot] = xestring::concat("", updated)
+			if (view_is_folder[slot] == 0) {
+				call ide_set(rename_document_scratch, compiler::document_source(slot))
+				visual_atom_count = compiler::load_document(slot, view_path[slot], rename_document_scratch)
+				call ide_refresh_relationships(slot)
+			}
+		}
+		slot += 1
+	}
+	if (ide_path_is_same_or_child(source_path, old_path)) {
+		call ide_clear(updated)
+		call xestring::append(updated, new_path)
+		index = xestring::strlen(old_path)
+		while (index < xestring::strlen(source_path)) {
+			call xestring::append_char(updated, source_path[index])
+			index += 1
+		}
+		source_path = xestring::concat("", updated)
+	}
+}
+
+proc ide_commit_rename() {
+	var separator: int
+	var index: int
+	var new_path: string
+	new_path = ""
+	call ide_clear(new_path)
+	if (!ide_name_is_valid(rename_text)) {
+		call ide_report("Enter a valid name", true)
+		return
+	}
+	separator = xestring::strlen(rename_path) - 1
+	while (separator >= 0 && (int)(rename_path[separator]) != 47 && (int)(rename_path[separator]) != 92) { separator -= 1 }
+	index = 0
+	while (index <= separator) {
+		call xestring::append_char(new_path, rename_path[index])
+		index += 1
+	}
+	call xestring::append(new_path, rename_text)
+	if (ide_strings_equal(new_path, rename_path)) {
+		rename_active = false
+		call ide_report("Name unchanged", false)
+		return
+	}
+	if (os::path_exists(new_path)) {
+		call ide_report("Name already exists", true)
+		return
+	}
+	if (os::rename(rename_path, new_path)) {
+		call ide_update_paths_after_rename(rename_path, new_path)
+		call ide_set(file_menu_path, new_path)
+		call ide_reset_explorer_expansion()
+		rename_active = false
+		call ide_report("Renamed", false)
+	}
+	else {
+		call ide_report("Rename failed", true)
+	}
+}
+
+proc ide_handle_rename_key(value: int) {
+	if (value == graphics::KEY_ESCAPE) {
+		rename_active = false
+		return
+	}
+	if (value == graphics::KEY_ENTER) {
+		call ide_commit_rename()
+		return
+	}
+	if (value == graphics::KEY_LEFT) {
+		if (ide_rename_has_selection()) { rename_cursor = ide_rename_selection_begin() }
+		elseif (rename_cursor > 0) { rename_cursor -= 1 }
+		call ide_clear_rename_selection()
+		return
+	}
+	if (value == graphics::KEY_RIGHT) {
+		if (ide_rename_has_selection()) { rename_cursor = ide_rename_selection_finish() }
+		elseif (rename_cursor < xestring::strlen(rename_text)) { rename_cursor += 1 }
+		call ide_clear_rename_selection()
+		return
+	}
+	if (value == graphics::KEY_BACKSPACE) {
+		if (ide_rename_has_selection()) {
+			call ide_replace_rename_selection("")
+		}
+		elseif (rename_cursor > 0) {
+			rename_selection_start = rename_cursor - 1
+			rename_selection_end = rename_cursor
+			call ide_replace_rename_selection("")
+		}
+		return
+	}
+	if (value == graphics::KEY_DELETE) {
+		if (ide_rename_has_selection()) {
+			call ide_replace_rename_selection("")
+		}
+		elseif (rename_cursor < xestring::strlen(rename_text)) {
+			rename_selection_start = rename_cursor
+			rename_selection_end = rename_cursor + 1
+			call ide_replace_rename_selection("")
+		}
+		return
+	}
+	if (value >= 32 && value <= 126 && value != 47 && value != 92 && xestring::strlen(rename_text) < 64) {
+		call ide_insert_rename_character((char)value)
+	}
+}
+
+fn ide_explorer_row_count() int {
+	var count: int
+	var index: int
+	var total: int
+	count = os::entry_count(".")
+	if (count > 64) { count = 64 }
+	total = count
+	index = 0
+	while (index < count) {
+		if (explorer_expanded[index] != 0 && os::entry_is_directory(".", index)) {
+			total += os::entry_count(os::entry_name(".", index))
+		}
+		index += 1
+	}
+	return total
+}
+
+proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int, interactive: bool) {
+	var count: int
+	var total: int
+	var rows: int
+	var root_index: int
+	var child_index: int
+	var flat_row: int
+	var visible_row: int
+	var row_y: int
+	var pointer_x: int
+	var pointer_y: int
+	var menu_x: int
+	var menu_width: int
+	var popup_pointer_inside: bool
+	var popup_open: bool
+	var rows_interactive: bool
+	var root_name: string
+	var child_name: string
+	var child_path: string
+	var row_clicked: bool
+	var arrow_clicked: bool
+	var folder_direction: int
+	count = os::entry_count(".")
+	if (count > 64) { count = 64 }
+	total = ide_explorer_row_count()
+	rows = (panel_height - 22) / 8
+	if (rows < 1) { rows = 1 }
+	if (explorer_scroll > total - rows) { explorer_scroll = total - rows }
+	if (explorer_scroll < 0) { explorer_scroll = 0 }
+	call graphics::fill_rect(ide_window, x, y, panel_width, panel_height, graphics::COLOR_1)
+	pointer_x = graphics::pointer_x(ide_window)
+	pointer_y = graphics::pointer_y(ide_window)
+	menu_width = panel_width - 4
+	if (menu_width > 76) { menu_width = 76 }
+	if (menu_width < 24) { menu_width = 24 }
+	menu_x = x + panel_width - menu_width - 2
+	if (menu_x < x + 2) { menu_x = x + 2 }
+	popup_open = plus_menu_open || file_menu_open || rename_active
+	popup_pointer_inside = popup_open && pointer_x >= menu_x && pointer_x < menu_x + menu_width && pointer_y >= y + 9 && pointer_y < y + 36
+	rows_interactive = interactive && !popup_open
+	if (popup_open && graphics::mouse_pressed() && !popup_pointer_inside) {
+		plus_menu_open = false
+		file_menu_open = false
+		rows_interactive = false
+	}
+	if (rows_interactive) {
+		row_clicked = graphics::button_flat(ide_window, x + 2, y + 1, panel_width - 32, 7, " ", graphics::COLOR_1)
+		if (row_clicked) {
+			call ide_open_folder(".")
+		}
+	}
+	else {
+		call graphics::fill_rect(ide_window, x + 2, y + 1, panel_width - 32, 7, graphics::COLOR_1)
+	}
+	call draw_ide_text_clipped(x + 3, y + 3, "root /", (panel_width - 36) / 4, graphics::COLOR_7)
+	if (interactive && !popup_open) {
+		if (graphics::button_flat(ide_window, x + panel_width - 28, y + 1, 12, 7, "+", graphics::COLOR_8)) {
+			plus_menu_open = true
+			file_menu_open = false
+		}
+		if (ide_chevron_button(x + panel_width - 14, y + 1, 12, 7, 1, graphics::COLOR_8)) { explorer_open = false }
+	}
+	else {
+		call draw_ide_passive_button(x + panel_width - 28, y + 1, 12, 7, "+", graphics::COLOR_8)
+		call graphics::fill_rect(ide_window, x + panel_width - 14, y + 1, 12, 7, graphics::COLOR_8)
+		call draw_ide_chevron(x + panel_width - 14, y + 1, 12, 7, 1)
+	}
+	flat_row = 0
+	visible_row = 0
+	root_index = 0
+	while (root_index < count && visible_row < rows) {
+		root_name = os::entry_name(".", root_index)
+		if (flat_row >= explorer_scroll) {
+			row_y = y + 11 + visible_row * 8
+			row_clicked = false
+			if (os::entry_is_directory(".", root_index)) {
+				folder_direction = 0
+				if (explorer_expanded[root_index] != 0) { folder_direction = 2 }
+				arrow_clicked = false
+				if (rows_interactive) { arrow_clicked = ide_chevron_button(x + 2, row_y, 10, 7, folder_direction, graphics::COLOR_1) }
+				if (rows_interactive && !explorer_toggle_lock && (arrow_clicked || (graphics::mouse_pressed() && pointer_x >= x + 2 && pointer_x < x + 12 && pointer_y >= row_y && pointer_y < row_y + 7))) {
+					explorer_expanded[root_index] = 1 - explorer_expanded[root_index]
+					explorer_toggle_lock = true
+				}
+				elseif (!rows_interactive) {
+					call draw_ide_chevron(x + 2, row_y, 10, 7, folder_direction)
+				}
+				if (rows_interactive) { row_clicked = graphics::button_flat(ide_window, x + 12, row_y, panel_width - 28, 7, " ", graphics::COLOR_1) }
+				else {
+					call graphics::fill_rect(ide_window, x + 12, row_y, panel_width - 28, 7, graphics::COLOR_1)
+				}
+				if (rename_active && ide_strings_equal(rename_path, root_name)) {
+					call draw_ide_inline_rename(x + 13, row_y, panel_width - 17)
+				}
+				else {
+					call draw_ide_text_clipped(x + 14, row_y + 1, root_name, (panel_width - 20) / 4, graphics::COLOR_7)
+				}
+			}
+			else {
+				if (rows_interactive) { row_clicked = graphics::button_flat(ide_window, x + 2, row_y, panel_width - 16, 7, " ", graphics::COLOR_1) }
+				else {
+					call graphics::fill_rect(ide_window, x + 2, row_y, panel_width - 16, 7, graphics::COLOR_1)
+				}
+				call graphics::draw_text_small(ide_window, x + 4, row_y + 1, "F", graphics::COLOR_10)
+				if (rename_active && ide_strings_equal(rename_path, root_name)) {
+					call draw_ide_inline_rename(x + 9, row_y, panel_width - 13)
+				}
+				else {
+					call draw_ide_text_clipped(x + 10, row_y + 1, root_name, (panel_width - 16) / 4, graphics::COLOR_7)
+				}
+			}
+			if (row_clicked) {
+				if (os::entry_is_directory(".", root_index)) {
+					call ide_open_folder(root_name)
+				}
+				else {
+					call ide_open_file(root_name)
+				}
+			}
+			if (pointer_x >= x + 2 && pointer_x < x + panel_width - 2 && pointer_y >= row_y && pointer_y < row_y + 7 && rows_interactive) {
+				if (graphics::button_flat(ide_window, x + panel_width - 14, row_y, 12, 7, "...", graphics::COLOR_8)) {
+					file_menu_open = true
+					plus_menu_open = false
+					call ide_set(file_menu_path, root_name)
+				}
+			}
+			visible_row += 1
+		}
+		flat_row += 1
+		if (explorer_expanded[root_index] != 0 && os::entry_is_directory(".", root_index)) {
+			child_index = 0
+			while (child_index < os::entry_count(root_name) && visible_row < rows) {
+				child_name = os::entry_name(root_name, child_index)
+				child_path = ide_join_path(root_name, child_name)
+				if (flat_row >= explorer_scroll) {
+					row_y = y + 11 + visible_row * 8
+					row_clicked = false
+					if (rows_interactive) { row_clicked = graphics::button_flat(ide_window, x + 10, row_y, panel_width - 24, 7, " ", graphics::COLOR_1) }
+					else {
+						call graphics::fill_rect(ide_window, x + 10, row_y, panel_width - 24, 7, graphics::COLOR_1)
+					}
+					if (os::entry_is_directory(root_name, child_index)) {
+						call draw_ide_chevron(x + 11, row_y, 8, 7, 0)
+					}
+					else {
+						call graphics::draw_text_small(ide_window, x + 13, row_y + 1, "F", graphics::COLOR_10)
+					}
+					if (rename_active && ide_strings_equal(rename_path, child_path)) {
+						call draw_ide_inline_rename(x + 19, row_y, panel_width - 23)
+					}
+					else {
+						call draw_ide_text_clipped(x + 20, row_y + 1, child_name, (panel_width - 26) / 4, graphics::COLOR_7)
+					}
+					if (row_clicked) {
+						if (os::entry_is_directory(root_name, child_index)) {
+							call ide_open_folder(child_path)
+						}
+						else {
+							call ide_open_file(child_path)
+						}
+					}
+					if (pointer_x >= x + 10 && pointer_x < x + panel_width - 2 && pointer_y >= row_y && pointer_y < row_y + 7 && rows_interactive) {
+						if (graphics::button_flat(ide_window, x + panel_width - 14, row_y, 12, 7, "...", graphics::COLOR_8)) {
+							file_menu_open = true
+							plus_menu_open = false
+							call ide_set(file_menu_path, child_path)
+						}
+					}
+					visible_row += 1
+				}
+				flat_row += 1
+				child_index += 1
+			}
+		}
+		root_index += 1
+	}
+	if (interactive && !popup_open) {
+		if (ide_chevron_button(x + 2, y + panel_height - 8, 12, 7, 1, graphics::COLOR_8)) {
+			if (explorer_scroll > 0) { explorer_scroll -= 1 }
+		}
+		if (ide_chevron_button(x + panel_width - 14, y + panel_height - 8, 12, 7, 2, graphics::COLOR_8)) {
+			if (explorer_scroll < total - rows) { explorer_scroll += 1 }
+		}
+	}
+	else {
+		call graphics::fill_rect(ide_window, x + 2, y + panel_height - 8, 12, 7, graphics::COLOR_8)
+		call draw_ide_chevron(x + 2, y + panel_height - 8, 12, 7, 1)
+		call graphics::fill_rect(ide_window, x + panel_width - 14, y + panel_height - 8, 12, 7, graphics::COLOR_8)
+		call draw_ide_chevron(x + panel_width - 14, y + panel_height - 8, 12, 7, 2)
+	}
+	if (plus_menu_open && interactive) {
+		call graphics::fill_rect(ide_window, menu_x, y + 9, menu_width, 27, graphics::COLOR_8)
+		if (graphics::button_flat(ide_window, menu_x + 1, y + 10, menu_width - 2, 7, "New file", graphics::COLOR_8)) {
+			if (os::make_file("new_file.xe")) {
+				call ide_reset_explorer_expansion()
+				call ide_report("Created new_file.xe", false)
+			}
+			else {
+				call ide_report("File already exists", true)
+			}
+			plus_menu_open = false
+		}
+		if (graphics::button_flat(ide_window, menu_x + 1, y + 18, menu_width - 2, 7, "New folder", graphics::COLOR_8)) {
+			if (os::make_directory("new_folder")) {
+				call ide_reset_explorer_expansion()
+				call ide_report("Created new_folder", false)
+			}
+			else {
+				call ide_report("Folder already exists", true)
+			}
+			plus_menu_open = false
+		}
+		if (graphics::button_flat(ide_window, menu_x + 1, y + 26, menu_width - 2, 7, "Close", graphics::COLOR_1)) { plus_menu_open = false }
+	}
+	if (file_menu_open && interactive) {
+		call graphics::fill_rect(ide_window, menu_x, y + 9, menu_width, 27, graphics::COLOR_8)
+		if (graphics::button_flat(ide_window, menu_x + 1, y + 10, menu_width - 2, 7, "Rename", graphics::COLOR_8)) {
+			call ide_begin_rename(file_menu_path)
+		}
+		if (graphics::button_flat(ide_window, menu_x + 1, y + 18, menu_width - 2, 7, "Delete", graphics::COLOR_4)) {
+			delete_confirm = true
+			file_menu_open = false
+		}
+		if (graphics::button_flat(ide_window, menu_x + 1, y + 26, menu_width - 2, 7, "Close", graphics::COLOR_1)) { file_menu_open = false }
+	}
+}
+
+# Placeholder asset boundary: replace only these procedures when final atom sprites arrive.
+proc draw_ide_file_nucleus_asset(center_x: int, center_y: int, radius: int, active: bool, orbit_phase: int) {
+	var state: int
+	state = graphics::ATOM_DISABLED
+	if (active) { state = graphics::ATOM_CONNECTED }
+	call graphics::draw_atom(ide_window, center_x, center_y, radius, state, graphics::RING_SOLID, orbit_phase)
+}
+
+proc draw_ide_script_electron_asset(center_x: int, center_y: int, state: int, orbit_phase: int) {
+	var color: int
+	var ring_radius: int
+	color = graphics::COLOR_11
+	if (state == graphics::ATOM_MISSING) { color = graphics::COLOR_14 }
+	elseif (state == graphics::ATOM_EXECUTING) { color = graphics::COLOR_10 }
+	elseif (state == graphics::ATOM_ERROR) { color = graphics::COLOR_12 }
+	elseif (state == graphics::ATOM_DISABLED) { color = graphics::COLOR_8 }
+	ring_radius = 4
+	if (state == graphics::ATOM_EXECUTING && orbit_phase % 24 < 12) { ring_radius = 5 }
+	if (state == graphics::ATOM_MISSING || state == graphics::ATOM_ERROR || visual_ring_style == graphics::RING_DOTTED) {
+		call graphics::set_pixel(ide_window, center_x, center_y - ring_radius, color)
+		call graphics::set_pixel(ide_window, center_x + ring_radius, center_y, color)
+		call graphics::set_pixel(ide_window, center_x, center_y + ring_radius, color)
+		call graphics::set_pixel(ide_window, center_x - ring_radius, center_y, color)
+	}
+	elseif (visual_ring_style == graphics::RING_SOLID) {
+		call graphics::draw_circle(ide_window, center_x, center_y, ring_radius, color)
+	}
+	call graphics::draw_circle(ide_window, center_x, center_y, 2, color)
+	call graphics::set_pixel(ide_window, center_x, center_y, color)
+}
+
+proc draw_ide_folder_nucleus_asset(center_x: int, center_y: int, radius: int, active: bool, orbit_phase: int) {
+	var state: int
+	state = graphics::ATOM_DISABLED
+	if (active) { state = graphics::ATOM_CONNECTED }
+	call graphics::draw_atom(ide_window, center_x, center_y, radius, state, graphics::RING_SOLID, orbit_phase)
+}
+
+proc draw_ide_folder_mini_atom_asset(center_x: int, center_y: int, active: bool, orbit_phase: int) {
+	var state: int
+	state = graphics::ATOM_DISABLED
+	if (active) { state = graphics::ATOM_CONNECTED }
+	call graphics::draw_atom(ide_window, center_x, center_y, 4, state, graphics::RING_NONE, orbit_phase)
+}
+
+proc draw_ide_file_electron_asset(center_x: int, center_y: int, active: bool) {
+	var color: int
+	color = graphics::COLOR_8
+	if (active) { color = graphics::COLOR_10 }
+	call graphics::fill_rect(ide_window, center_x - 2, center_y - 1, 5, 3, color)
+	call graphics::fill_rect(ide_window, center_x - 1, center_y - 2, 3, 5, color)
+	call graphics::set_pixel(ide_window, center_x, center_y, graphics::COLOR_7)
+}
+
+fn ide_orbit_x(angle: float, radius: int, tilt_value: int) int {
+	var flat_x: float
+	var flat_y: float
+	flat_x = math::cos(angle) * (float)radius
+	flat_y = math::sin(angle) * (float)radius * math::cos((float)tilt_value)
+	return (int)(flat_x * math::cos((float)ide_camera_bank) - flat_y * math::sin((float)ide_camera_bank))
+}
+
+fn ide_orbit_y(angle: float, radius: int, tilt_value: int) int {
+	var flat_x: float
+	var flat_y: float
+	flat_x = math::cos(angle) * (float)radius
+	flat_y = math::sin(angle) * (float)radius * math::cos((float)tilt_value)
+	return (int)(flat_x * math::sin((float)ide_camera_bank) + flat_y * math::cos((float)ide_camera_bank))
+}
+
+proc draw_visual_orbit(center_x: int, center_y: int, radius: int, tilt_value: int, color: int) {
+	var angle: int
+	var point_x: int
+	var point_y: int
+	var previous_x: int
+	var previous_y: int
+	angle = 0
+	previous_x = center_x + ide_orbit_x(0.0, radius, tilt_value)
+	previous_y = center_y + ide_orbit_y(0.0, radius, tilt_value)
+	while (angle <= 360) {
+		point_x = center_x + ide_orbit_x((float)angle, radius, tilt_value)
+		point_y = center_y + ide_orbit_y((float)angle, radius, tilt_value)
+		call graphics::draw_line(ide_window, previous_x, previous_y, point_x, point_y, color)
+		previous_x = point_x
+		previous_y = point_y
+		angle += 15
+	}
+}
+
+fn document_shell_population(slot: int, shell: int, count: int) int {
+	var index: int
+	var population: int
+	index = 0
+	population = 0
+	while (index < count) {
+		if (compiler::document_script_shell(slot, index) == shell) { population += 1 }
+		index += 1
+	}
+	return population
+}
+
+fn ide_script_orbit_angle(slot: int, script: int, count: int, orbit_phase: int) int {
+	var shell: int
+	var population: int
+	var position: int
+	var scan: int
+	shell = compiler::document_script_shell(slot, script)
+	population = document_shell_population(slot, shell, count)
+	if (population > ide_max_shell_items) { population = ide_max_shell_items }
+	position = 0
+	scan = 0
+	while (scan < script) {
+		if (compiler::document_script_shell(slot, scan) == shell) { position += 1 }
+		scan += 1
+	}
+	return view_rotation[slot] + orbit_phase + position * 360 / population + shell * 31
+}
+
+fn ide_script_orbit_radius(slot: int, script: int, outer_radius: int, inner_radius: int, shell_gap: int, shell_count: int) int {
+	var shell: int
+	var radius: int
+	shell = compiler::document_script_shell(slot, script)
+	radius = outer_radius
+	if (shell_count > 1) { radius = inner_radius + shell * shell_gap }
+	return radius
+}
+
+proc draw_ide_script_relationship(slot: int, caller: int, callee: int, count: int, center_x: int, center_y: int, outer_radius: int, inner_radius: int, shell_gap: int, shell_count: int, orbit_phase: int, animate: bool) {
+	var caller_x: int
+	var caller_y: int
+	var callee_x: int
+	var callee_y: int
+	var flow: int
+	var second_flow: int
+	var dot_x: int
+	var dot_y: int
+	var caller_radius: int
+	var callee_radius: int
+	var caller_angle: float
+	var callee_angle: float
+	caller_radius = ide_script_orbit_radius(slot, caller, outer_radius, inner_radius, shell_gap, shell_count)
+	callee_radius = ide_script_orbit_radius(slot, callee, outer_radius, inner_radius, shell_gap, shell_count)
+	caller_angle = (float)(ide_script_orbit_angle(slot, caller, count, orbit_phase))
+	callee_angle = (float)(ide_script_orbit_angle(slot, callee, count, orbit_phase))
+	caller_x = center_x + ide_orbit_x(caller_angle, caller_radius, view_tilt[slot])
+	caller_y = center_y + ide_orbit_y(caller_angle, caller_radius, view_tilt[slot])
+	callee_x = center_x + ide_orbit_x(callee_angle, callee_radius, view_tilt[slot])
+	callee_y = center_y + ide_orbit_y(callee_angle, callee_radius, view_tilt[slot])
+	call graphics::draw_line(ide_window, caller_x, caller_y, callee_x, callee_y, graphics::COLOR_14)
+	if (animate) {
+		flow = (current_ticks / 110 + caller * 3 + callee * 5) % 12
+		dot_x = caller_x + (callee_x - caller_x) * flow / 12
+		dot_y = caller_y + (callee_y - caller_y) * flow / 12
+		call graphics::set_pixel(ide_window, dot_x, dot_y, graphics::WHITE)
+		second_flow = (flow + 6) % 12
+		dot_x = caller_x + (callee_x - caller_x) * second_flow / 12
+		dot_y = caller_y + (callee_y - caller_y) * second_flow / 12
+		call graphics::set_pixel(ide_window, dot_x, dot_y, graphics::WHITE)
+	}
+}
+
+proc draw_file_nucleus_view(slot: int, x: int, y: int, area_width: int, area_height: int, is_active: bool) {
+	var count: int
+	var index: int
+	var scan: int
+	var shell: int
+	var shell_count: int
+	var population: int
+	var position: int
+	var center_x: int
+	var center_y: int
+	var radius: int
+	var outer_radius: int
+	var shell_gap: int
+	var inner_radius: int
+	var angle: float
+	var electron_x: int
+	var electron_y: int
+	var pointer_x: int
+	var pointer_y: int
+	var dx: int
+	var dy: int
+	var state: int
+	var hover_id: int
+	var maximum_chars: int
+	var hidden: int
+	var orbit_phase: int
+	var caller: int
+	var callee: int
+	var relation_slot: int
+	call graphics::fill_rect(ide_window, x, y, area_width, area_height, graphics::COLOR_1)
+	if (is_active) {
+		call graphics::draw_rect(ide_window, x, y, area_width, area_height, graphics::COLOR_13)
+	}
+	else {
+		call graphics::draw_rect(ide_window, x, y, area_width, area_height, graphics::COLOR_8)
+	}
+	maximum_chars = (area_width - 8) / 4
+	if (maximum_chars < 1) { maximum_chars = 1 }
+	if (view_path[slot] == "" || view_path[slot] == ".") {
+		call draw_ide_text_clipped(x + 4, y + 3, "root", maximum_chars, graphics::COLOR_7)
+	}
+	else {
+		call draw_ide_text_clipped(x + 4, y + 3, view_path[slot], maximum_chars, graphics::COLOR_7)
+	}
+	count = compiler::document_script_count(slot)
+	orbit_phase = (view_orbit_phase[slot] / 600) % 360
+	center_x = x + area_width / 2
+	center_y = y + area_height / 2 + 3
+	if (area_width < 74 || area_height < 58) {
+		call draw_ide_file_nucleus_asset(center_x, center_y, 6, is_active, orbit_phase)
+		call graphics::draw_int_small(ide_window, center_x - 2, center_y - 2, count, graphics::WHITE)
+		return
+	}
+	shell_count = 1
+	index = 0
+	while (index < count) {
+		if (compiler::document_script_shell(slot, index) + 1 > shell_count) { shell_count = compiler::document_script_shell(slot, index) + 1 }
+		index += 1
+	}
+	hidden = 0
+	if (shell_count > ide_max_shells) { hidden = shell_count - ide_max_shells; shell_count = ide_max_shells }
+	outer_radius = (area_width - 22) / 2
+	if (outer_radius > (area_height - 30) / 2) { outer_radius = (area_height - 30) / 2 }
+	if (outer_radius < 16) { outer_radius = 16 }
+	inner_radius = 24
+	if (outer_radius < 36) { inner_radius = outer_radius * 3 / 5 }
+	if (inner_radius < 12) { inner_radius = 12 }
+	shell_gap = 0
+	if (shell_count > 1) { shell_gap = (outer_radius - inner_radius) / (shell_count - 1) }
+	shell = 0
+	while (shell < shell_count) {
+		radius = outer_radius
+		if (shell_count > 1) { radius = inner_radius + shell * shell_gap }
+		call draw_visual_orbit(center_x, center_y, radius, view_tilt[slot], graphics::COLOR_8)
+		shell += 1
+	}
+	caller = 0
+	while (caller < count && caller < ide_max_shells * ide_max_shell_items) {
+		callee = 0
+		while (callee < count && callee < ide_max_shells * ide_max_shell_items) {
+			relation_slot = ide_relationship_index(slot, caller, callee)
+			if (compiler::document_script_shell(slot, caller) < ide_max_shells && compiler::document_script_shell(slot, callee) < ide_max_shells && view_relationships[relation_slot] != 0) {
+				call draw_ide_script_relationship(slot, caller, callee, count, center_x, center_y, outer_radius, inner_radius, shell_gap, shell_count, orbit_phase, running && is_active)
+			}
+			callee += 1
+		}
+		caller += 1
+	}
+	call draw_ide_file_nucleus_asset(center_x, center_y, 8, is_active, orbit_phase)
+	call graphics::draw_text_small(ide_window, center_x - 4, center_y - 2, "Xe", graphics::WHITE)
+	pointer_x = graphics::pointer_x(ide_window)
+	pointer_y = graphics::pointer_y(ide_window)
+	index = 0
+	while (index < count && index < ide_max_shells * ide_max_shell_items) {
+		shell = compiler::document_script_shell(slot, index)
+		if (shell < ide_max_shells) {
+			population = document_shell_population(slot, shell, count)
+			position = 0
+			scan = 0
+			while (scan < index) {
+				if (compiler::document_script_shell(slot, scan) == shell) { position += 1 }
+				scan += 1
+			}
+			if (position < ide_max_shell_items) {
+				if (population > ide_max_shell_items) { population = ide_max_shell_items }
+				radius = outer_radius
+				if (shell_count > 1) { radius = inner_radius + shell * shell_gap }
+				angle = (float)(view_rotation[slot] + orbit_phase + position * 360 / population + shell * 31)
+				electron_x = center_x + ide_orbit_x(angle, radius, view_tilt[slot])
+				electron_y = center_y + ide_orbit_y(angle, radius, view_tilt[slot])
+				state = graphics::ATOM_DISABLED
+				if (is_active) { state = graphics::ATOM_CONNECTED }
+				if (!compiler::document_script_enabled(slot, index)) { state = graphics::ATOM_DISABLED }
+				elseif (is_active && !compile_ok && compiler::document_script_line(slot, index) == compiler::error_line()) { state = graphics::ATOM_ERROR }
+				elseif (is_active && running) { state = graphics::ATOM_EXECUTING }
+				call draw_ide_script_electron_asset(electron_x, electron_y, state, orbit_phase + index * 17)
+				dx = pointer_x - electron_x
+				dy = pointer_y - electron_y
+				if (dx * dx + dy * dy < 49) {
+					hover_id = slot * 64 + index
+					hovered_atom = hover_id
+					hovered_view = slot
+					if (selected_atom != hover_id) { selected_atom = hover_id; hover_started = current_ticks }
+					call graphics::fill_rect(ide_window, x + 3, y + area_height - 10, area_width - 6, 7, graphics::COLOR_8)
+					call draw_ide_text_clipped(x + 5, y + area_height - 9, compiler::document_script_name(slot, index), maximum_chars - 1, graphics::WHITE)
+				}
+			}
+		}
+		index += 1
+	}
+	if (hidden > 0) {
+		call graphics::draw_text_small(ide_window, x + area_width - 30, y + area_height - 8, "+ shells", graphics::COLOR_7)
+	}
+}
+
+proc draw_folder_nucleus_view(slot: int, x: int, y: int, area_width: int, area_height: int, is_active: bool) {
+	var count: int
+	var index: int
+	var visible_count: int
+	var center_x: int
+	var center_y: int
+	var outer_radius: int
+	var angle: float
+	var electron_x: int
+	var electron_y: int
+	var pointer_x: int
+	var pointer_y: int
+	var dx: int
+	var dy: int
+	var hover_id: int
+	var maximum_chars: int
+	var orbit_phase: int
+	call graphics::fill_rect(ide_window, x, y, area_width, area_height, graphics::COLOR_1)
+	if (is_active) {
+		call graphics::draw_rect(ide_window, x, y, area_width, area_height, graphics::COLOR_13)
+	}
+	else {
+		call graphics::draw_rect(ide_window, x, y, area_width, area_height, graphics::COLOR_8)
+	}
+	maximum_chars = (area_width - 8) / 4
+	if (maximum_chars < 1) { maximum_chars = 1 }
+	if (view_path[slot] == "" || view_path[slot] == ".") {
+		call draw_ide_text_clipped(x + 4, y + 3, "root", maximum_chars, graphics::COLOR_7)
+	}
+	else {
+		call draw_ide_text_clipped(x + 4, y + 3, view_path[slot], maximum_chars, graphics::COLOR_7)
+	}
+	count = os::entry_count(view_path[slot])
+	orbit_phase = (view_orbit_phase[slot] / 600) % 360
+	center_x = x + area_width / 2
+	center_y = y + area_height / 2 + 3
+	if (area_width < 74 || area_height < 58) {
+		call draw_ide_folder_nucleus_asset(center_x, center_y, 7, is_active, orbit_phase)
+		call graphics::draw_int_small(ide_window, center_x - 2, center_y - 2, count, graphics::WHITE)
+		return
+	}
+	outer_radius = (area_width - 22) / 2
+	if (outer_radius > (area_height - 30) / 2) { outer_radius = (area_height - 30) / 2 }
+	if (outer_radius < 18) { outer_radius = 18 }
+	call draw_visual_orbit(center_x, center_y, outer_radius, view_tilt[slot], graphics::COLOR_8)
+	call draw_ide_folder_nucleus_asset(center_x, center_y, 9, is_active, orbit_phase)
+	call graphics::draw_text_small(ide_window, center_x - 6, center_y - 2, "DIR", graphics::WHITE)
+	visible_count = count
+	if (visible_count > ide_max_shell_items) { visible_count = ide_max_shell_items }
+	pointer_x = graphics::pointer_x(ide_window)
+	pointer_y = graphics::pointer_y(ide_window)
+	index = 0
+	while (index < visible_count) {
+		angle = (float)(view_rotation[slot] + orbit_phase + index * 360 / visible_count)
+		electron_x = center_x + ide_orbit_x(angle, outer_radius, view_tilt[slot])
+		electron_y = center_y + ide_orbit_y(angle, outer_radius, view_tilt[slot])
+		if (os::entry_is_directory(view_path[slot], index)) {
+			call draw_ide_folder_mini_atom_asset(electron_x, electron_y, is_active, orbit_phase + index * 17)
+		}
+		else {
+			call draw_ide_file_electron_asset(electron_x, electron_y, is_active)
+		}
+		dx = pointer_x - electron_x
+		dy = pointer_y - electron_y
+		if (dx * dx + dy * dy < 64) {
+			hover_id = 1000 + slot * 64 + index
+			hovered_atom = hover_id
+			hovered_view = slot
+			if (selected_atom != hover_id) { selected_atom = hover_id; hover_started = current_ticks }
+			call graphics::fill_rect(ide_window, x + 3, y + area_height - 10, area_width - 6, 7, graphics::COLOR_8)
+			call draw_ide_text_clipped(x + 5, y + area_height - 9, os::entry_name(view_path[slot], index), maximum_chars - 1, graphics::WHITE)
+		}
+		index += 1
+	}
+	if (count > visible_count) {
+		call graphics::draw_text_small(ide_window, x + area_width - 18, y + area_height - 8, "+", graphics::COLOR_7)
+		call graphics::draw_int_small(ide_window, x + area_width - 12, y + area_height - 8, count - visible_count, graphics::COLOR_7)
+	}
+}
+
+proc draw_visual_folder_placeholder(slot: int, x: int, y: int, area_width: int, area_height: int, is_active: bool) {
+	var maximum_chars: int
+	call graphics::fill_rect(ide_window, x, y, area_width, area_height, graphics::COLOR_1)
+	if (is_active) {
+		call graphics::draw_rect(ide_window, x, y, area_width, area_height, graphics::COLOR_13)
+	}
+	else {
+		call graphics::draw_rect(ide_window, x, y, area_width, area_height, graphics::COLOR_8)
+	}
+	maximum_chars = (area_width - 8) / 4
+	if (maximum_chars < 1) { maximum_chars = 1 }
+	call draw_ide_text_clipped(x + 4, y + 3, view_path[slot], maximum_chars, graphics::COLOR_7)
+	if (area_width >= 64 && area_height >= 34) {
+		call draw_ide_text_clipped(x + 6, y + area_height / 2 - 4, "Folder tab", (area_width - 12) / 4, graphics::COLOR_10)
+		call draw_ide_text_clipped(x + 6, y + area_height / 2 + 4, "Open a file to visualize", (area_width - 12) / 4, graphics::COLOR_8)
+	}
+}
+
+proc draw_visual_workspace(x: int, y: int, area_width: int, area_height: int, interactive: bool) {
+	var shown_count: int
+	var file_count: int
+	var first_view: int
+	var columns: int
+	var rows: int
+	var item: int
+	var slot: int
+	var column: int
+	var row: int
+	var cell_x: int
+	var cell_y: int
+	var cell_width: int
+	var cell_height: int
+	var pointer_x: int
+	var pointer_y: int
+	hovered_atom = -1
+	file_count = ide_file_view_count()
+	if (file_count < 1) {
+		call graphics::fill_rect(ide_window, x, y, area_width, area_height, graphics::COLOR_1)
+		call draw_ide_text_clipped(x + 6, y + 6, "Open a code file for Visual mode", (area_width - 12) / 4, graphics::COLOR_7)
+		return
+	}
+	shown_count = view_count
+	first_view = 0
+	if (area_width < 180 || area_height < 120) {
+		shown_count = 1
+		first_view = active_view
+		if (view_is_folder[first_view] != 0) { first_view = ide_file_view_at(0) }
+	}
+	if (shown_count < 1) { shown_count = 1 }
+	columns = 1
+	if (shown_count > 1 && area_width >= 180) { columns = 2 }
+	rows = (shown_count + columns - 1) / columns
+	cell_width = (area_width - (columns - 1) * 3) / columns
+	cell_height = (area_height - (rows - 1) * 3) / rows
+	pointer_x = graphics::pointer_x(ide_window)
+	pointer_y = graphics::pointer_y(ide_window)
+	item = 0
+	while (item < shown_count) {
+		slot = first_view + item
+		if (shown_count > 1) { slot = item }
+		column = item % columns
+		row = item / columns
+		cell_x = x + column * (cell_width + 3)
+		cell_y = y + row * (cell_height + 3)
+		if (view_is_folder[slot] != 0) {
+			call draw_visual_folder_placeholder(slot, cell_x, cell_y, cell_width, cell_height, slot == active_view)
+		}
+		else {
+			call draw_file_nucleus_view(slot, cell_x, cell_y, cell_width, cell_height, slot == active_view)
+		}
+		if (interactive && graphics::mouse_pressed() && hovered_atom < 0 && pointer_x >= cell_x && pointer_x < cell_x + cell_width && pointer_y >= cell_y && pointer_y < cell_y + cell_height) {
+			call ide_activate_view(slot)
+			pinned_atom = -1
+			pinned_view = -1
+			rotating_view = slot
+			last_pointer_x = pointer_x
+			last_pointer_y = pointer_y
+		}
+		elseif (interactive && graphics::mouse_pressed() && hovered_atom >= 0 && pointer_x >= cell_x && pointer_x < cell_x + cell_width && pointer_y >= cell_y && pointer_y < cell_y + cell_height) {
+			call ide_activate_view(slot)
+			pinned_atom = hovered_atom
+			pinned_view = slot
+			rotating_view = -1
+		}
+		item += 1
+	}
+	if (interactive && rotating_view >= 0 && graphics::mouse_down()) {
+		view_rotation_target[rotating_view] += (pointer_x - last_pointer_x) * 2
+		view_tilt_target[rotating_view] += (pointer_y - last_pointer_y) * 2
+		if (view_tilt_target[rotating_view] > 70) { view_tilt_target[rotating_view] = 70 }
+		if (view_tilt_target[rotating_view] < -70) { view_tilt_target[rotating_view] = -70 }
+		last_pointer_x = pointer_x
+		last_pointer_y = pointer_y
+	}
+	if (!interactive) { rotating_view = -1 }
+	if (graphics::mouse_released()) { rotating_view = -1 }
+	if (shown_count == 1 && view_count > 1) {
+		call graphics::draw_int_small(ide_window, x + area_width - 18, y + 3, active_view + 1, graphics::COLOR_7)
+		call graphics::draw_text_small(ide_window, x + area_width - 12, y + 3, "/", graphics::COLOR_7)
+		call graphics::draw_int_small(ide_window, x + area_width - 7, y + 3, view_count, graphics::COLOR_7)
+	}
+}
+
+proc draw_edit_menu() {
+	call graphics::fill_rect(ide_window, 32, 10, 76, 51, graphics::COLOR_8)
+	if (graphics::button_flat(ide_window, 34, 12, 72, 7, "Copy", graphics::COLOR_8)) {
+		call ide_copy()
+		edit_menu_open = false
+	}
+	if (graphics::button_flat(ide_window, 34, 20, 72, 7, "Cut", graphics::COLOR_8)) {
+		call ide_cut()
+		edit_menu_open = false
+	}
+	if (graphics::button_flat(ide_window, 34, 28, 72, 7, "Paste", graphics::COLOR_8)) {
+		call ide_paste()
+		edit_menu_open = false
+	}
+	if (graphics::button_flat(ide_window, 34, 36, 72, 7, "Select all", graphics::COLOR_8)) {
+		call ide_select_all()
+		edit_menu_open = false
+	}
+	if (graphics::button_flat(ide_window, 34, 44, 35, 7, "Text -", graphics::COLOR_8)) {
+		ide_font_large = false
+		edit_menu_open = false
+	}
+	if (graphics::button_flat(ide_window, 71, 44, 35, 7, "Text +", graphics::COLOR_8)) {
+		ide_font_large = true
+		edit_menu_open = false
+	}
+	call graphics::draw_text_small(ide_window, 35, 54, "Ctrl A/C/X/V", graphics::COLOR_7)
+}
+
+source = "proc double(value: int) {\n\tout << value * 2\n}\nproc react() {\n\tcall double(21)\n}\nproc separate() {\n\tout << 7\n}\ncall react()"
+source_path = "workspace.xe"
+status_text = "Ready"
+terminal_text = "IDE terminal ready"
+terminal_command = ""
+visual_mode = false
+explorer_open = true
+explorer_width_preferred = 82
+explorer_resizing = false
+plus_menu_open = false
+file_menu_open = false
+file_menu_path = ""
+rename_active = false
+rename_path = ""
+rename_text = ""
+rename_scratch = ""
+rename_insert = ""
+rename_document_scratch = ""
+rename_cursor = 0
+rename_selection_start = 0
+rename_selection_end = 0
+rename_field_x = -1
+rename_field_y = -1
+rename_field_width = 0
+delete_confirm = false
+terminal_open = false
+ide_font_large = true
+edit_menu_open = false
+editor_focus = 0
+selected_all = false
+clipboard_text = ""
+source_scratch = ""
+source_insert = ""
+cursor_index = xestring::strlen(source)
+selection_start = cursor_index
+selection_end = cursor_index
+selection_dragging = false
+dirty = false
+running = false
+rotating_view = -1
+hovered_atom = -1
+hovered_view = -1
+selected_atom = -1
+pinned_atom = -1
+pinned_view = -1
+explorer_scroll = 0
+explorer_toggle_lock = false
+status_is_error = false
+status_expires = 0
+view_count = 1
+active_view = 0
+tab_scroll = 0
+view_path[0] = xestring::concat("", source_path)
+view_is_folder[0] = 0
+view_rotation[0] = 0
+view_tilt[0] = 28
+view_rotation_target[0] = 0
+view_tilt_target[0] = 28
+view_orbit_phase[0] = 0
+view_orbit_speed[0] = 24
+view_orbit_target[0] = 24
+ide_camera_bank = -10
+compile_ok = compiler::check(source)
+visual_atom_count = compiler::load_visual(source)
+visual_atom_count = compiler::load_document(0, source_path, source)
+call ide_refresh_relationships(0)
+
+ide_window.x = 56
+ide_window.y = 38
+ide_window.width = 330
+ide_window.height = 230
+ide_window.title = "Xenon IDE"
+ide_window.ui_scale = 1
+ide_window.state = graphics::WINDOW_NORMAL
+previous_ticks = os::ticks()
+
+while (ide_window.state != graphics::WINDOW_CLOSED) {
+	current_ticks = os::ticks()
+	delta_ms = current_ticks - previous_ticks
+	if (delta_ms < 1) { delta_ms = 1 }
+	if (delta_ms > 50) { delta_ms = 50 }
+	previous_ticks = current_ticks
+	if (status_expires > 0 && current_ticks >= status_expires) {
+		call ide_set(status_text, "Ready")
+		status_is_error = false
+		status_expires = 0
+	}
+	animation_step = delta_ms * 100 / 220
+	if (animation_step < 1) { animation_step = 1 }
+	if (animation_step > 24) { animation_step = 24 }
+	if (running && current_ticks - run_started > 900) { running = false }
+	view_update = 0
+	while (view_update < view_count) {
+		view_rotation_step = (view_rotation_target[view_update] - view_rotation[view_update]) * animation_step / 100
+		if (view_rotation_step == 0 && view_rotation_target[view_update] > view_rotation[view_update]) { view_rotation_step = 1 }
+		if (view_rotation_step == 0 && view_rotation_target[view_update] < view_rotation[view_update]) { view_rotation_step = -1 }
+		view_rotation[view_update] += view_rotation_step
+		view_tilt_step = (view_tilt_target[view_update] - view_tilt[view_update]) * animation_step / 100
+		if (view_tilt_step == 0 && view_tilt_target[view_update] > view_tilt[view_update]) { view_tilt_step = 1 }
+		if (view_tilt_step == 0 && view_tilt_target[view_update] < view_tilt[view_update]) { view_tilt_step = -1 }
+		view_tilt[view_update] += view_tilt_step
+		view_orbit_target[view_update] = 24
+		if (hovered_view == view_update || rotating_view == view_update || pinned_view == view_update) { view_orbit_target[view_update] = 0 }
+		view_orbit_step = (view_orbit_target[view_update] - view_orbit_speed[view_update]) * animation_step / 100
+		if (view_orbit_step == 0 && view_orbit_target[view_update] > view_orbit_speed[view_update]) { view_orbit_step = 1 }
+		if (view_orbit_step == 0 && view_orbit_target[view_update] < view_orbit_speed[view_update]) { view_orbit_step = -1 }
+		view_orbit_speed[view_update] += view_orbit_step
+		view_orbit_phase[view_update] = (view_orbit_phase[view_update] + delta_ms * view_orbit_speed[view_update]) % 216000
+		view_update += 1
+	}
+	hovered_view = -1
+
+	call graphics::begin_draw(ide_window)
+	if (!ide_window.is_minimized()) {
+		width = graphics::content_width(ide_window)
+		height = graphics::content_height(ide_window)
+		if (height < 120 && editor_focus == 1) {
+			if (!visual_mode && view_is_folder[active_view] == 0) { editor_focus = 0 }
+			else { editor_focus = 2 }
+		}
+		main_pointer_x = graphics::pointer_x(ide_window)
+		main_pointer_y = graphics::pointer_y(ide_window)
+		edit_pointer_inside = main_pointer_x >= 32 && main_pointer_x < 108 && main_pointer_y >= 10 && main_pointer_y < 61
+		ui_input_blocked = rename_active || delete_confirm || (edit_menu_open && (edit_pointer_inside || graphics::mouse_pressed()))
+		explorer_popup_active = plus_menu_open || file_menu_open || rename_active
+		if (edit_menu_open && graphics::mouse_pressed() && !edit_pointer_inside) {
+			edit_menu_open = false
+		}
+		call graphics::fill_rect(ide_window, 0, 0, width, height, graphics::COLOR_0)
+		if (!ui_input_blocked && !plus_menu_open && !file_menu_open) {
+			if (graphics::button_flat(ide_window, 2, 2, 28, 7, "File", graphics::COLOR_8)) { plus_menu_open = !plus_menu_open; edit_menu_open = false }
+			if (graphics::button_flat(ide_window, 32, 2, 28, 7, "Edit", graphics::COLOR_8)) { edit_menu_open = !edit_menu_open; plus_menu_open = false; file_menu_open = false }
+			if (graphics::button_flat(ide_window, 62, 2, 28, 7, "View", graphics::COLOR_8)) { explorer_open = !explorer_open; edit_menu_open = false }
+			if (graphics::button_flat(ide_window, 92, 2, 28, 7, "Run", graphics::COLOR_8)) {
+				call ide_check_and_run()
+			}
+			if (width >= 176 && graphics::button_flat(ide_window, 122, 2, 48, 7, "Terminal", graphics::COLOR_8)) {
+				terminal_open = !terminal_open
+				if (terminal_open) { editor_focus = 1 }
+				elseif (visual_mode || view_is_folder[active_view] != 0) { editor_focus = 2 }
+				else { editor_focus = 0 }
+			}
+			if (width >= 242 && graphics::button_flat(ide_window, width - 66, 2, 30, 7, "A-", graphics::COLOR_8)) { ide_font_large = false }
+			if (width >= 242 && graphics::button_flat(ide_window, width - 34, 2, 30, 7, "A+", graphics::COLOR_8)) { ide_font_large = true }
+		}
+		else {
+			call draw_ide_passive_button(2, 2, 28, 7, "File", graphics::COLOR_8)
+			call draw_ide_passive_button(32, 2, 28, 7, "Edit", graphics::COLOR_8)
+			call draw_ide_passive_button(62, 2, 28, 7, "View", graphics::COLOR_8)
+			call draw_ide_passive_button(92, 2, 28, 7, "Run", graphics::COLOR_8)
+			if (width >= 176) {
+				call draw_ide_passive_button(122, 2, 48, 7, "Terminal", graphics::COLOR_8)
+			}
+			if (width >= 242) {
+				call draw_ide_passive_button(width - 66, 2, 30, 7, "A-", graphics::COLOR_8)
+				call draw_ide_passive_button(width - 34, 2, 30, 7, "A+", graphics::COLOR_8)
+			}
+		}
+
+		var explorer_width: int
+		var explorer_max_width: int
+		var splitter_x: int
+		var splitter_hover: bool
+		var editor_x: int
+		var editor_height: int
+		var tab_index: int
+		var tab_slot: int
+		var tab_x: int
+		var tab_width: int
+		var tab_body_width: int
+		var tab_start_x: int
+		var tab_tone: int
+		var tabs_width: int
+		var available_tabs_width: int
+		var maximum_tab_scroll: int
+		var tabs_overflow: bool
+		var tab_clicked: bool
+		var mode_x: int
+		var displayed_tabs: int
+		var show_modes: int
+		var terminal_top: int
+		var terminal_columns: int
+		var terminal_length: int
+		var status_color: int
+		explorer_width = 0
+		if (explorer_open && width >= 116) {
+			explorer_max_width = width - 84
+			if (explorer_max_width < 48) { explorer_max_width = 48 }
+			explorer_width = explorer_width_preferred
+			if (explorer_width < 48) { explorer_width = 48 }
+			if (explorer_width > explorer_max_width) { explorer_width = explorer_max_width }
+			splitter_x = explorer_width + 2
+			splitter_hover = main_pointer_x >= splitter_x - 2 && main_pointer_x < splitter_x + 4 && main_pointer_y >= 12 && main_pointer_y < height - 12
+			if (!ui_input_blocked && !explorer_popup_active && splitter_hover && graphics::mouse_pressed()) { explorer_resizing = true }
+			if (explorer_resizing && graphics::mouse_down()) {
+				explorer_width_preferred = main_pointer_x - 2
+				if (explorer_width_preferred < 48) { explorer_width_preferred = 48 }
+				if (explorer_width_preferred > explorer_max_width) { explorer_width_preferred = explorer_max_width }
+				explorer_width = explorer_width_preferred
+				splitter_x = explorer_width + 2
+			}
+			call draw_workspace_explorer(2, 12, explorer_width, height - 24, !ui_input_blocked && !explorer_resizing)
+			if (splitter_hover || explorer_resizing) {
+				call graphics::fill_rect(ide_window, splitter_x, 12, 2, height - 24, graphics::COLOR_13)
+			}
+			else {
+				call graphics::fill_rect(ide_window, splitter_x, 12, 2, height - 24, graphics::COLOR_8)
+			}
+		}
+		elseif (!explorer_open) {
+			explorer_resizing = false
+			if (!ui_input_blocked && ide_chevron_button(2, 12, 12, 7, 0, graphics::COLOR_8)) { explorer_open = true }
+		}
+		else {
+			explorer_resizing = false
+			plus_menu_open = false
+			file_menu_open = false
+		}
+		editor_x = explorer_width + 4
+		editor_height = height - 31
+		if (terminal_open && height >= 120) { editor_height = (height - 35) * 2 / 3 }
+		show_modes = 0
+		mode_x = width
+		if (width - editor_x >= 138) {
+			show_modes = 1
+			mode_x = width - 114
+		}
+		elseif (width - editor_x >= 82) {
+			show_modes = 2
+			mode_x = width - 56
+		}
+		tabs_width = mode_x - editor_x - 2
+		if (tabs_width < 38) {
+			show_modes = 0
+			mode_x = width
+			tabs_width = width - editor_x - 2
+		}
+		if (tabs_width < 20) { tabs_width = 20 }
+		tab_width = 52
+		tabs_overflow = view_count * (tab_width + 2) - 2 > tabs_width
+		tab_start_x = editor_x
+		if (tabs_overflow) {
+			available_tabs_width = tabs_width - 20
+			if (available_tabs_width < 18) { available_tabs_width = 18 }
+			displayed_tabs = available_tabs_width / (tab_width + 2)
+			if (displayed_tabs < 1) { displayed_tabs = 1 }
+			if (displayed_tabs < 2 && view_count > 1 && available_tabs_width >= 42) {
+				displayed_tabs = 2
+				tab_width = (available_tabs_width - 2) / 2
+			}
+			elseif (displayed_tabs == 1 && tab_width > available_tabs_width) { tab_width = available_tabs_width }
+			maximum_tab_scroll = view_count - displayed_tabs
+			if (maximum_tab_scroll < 0) { maximum_tab_scroll = 0 }
+			if (tab_scroll > maximum_tab_scroll) { tab_scroll = maximum_tab_scroll }
+			if (tab_scroll < 0) { tab_scroll = 0 }
+			if (!ui_input_blocked && !explorer_popup_active && ide_chevron_button(editor_x, 12, 9, 7, 3, graphics::COLOR_8)) {
+				if (tab_scroll > 0) { tab_scroll -= 1 }
+			}
+			if (!ui_input_blocked && !explorer_popup_active && ide_chevron_button(editor_x + tabs_width - 9, 12, 9, 7, 0, graphics::COLOR_8)) {
+				if (tab_scroll < maximum_tab_scroll) { tab_scroll += 1 }
+			}
+			tab_start_x = editor_x + 10
+		}
+		else {
+			tab_scroll = 0
+			displayed_tabs = view_count
+			tab_width = (tabs_width - (displayed_tabs - 1) * 2) / displayed_tabs
+			if (tab_width > 72) { tab_width = 72 }
+			if (tab_width < 20) { tab_width = 20 }
+		}
+		tab_index = 0
+		while (tab_index < displayed_tabs && tab_scroll + tab_index < view_count) {
+			tab_slot = tab_scroll + tab_index
+			tab_x = tab_start_x + tab_index * (tab_width + 2)
+			tab_body_width = tab_width - 10
+			if (tab_body_width < 8) { tab_body_width = 8 }
+			tab_tone = graphics::COLOR_8
+			if (tab_slot == active_view) { tab_tone = graphics::COLOR_5 }
+			tab_clicked = false
+			if (!ui_input_blocked && !explorer_popup_active) {
+				tab_clicked = graphics::button_flat(ide_window, tab_x, 12, tab_body_width, 7, " ", tab_tone)
+				if (graphics::button_flat(ide_window, tab_x + tab_body_width, 12, tab_width - tab_body_width, 7, "x", tab_tone)) {
+					call ide_close_view(tab_slot)
+					tab_index = displayed_tabs
+				}
+			}
+			else {
+				call graphics::fill_rect(ide_window, tab_x, 12, tab_width, 7, tab_tone)
+			}
+			call draw_ide_text_clipped(tab_x + 2, 13, view_path[tab_slot], (tab_body_width - 4) / 4, graphics::WHITE)
+			if (tab_clicked) {
+				call ide_activate_view(tab_slot)
+			}
+			tab_index += 1
+		}
+		if (show_modes == 1) {
+			if (!ui_input_blocked && !explorer_popup_active && graphics::button_flat(ide_window, mode_x, 12, 52, 7, "Code", graphics::COLOR_8)) {
+				call ide_enter_code_mode()
+			}
+			if (!ui_input_blocked && !explorer_popup_active && graphics::button_flat(ide_window, mode_x + 54, 12, 52, 7, "Visual", graphics::COLOR_8)) {
+				call ide_enter_visual_mode()
+			}
+		}
+		elseif (show_modes == 2) {
+			if (visual_mode) {
+				if (!ui_input_blocked && !explorer_popup_active && graphics::button_flat(ide_window, mode_x, 12, 52, 7, "Code", graphics::COLOR_8)) {
+					call ide_enter_code_mode()
+				}
+			}
+			else {
+				if (!ui_input_blocked && !explorer_popup_active && graphics::button_flat(ide_window, mode_x, 12, 52, 7, "Visual", graphics::COLOR_8)) {
+					call ide_enter_visual_mode()
+				}
+			}
+		}
+		terminal_top = 23 + editor_height
+		if (graphics::mouse_pressed() && !ui_input_blocked && !explorer_popup_active) {
+			if (terminal_open && height >= 120 && main_pointer_x >= editor_x && main_pointer_y >= terminal_top && main_pointer_y < height - 2) {
+				editor_focus = 1
+				selection_dragging = false
+			}
+			elseif (main_pointer_x >= editor_x && main_pointer_y >= 21 && main_pointer_y < 21 + editor_height) {
+				if (!visual_mode && view_is_folder[active_view] == 0) {
+					editor_focus = 0
+					cursor_index = ide_source_index_at(main_pointer_x, main_pointer_y, editor_x, 23, width - editor_x - 2, editor_height - 4)
+					selection_start = cursor_index
+					selection_end = cursor_index
+					selected_all = false
+					selection_dragging = true
+				}
+				else { editor_focus = 2 }
+			}
+		}
+		if (selection_dragging && graphics::mouse_down() && !visual_mode && view_is_folder[active_view] == 0 && !explorer_popup_active) {
+			selection_end = ide_source_index_at(main_pointer_x, main_pointer_y, editor_x, 23, width - editor_x - 2, editor_height - 4)
+			cursor_index = selection_end
+			selected_all = selection_start == 0 && selection_end == xestring::strlen(source)
+		}
+		if (graphics::mouse_released()) {
+			selection_dragging = false
+			explorer_toggle_lock = false
+			explorer_resizing = false
+		}
+		call graphics::fill_rect(ide_window, editor_x, 21, width - editor_x - 2, editor_height, graphics::COLOR_1)
+		if (visual_mode && editor_height >= 16) {
+			call draw_visual_workspace(editor_x, 22, width - editor_x - 2, editor_height - 2, !ui_input_blocked && !explorer_popup_active)
+		}
+		elseif (!visual_mode && editor_height >= 16) {
+			if (view_is_folder[active_view] != 0) {
+				call graphics::draw_text(ide_window, editor_x + 8, 30, "Folder view", graphics::COLOR_7)
+				call graphics::draw_text_small(ide_window, editor_x + 8, 40, "Open a file to edit or visualize", graphics::COLOR_10)
+			}
+			else {
+				call draw_ide_source(editor_x, 23, width - editor_x - 2, editor_height - 4, editor_focus == 0)
+			}
+		}
+		if (terminal_open && height >= 120) {
+			call graphics::fill_rect(ide_window, editor_x, 23 + editor_height, width - editor_x - 2, height - editor_height - 34, graphics::COLOR_1)
+			if (ide_font_large) {
+				terminal_columns = (width - editor_x - 8) / 6
+				if (terminal_columns < 1) { terminal_columns = 1 }
+				call draw_ide_text_clipped_large(editor_x + 3, 26 + editor_height, terminal_text, terminal_columns, graphics::COLOR_10)
+				call graphics::draw_text(ide_window, editor_x + 3, height - 18, ">", graphics::COLOR_13)
+				terminal_columns = (width - editor_x - 14) / 6
+				if (terminal_columns < 1) { terminal_columns = 1 }
+				call draw_ide_text_clipped_large(editor_x + 11, height - 18, terminal_command, terminal_columns, graphics::WHITE)
+				terminal_length = xestring::strlen(terminal_command)
+				if (terminal_length > terminal_columns) { terminal_length = terminal_columns }
+				if (editor_focus == 1 && (current_ticks / 450) % 2 == 0) {
+					call graphics::draw_line(ide_window, editor_x + 11 + terminal_length * 6, height - 18, editor_x + 11 + terminal_length * 6, height - 12, graphics::COLOR_13)
+				}
+			}
+			else {
+				terminal_columns = (width - editor_x - 8) / 4
+				if (terminal_columns < 1) { terminal_columns = 1 }
+				call draw_ide_text_clipped(editor_x + 3, 26 + editor_height, terminal_text, terminal_columns, graphics::COLOR_10)
+				call graphics::draw_text_small(ide_window, editor_x + 3, height - 17, ">", graphics::COLOR_13)
+				terminal_columns = (width - editor_x - 12) / 4
+				if (terminal_columns < 1) { terminal_columns = 1 }
+				call draw_ide_text_clipped(editor_x + 9, height - 17, terminal_command, terminal_columns, graphics::WHITE)
+				terminal_length = xestring::strlen(terminal_command)
+				if (terminal_length > terminal_columns) { terminal_length = terminal_columns }
+				if (editor_focus == 1 && (current_ticks / 450) % 2 == 0) {
+					call graphics::draw_line(ide_window, editor_x + 9 + terminal_length * 4, height - 17, editor_x + 9 + terminal_length * 4, height - 13, graphics::COLOR_13)
+				}
+			}
+		}
+		status_color = graphics::COLOR_7
+		if (status_is_error) { status_color = graphics::COLOR_12 }
+		call draw_ide_text_clipped(editor_x + 3, height - 9, status_text, (width - editor_x - 6) / 4, status_color)
+		if (edit_menu_open && !delete_confirm) {
+			call draw_edit_menu()
+		}
+
+		if (delete_confirm) {
+			call graphics::fill_rect(ide_window, width / 2 - 62, height / 2 - 18, 124, 36, graphics::COLOR_8)
+			call graphics::draw_text_small(ide_window, width / 2 - 56, height / 2 - 12, "Delete selected item?", graphics::WHITE)
+			if (graphics::button_flat(ide_window, width / 2 - 54, height / 2 + 2, 48, 7, "Delete", graphics::COLOR_4)) {
+				operation_ok = os::delete(file_menu_path)
+				if (operation_ok) {
+					call ide_reset_explorer_expansion()
+					call ide_report("Moved to trash", false)
+				}
+				else {
+					call ide_report("Delete failed", true)
+				}
+				delete_confirm = false
+			}
+			if (graphics::button_flat(ide_window, width / 2 + 6, height / 2 + 2, 48, 7, "Cancel", graphics::COLOR_1)) { delete_confirm = false }
+		}
+
+		key = graphics::read_key()
+		while (key != 0) {
+			if (rename_active) {
+				call ide_handle_rename_key(key)
+			}
+			elseif (edit_menu_open || delete_confirm || plus_menu_open || file_menu_open) {
+				if (key == graphics::KEY_ESCAPE) {
+					edit_menu_open = false
+					delete_confirm = false
+					plus_menu_open = false
+					file_menu_open = false
+				}
+			}
+			else {
+				call ide_handle_key(key, editor_focus)
+			}
+			key = graphics::read_key()
+		}
+	}
+	call graphics::update(ide_window)
+	call os::sleep(16)
+}

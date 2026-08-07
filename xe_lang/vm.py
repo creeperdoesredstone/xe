@@ -3,8 +3,11 @@ import tkinter as tk
 import time
 import math
 import threading
+from bisect import bisect_right
 from xe_lang.helper import Result, VMError, Position
 from xe_lang.devices import DEFAULT_PALETTE, DeviceRuntime, FrameSnapshot, OSDevice
+from xe_lang.devices.keymap import normalize_key_code
+from xe_lang.executable import MAX_STATIC_WORDS, decode_static_layout
 from xe_lang.syscall_abi import SyscallID
 from disassemble import decode_instruction
 
@@ -12,6 +15,12 @@ TRUE = 0xFFFFFFFF
 FALSE = 0
 MAGIC = 0x58424E31  # "XBN1"
 VERSION = 1
+STACK_SIZE = 65_536
+MIN_DATA_WORDS = 65_536
+MAX_ADDRESS_COUNT = 200_000
+DEFAULT_DATA_WORDS = MAX_ADDRESS_COUNT
+HEAP_START = 0x2000
+GC_ALLOCATION_INTERVAL = 0x2000
 
 PALETTE = list(DEFAULT_PALETTE)
 
@@ -28,6 +37,16 @@ def to_u32(value: int) -> int:
 	return value & TRUE
 
 
+def integer_power_overflows_u32(base: int, exponent: int) -> bool:
+	if exponent == 0 or base in (-1, 0, 1):
+		return False
+	if base < 0 and exponent % 2 == 1:
+		return False
+	if exponent > 63:
+		return True
+	return base ** exponent > TRUE
+
+
 class VM:
 	def __init__(
 		self,
@@ -39,6 +58,7 @@ class VM:
 		filesystem_root=None,
 		input_handler=None,
 		request_handler=None,
+		memory_words: int = DEFAULT_DATA_WORDS,
 	):
 		if len(program) < 4:
 			raise ValueError("Executable too small")
@@ -55,16 +75,33 @@ class VM:
 		if len(program) != expected:
 			raise ValueError("Corrupt executable")
 
+		memory_words = int(memory_words)
+		if not MIN_DATA_WORDS <= memory_words <= MAX_ADDRESS_COUNT:
+			raise ValueError(
+				f"Data memory must contain {MIN_DATA_WORDS} to {MAX_ADDRESS_COUNT} addresses"
+			)
+
 		self.program = program[4:]
 		self.instructions = program[4 : 4 + self.text_size]
-		self.program_memory = program[4 + self.text_size :]
-		STACK_SIZE = 65536
+		self.program_memory, self.static_words = decode_static_layout(
+			program[4 + self.text_size :]
+		)
+		if not 0 <= self.static_words <= MAX_STATIC_WORDS:
+			raise ValueError("Static data exceeds the 65536-word XAssembly address space")
+		if self.static_words > memory_words:
+			raise ValueError("Static data exceeds available data memory")
+		self.heap_start = max(HEAP_START, self.static_words)
 		self.stack = [0] * STACK_SIZE
 		self.call_stack: list = []
 		self.ip: int = 0
-		self.data_memory: list = [0] * 65536
-		self.free_list: list = [(0x2000, 0xE000)]
+		self.data_memory: list = [0] * memory_words
+		self.free_list: list = self._fresh_free_list()
 		self.allocations: dict[int, int] = {}
+		self._managed_allocations: set[int] = set()
+		self._gc_protected: set[int] = set()
+		self._words_since_gc = 0
+		self.gc_runs = 0
+		self.gc_reclaimed_words = 0
 
 		self.fp: int = 0
 		self.sp: int = 0
@@ -86,6 +123,7 @@ class VM:
 			os_device, self._frame_presented, filesystem_root=filesystem_root
 		)
 		self.exit_code = 0
+		self.halt_requested = False
 		self.width = self.devices.graphics.width
 		self.height = self.devices.graphics.height
 		self.back_buffer = self.devices.graphics.back_buffer
@@ -103,7 +141,13 @@ class VM:
 		self.img = None
 		self.canvas_image_id = None
 		self.display_img = None
-		self.heap_pointer = 0x2000
+		self._tk_forwarded_keys: dict[int, int] = {}
+		self.heap_pointer = self.heap_start
+		self._binary_position = Position(0, 0, 0, "<bin>", "")
+
+	def _fresh_free_list(self) -> list[tuple[int, int]]:
+		available = len(self.data_memory) - self.heap_start
+		return [] if available <= 0 else [(self.heap_start, available)]
 
 	@property
 	def mouse_x(self) -> int:
@@ -175,13 +219,39 @@ class VM:
 			self.canvas.bind("<ButtonRelease>", self._on_mouse_release)
 			self.root.bind("<KeyPress>", self._on_key_press)
 			self.root.bind("<KeyRelease>", self._on_key_release)
-			self.root.bind("<FocusOut>", lambda _event: self.devices.input.release_all())
+			self.root.bind("<FocusOut>", self._release_host_input)
 			self.root.protocol("WM_DELETE_WINDOW", self.cancel_event.set)
 			self.canvas.focus_set()
 
 			self.root.update()
 		except Exception:
-			self.root = None
+			self.close_graphics_window()
+
+	def close_graphics_window(self) -> None:
+		self._release_host_input()
+		root = self.root
+		canvas = self.canvas
+		canvas_image_id = self.canvas_image_id
+		if canvas is not None and canvas_image_id is not None:
+			try:
+				canvas.itemconfig(canvas_image_id, image="")
+				canvas.delete(canvas_image_id)
+			except Exception:
+				pass
+		self.canvas_image_id = None
+		self.display_img = None
+		self.img = None
+		self.canvas = None
+		self.root = None
+		if root is not None:
+			try:
+				root.update_idletasks()
+			except Exception:
+				pass
+			try:
+				root.destroy()
+			except Exception:
+				pass
 
 	def _on_mouse_move(self, event):
 		self.devices.input.move_pointer(event.x // 3, event.y // 3)
@@ -199,14 +269,34 @@ class VM:
 			self.devices.input.set_button(button, False)
 
 	def _on_key_press(self, event):
-		code = event.keycode
 		mod = self._get_mod_state(event.state)
+		code = normalize_key_code(
+			str(getattr(event, "keysym", "")),
+			str(getattr(event, "char", "")),
+			control=bool(mod & 2),
+			fallback=int(event.keycode),
+		)
+		previous = self._tk_forwarded_keys.get(int(event.keycode))
+		if previous is not None and previous != code:
+			self.devices.input.set_key(previous, False, mod)
+		self._tk_forwarded_keys[int(event.keycode)] = code
 		self.devices.input.set_key(code, True, mod)
 
 	def _on_key_release(self, event):
-		code = event.keycode
 		mod = self._get_mod_state(event.state)
+		code = self._tk_forwarded_keys.pop(int(event.keycode), None)
+		if code is None:
+			code = normalize_key_code(
+				str(getattr(event, "keysym", "")),
+				str(getattr(event, "char", "")),
+				control=bool(mod & 2),
+				fallback=int(event.keycode),
+			)
 		self.devices.input.set_key(code, False, mod)
+
+	def _release_host_input(self, _event=None):
+		self.devices.input.release_all()
+		self._tk_forwarded_keys.clear()
 
 	def _get_mod_state(self, state):
 		mask = 0
@@ -308,15 +398,19 @@ class VM:
 		return value
 
 	def allocate_string(self, value: str, result: Result) -> int | None:
-		result.register(self.malloc(3))
+		result.register(self.malloc(3, managed=True))
 		if result.error:
 			return None
 		descriptor = result.register(self.pop())
-		result.register(self.malloc(len(value) + 1))
-		if result.error:
-			self.free(descriptor, result)
-			return None
-		chars = result.register(self.pop())
+		self._gc_protected.add(descriptor)
+		try:
+			result.register(self.malloc(len(value) + 1, managed=True))
+			if result.error:
+				self.free(descriptor, Result())
+				return None
+			chars = result.register(self.pop())
+		finally:
+			self._gc_protected.discard(descriptor)
 		self.data_memory[descriptor] = chars
 		self.data_memory[descriptor + 1] = len(value) + 1
 		self.data_memory[descriptor + 2] = len(value) + 1
@@ -331,10 +425,14 @@ class VM:
 		capacity = self.data_memory[descriptor + 2]
 		required = len(value) + 1
 		if capacity < required or not 0 <= old_chars <= len(self.data_memory) - max(1, capacity):
-			result.register(self.malloc(required))
-			if result.error:
-				return False
-			chars = result.register(self.pop())
+			self._gc_protected.add(descriptor)
+			try:
+				result.register(self.malloc(required, managed=True))
+				if result.error:
+					return False
+				chars = result.register(self.pop())
+			finally:
+				self._gc_protected.discard(descriptor)
 			if old_chars in self.allocations:
 				self.free(old_chars, Result())
 			self.data_memory[descriptor] = chars
@@ -346,68 +444,68 @@ class VM:
 		return True
 
 	def _error(self, message: str) -> VMError:
-		position = Position(0, 0, 0, "<bin>", "")
+		position = self._binary_position
 		return VMError(message, position.copy(), position.copy())
 
 	def run(self) -> Result:
 		res = Result()
 		self.start_time = time.monotonic()
-		self.stack = [0] * 65536
+		self.stack = [0] * STACK_SIZE
 		self.call_stack.clear()
 		self.cr = 0
 		self.im = TRUE
 		self.fp = 0
 		self.ip = 0
-		self.heap_pointer = 0x2000
+		self.heap_pointer = self.heap_start
 		self.sp = 0
 		self.exit_code = 0
+		self.halt_requested = False
 		self.max_sp = 0
 
-		self.free_list = [(0x2000, 0xE000)]
+		self.free_list = self._fresh_free_list()
 		self.allocations = {}
+		self._managed_allocations.clear()
+		self._gc_protected.clear()
+		self._words_since_gc = 0
+		self.gc_runs = 0
+		self.gc_reclaimed_words = 0
+		instruction_count = 0
 
-		while self.ip < len(self.instructions):
-			if self.cancel_event.is_set():
-				break
-			exec_res = self.execute(self.instructions[self.ip])
-			# print(self.stack[: self.sp][:32])
-			# print(self.data_memory[8192 : 8192 + 16])
-			# print("SP:", self.sp)
-			# print("FP:", self.fp)
+		try:
+			while self.ip < len(self.instructions):
+				if instruction_count & 0xFF == 0 and self.cancel_event.is_set():
+					break
+				exec_res = self.execute(self.instructions[self.ip])
+				instruction_count += 1
+				# print(self.stack[: self.sp][:32])
+				# print(self.data_memory[8192 : 8192 + 16])
+				# print("SP:", self.sp)
+				# print("FP:", self.fp)
 
-			if exec_res.error:
-				self.devices.files.close_all()
-				if self.root:
+				if exec_res.error:
+					return exec_res
+				if self.halt_requested:
+					break
+
+				should_continue: bool = exec_res.value
+				if not should_continue:
+					break
+
+				self.ip += 1
+				if self.sp > self.max_sp:
+					self.max_sp = self.sp
+
+				# process window events if the window is alive
+				if self.ip % 200 == 0 and self.root:
 					try:
-						self.root.destroy()
+						self.root.update()
 					except Exception:
 						pass
-				return exec_res
 
-			should_continue: bool = exec_res.value
-			if not should_continue:
-				break
-
-			self.ip += 1
-			# input()
-			if self.sp > self.max_sp:
-				self.max_sp = self.sp
-
-			# process window events if the window is alive
-			if self.ip % 200 == 0 and self.root:
-				try:
-					self.root.update()
-				except Exception:
-					pass
-
-		if self.root:
-			try:
-				self.root.destroy()
-			except Exception:
-				pass
-		self.devices.files.close_all()
-		print(self.allocations)
-		return res.success(self.stack[:self.sp])
+			return res.success(self.stack[:self.sp])
+		finally:
+			self.close_graphics_window()
+			self.devices.files.close_all()
 
 	def push(self, value) -> None:
 		if self.sp >= len(self.stack):
@@ -417,46 +515,116 @@ class VM:
 
 	def pop(self) -> Result:
 		res = Result()
-		pos = Position(0, 0, 0, "<bin>", "")
 		if self.sp <= 0:
-			return res.fail(VMError("Stack underflow", pos.copy(), pos.copy()))
+			return res.fail(self._error("Stack underflow"))
 
 		self.sp -= 1
 		return res.success(self.stack[self.sp])
 
 	def check_stack(self, n: int) -> Result:
-		pos = Position(0, 0, 0, "<bin>", "")
 		if n < 0 or self.sp < n:
-			return Result().fail(VMError("Stack underflow", pos.copy(), pos.copy()))
+			return Result().fail(self._error("Stack underflow"))
 		return Result().success(None)
 
-	def malloc(self, words: int):
-		res = Result()
-		pos = Position(0, 0, 0, "<bin>", "")
-		if words <= 0:
-			return res.fail(VMError("Invalid allocation size", pos.copy(), pos.copy()))
-
+	def _malloc_from_free_list(self, words: int, result: Result, managed: bool) -> bool:
 		for i, (start, size) in enumerate(self.free_list):
 			if size >= words:
 				ptr = start
 
 				self.allocations[ptr] = words
+				if managed:
+					self._managed_allocations.add(ptr)
 
 				if size == words:
 					self.free_list.pop(i)
 				else:
 					self.free_list[i] = (start + words, size - words)
 
+				self._words_since_gc += words
 				self.push(ptr)
-				return res.success(True)
-		else:
-			return res.fail(VMError("Out of memory", pos.copy(), pos.copy()))
+				result.success(True)
+				return True
+		return False
+
+	@staticmethod
+	def _allocation_for_value(
+		value: int,
+		starts: list[int],
+		allocations: dict[int, int],
+	) -> int | None:
+		if not isinstance(value, int) or not starts:
+			return None
+		index = bisect_right(starts, value) - 1
+		if index < 0:
+			return None
+		start = starts[index]
+		return start if value < start + allocations[start] else None
+
+	def collect_garbage(self) -> int:
+		"""Conservatively reclaim heap blocks no live Xe value can reach."""
+		if not self.allocations:
+			self._words_since_gc = 0
+			return 0
+
+		starts = sorted(self.allocations)
+		marked: set[int] = set()
+		pending: list[int] = []
+
+		def mark(value: int) -> None:
+			allocation = self._allocation_for_value(value, starts, self.allocations)
+			if allocation is not None and allocation not in marked:
+				marked.add(allocation)
+				pending.append(allocation)
+
+		for value in self.data_memory[: min(self.heap_start, len(self.data_memory))]:
+			mark(value)
+		for value in self.stack[: self.sp]:
+			mark(value)
+		for value in self._gc_protected:
+			mark(value)
+		for pointer in self.allocations.keys() - self._managed_allocations:
+			mark(pointer)
+
+		while pending:
+			start = pending.pop()
+			for value in self.data_memory[start : start + self.allocations[start]]:
+				mark(value)
+
+		dead = [
+			pointer
+			for pointer in starts
+			if pointer in self._managed_allocations and pointer not in marked
+		]
+		reclaimed = sum(self.allocations[pointer] for pointer in dead)
+		for pointer in dead:
+			self.free(pointer, Result())
+
+		self._words_since_gc = 0
+		self.gc_runs += 1
+		self.gc_reclaimed_words += reclaimed
+		return reclaimed
+
+	def malloc(self, words: int, managed: bool = False):
+		res = Result()
+		if words <= 0:
+			return res.fail(self._error("Invalid allocation size"))
+
+		if self._words_since_gc >= GC_ALLOCATION_INTERVAL:
+			self.collect_garbage()
+		if self._malloc_from_free_list(words, res, managed):
+			return res
+
+		self.collect_garbage()
+		if self._malloc_from_free_list(words, res, managed):
+			return res
+		return res.fail(self._error("Out of memory"))
 
 	def free(self, pointer: int, result: Result) -> bool:
 		words = self.allocations.pop(pointer, None)
 		if words is None:
 			result.fail(self._error("Invalid free"))
 			return False
+		self._managed_allocations.discard(pointer)
 
 		i = 0
 		while i < len(self.free_list) and self.free_list[i][0] < pointer:
@@ -479,7 +647,7 @@ class VM:
 
 	def execute(self, instruction: int) -> Result:
 		res = Result()
-		pos = Position(0, 0, 0, "<bin>", "")
+		pos = self._binary_position
 
 		ins_type = instruction >> 32
 		ins_mod = (instruction >> 16) & 0xFFFF
@@ -526,7 +694,7 @@ class VM:
 					if res.error:
 						return res
 
-					self.push(self.stack[-2])
+					self.push(self.stack[self.sp - 2])
 				case 6:  # ROT
 					res.register(self.check_stack(3))
 					if res.error:
@@ -543,6 +711,8 @@ class VM:
 					addr = res.register(self.pop())
 					if res.error:
 						return res
+					if not 0 <= addr < len(self.data_memory):
+						return res.fail(self._error("Data memory out of bounds"))
 					self.push(self.data_memory[addr])
 				case 8:  # STOREIND
 					value = res.register(self.pop())
@@ -550,10 +720,14 @@ class VM:
 
 					if res.error:
 						return res
+					if not 0 <= addr < len(self.data_memory):
+						return res.fail(self._error("Data memory out of bounds"))
 					self.data_memory[addr] = value
 				case 9:  # PUSHFP
 					self.push(self.fp)
 				case 10:  # POPFP
+					if not 0 <= self.fp < len(self.stack):
+						return res.fail(self._error("Frame pointer out of bounds"))
 					self.fp = self.stack[self.fp]
 				case 11:  # SETFP
 					self.fp = self.sp - 1
@@ -571,7 +745,10 @@ class VM:
 					offset = ins_arg
 					if ins_arg > 0x7FFF:
 						offset -= 0x10000
-					self.push(self.stack[self.fp - offset])
+					stack_index = self.fp - offset
+					if not 0 <= stack_index < self.sp:
+						return res.fail(self._error("Stack frame load out of bounds"))
+					self.push(self.stack[stack_index])
 				case 15:  # STORESP
 					offset = ins_arg
 					if ins_arg > 0x7FFF:
@@ -579,7 +756,10 @@ class VM:
 					value = res.register(self.pop())
 					if res.error:
 						return res
-					self.stack[self.fp - offset] = value
+					stack_index = self.fp - offset
+					if not 0 <= stack_index < len(self.stack):
+						return res.fail(self._error("Stack frame store out of bounds"))
+					self.stack[stack_index] = value
 				case 16:  # LEAVE
 					self.sp = self.fp + 2
 
@@ -619,8 +799,10 @@ class VM:
 					b = u32_to_float(b)
 					a = u32_to_float(a)
 				else:
-					if a > 0x7FFFFFFF: a -= 0x100000000
-					if b > 0x7FFFFFFF: b -= 0x100000000
+					if a > 0x7FFFFFFF:
+						a -= 0x100000000
+					if b > 0x7FFFFFFF:
+						b -= 0x100000000
 				val = 0
 
 				match ins_arg:
@@ -635,16 +817,28 @@ class VM:
 						self.cr = TRUE if not is_float_op and a * b > TRUE else FALSE
 					case 3:
 						if b == 0:
-							return VMError("Division by 0", pos.copy(), pos.copy())
+							return res.fail(VMError("Division by 0", pos.copy(), pos.copy()))
 						val = a / b if is_float_op else int(a / b)
 					case 4:
 						if b == 0:
-							return VMError("Division by 0", pos.copy(), pos.copy())
+							return res.fail(VMError("Division by 0", pos.copy(), pos.copy()))
 						val = a % b
 						self.cr = FALSE
 					case 5:
-						val = a**b
-						self.cr = TRUE if not is_float_op and a**b > TRUE else FALSE
+						if is_float_op:
+							try:
+								val = math.pow(a, b)
+							except ValueError:
+								return res.fail(self._error("pow domain error"))
+							except OverflowError:
+								return res.fail(self._error("pow overflow"))
+							if not math.isfinite(val):
+								return res.fail(self._error("pow overflow"))
+						else:
+							if b < 0:
+								return res.fail(self._error("integer exponent must be non-negative"))
+							self.cr = TRUE if integer_power_overflows_u32(a, b) else FALSE
+							val = pow(a & TRUE, b, 1 << 32)
 					case 6:
 						if not is_float_op:
 							val = a & b
@@ -716,20 +910,32 @@ class VM:
 							val = math.tan(math.radians(a))
 					case 7:
 						if is_float_op:
+							if a < -1.0 or a > 1.0:
+								return res.fail(self._error("asin domain error"))
 							val = math.degrees(math.asin(a))
 					case 8:
 						if is_float_op:
+							if a < -1.0 or a > 1.0:
+								return res.fail(self._error("acos domain error"))
 							val = math.degrees(math.acos(a))
 					case 9:
 						if is_float_op:
 							val = math.degrees(math.atan(a))
 					case 10:
+						if a < 0:
+							return res.fail(self._error("sqrt domain error"))
 						val = math.sqrt(a)
 						if not is_float_op:
 							val = int(val)
 
 			if is_float_op:
-				val = float_to_u32(float(val))
+				try:
+					float_value = float(val)
+					if not math.isfinite(float_value):
+						return res.fail(self._error("floating-point overflow"))
+					val = float_to_u32(float_value)
+				except (OverflowError, struct.error):
+					return res.fail(self._error("floating-point overflow"))
 			self.push(val & TRUE)
 
 		if ins_type == 4:  # Branching
@@ -772,14 +978,20 @@ class VM:
 					self.call_stack.append(self.ip)
 					self.ip = addr - 1
 				case 8:  # RET
+					if not self.call_stack:
+						return res.fail(self._error("Call stack underflow"))
 					self.ip = self.call_stack[-1]
 					self.call_stack.pop()
 				case 9:  # RETZ
 					if value == 0:
+						if not self.call_stack:
+							return res.fail(self._error("Call stack underflow"))
 						self.ip = self.call_stack[-1]
 						self.call_stack.pop()
 				case 10:  # RETN
 					if value != 0:
+						if not self.call_stack:
+							return res.fail(self._error("Call stack underflow"))
 						self.ip = self.call_stack[-1]
 						self.call_stack.pop()
 
@@ -838,7 +1050,7 @@ class VM:
 							addr = res.register(self.pop())
 							if res.error:
 								return res
-							
+
 							if value > 0x7fffffff:
 								value -= 0x100000000
 
@@ -1000,8 +1212,7 @@ class VM:
 							)
 						)
 
-					for i in range(ins_arg):
-						self.data_memory[dst + i] = self.program_memory[src + i]
+					self.data_memory[dst:dst + ins_arg] = self.program_memory[src:src + ins_arg]
 				case 1:  # WRITE
 					src = res.register(self.pop())
 					dst = res.register(self.pop())
@@ -1009,7 +1220,10 @@ class VM:
 					if res.error:
 						return res
 
-					for i in range(ins_arg):
-						self.program_memory[dst + i] = self.data_memory[src + i]
+					if src < 0 or src + ins_arg > len(self.data_memory):
+						return res.fail(self._error("Data memory out of bounds"))
+					if dst < 0 or dst + ins_arg > len(self.program_memory):
+						return res.fail(self._error("Program memory out of bounds"))
+					self.program_memory[dst:dst + ins_arg] = self.data_memory[src:src + ins_arg]
 
 		return res.success(True)

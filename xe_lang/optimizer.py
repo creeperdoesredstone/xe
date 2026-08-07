@@ -1,5 +1,6 @@
 from xe_lang.nodes import *
 from xe_lang.helper import TT
+import math
 
 
 LITERALS = (
@@ -11,6 +12,14 @@ LITERALS = (
 
 
 class Optimizer:
+	@staticmethod
+	def _literal(node: Node, literal_type, value):
+		literal = literal_type(node.start_pos, node.end_pos, value)
+		resolved_type = getattr(node, "type", None)
+		if resolved_type is not None:
+			literal.type = resolved_type
+		return literal
+
 	def optimize(self, node: Node) -> Node:
 		method = getattr(self, f"visit_{type(node).__name__}", None)
 		if method is None:
@@ -41,7 +50,7 @@ class Optimizer:
 			return self.fold_unary(node)
 
 		return node
-	
+
 	def visit_Identifier(self, node: Identifier):
 		if node.const_value is not None:
 			node.const_value.start_pos = node.start_pos
@@ -64,14 +73,14 @@ class Optimizer:
 
 		if op == TT.SUB:
 			if isinstance(value, FloatLiteral):
-				return FloatLiteral(node.start_pos, node.end_pos, -v)
-			return IntLiteral(node.start_pos, node.end_pos, -v)
-		
+				return self._literal(node, FloatLiteral, -v)
+			return self._literal(node, IntLiteral, -v)
+
 		if op == TT.NOT:
-			return IntLiteral(node.start_pos, node.end_pos, ~v)
+			return self._literal(node, IntLiteral, ~v)
 
 		if op == TT.NOTL:
-			return BoolLiteral(node.start_pos, node.end_pos, not bool(v))
+			return self._literal(node, BoolLiteral, not bool(v))
 
 		return node
 
@@ -103,13 +112,13 @@ class Optimizer:
 
 		if isinstance(left, StringLiteral) and isinstance(right, StringLiteral):
 			if op == TT.ADD:
-				return StringLiteral(node.start_pos, node.end_pos, a + b)
+				return self._literal(node, StringLiteral, a + b)
 
 			if op == TT.EQ:
-				return BoolLiteral(node.start_pos, node.end_pos, a == b)
+				return self._literal(node, BoolLiteral, a == b)
 
 			if op == TT.NE:
-				return BoolLiteral(node.start_pos, node.end_pos, a != b)
+				return self._literal(node, BoolLiteral, a != b)
 
 			return node
 
@@ -123,57 +132,67 @@ class Optimizer:
 		# arithmetic
 
 		if op == TT.ADD:
-			return Literal(node.start_pos, node.end_pos, a + b)
+			return self._literal(node, Literal, a + b)
 
 		if op == TT.SUB:
-			return Literal(node.start_pos, node.end_pos, a - b)
+			return self._literal(node, Literal, a - b)
 
 		if op == TT.MUL:
-			return Literal(node.start_pos, node.end_pos, a * b)
+			return self._literal(node, Literal, a * b)
 
 		if op == TT.DIV:
 			if b != 0:
-				return Literal(node.start_pos, node.end_pos, a / b if is_float else int(a / b))
+				return self._literal(node, Literal, a / b if is_float else int(a / b))
 			return node
 
 		if op == TT.MOD:
 			if b != 0:
-				return Literal(node.start_pos, node.end_pos, a % b)
+				return self._literal(node, Literal, a % b)
 			return node
 
 		if op == TT.POW:
-			return Literal(node.start_pos, node.end_pos, a ** b)
+			if is_float:
+				try:
+					value = math.pow(float(a), float(b))
+				except (OverflowError, ValueError):
+					return node
+				if not math.isfinite(value):
+					return node
+				return self._literal(node, Literal, value)
+			if b < 0:
+				return node
+			return self._literal(node, Literal, pow(int(a) & 0xFFFFFFFF, int(b), 1 << 32))
 
 		# comparisons
 
 		if op == TT.LT:
-			return BoolLiteral(node.start_pos, node.end_pos, a < b)
+			return self._literal(node, BoolLiteral, a < b)
 
 		if op == TT.LE:
-			return BoolLiteral(node.start_pos, node.end_pos, a <= b)
+			return self._literal(node, BoolLiteral, a <= b)
 
 		if op == TT.GT:
-			return BoolLiteral(node.start_pos, node.end_pos, a > b)
+			return self._literal(node, BoolLiteral, a > b)
 
 		if op == TT.GE:
-			return BoolLiteral(node.start_pos, node.end_pos, a >= b)
+			return self._literal(node, BoolLiteral, a >= b)
 
 		if op == TT.EQ:
-			return BoolLiteral(node.start_pos, node.end_pos, a == b)
+			return self._literal(node, BoolLiteral, a == b)
 
 		if op == TT.NE:
-			return BoolLiteral(node.start_pos, node.end_pos, a != b)
+			return self._literal(node, BoolLiteral, a != b)
 
 		# logical
 
 		if op == TT.ANDL:
-			return BoolLiteral(node.start_pos, node.end_pos, bool(a) and bool(b))
+			return self._literal(node, BoolLiteral, bool(a) and bool(b))
 
 		if op == TT.ORL:
-			return BoolLiteral(node.start_pos, node.end_pos, bool(a) or bool(b))
+			return self._literal(node, BoolLiteral, bool(a) or bool(b))
 
 		if op == TT.XORL:
-			return BoolLiteral(node.start_pos, node.end_pos, bool(a) != bool(b))
+			return self._literal(node, BoolLiteral, bool(a) != bool(b))
 
 		# bitwise (ints only)
 
@@ -182,13 +201,13 @@ class Optimizer:
 			and isinstance(right, IntLiteral)
 		):
 			if op == TT.AND:
-				return IntLiteral(node.start_pos, node.end_pos, a & b)
+				return self._literal(node, IntLiteral, a & b)
 
 			if op == TT.OR:
-				return IntLiteral(node.start_pos, node.end_pos, a | b)
+				return self._literal(node, IntLiteral, a | b)
 
 			if op == TT.XOR:
-				return IntLiteral(node.start_pos, node.end_pos, a ^ b)
+				return self._literal(node, IntLiteral, a ^ b)
 
 		return node
 
@@ -208,13 +227,13 @@ class Optimizer:
 				if node.right.value == 1:
 					return node.left
 				if node.right.value == 0:
-					return IntLiteral(node.start_pos, node.end_pos, 0)
+					return self._literal(node, IntLiteral, 0)
 
 			if isinstance(node.left, IntLiteral):
 				if node.left.value == 1:
 					return node.right
 				if node.left.value == 0:
-					return IntLiteral(node.start_pos, node.end_pos, 0)
+					return self._literal(node, IntLiteral, 0)
 
 		return node
 
@@ -228,19 +247,19 @@ class Optimizer:
 		node.body = self.optimize(node.body)
 
 		return node
-	
+
 	def visit_WhileLoop(self, node: WhileLoop):
 		node.condition_expr = self.optimize(node.condition_expr)
 		node.body = self.optimize(node.body)
 
 		return node
-	
+
 	def visit_RepeatLoop(self, node: RepeatLoop):
 		node.condition_expr = self.optimize(node.condition_expr)
 		node.body = self.optimize(node.body)
 
 		return node
-	
+
 	def visit_IfConditional(self, node: IfConditional):
 		node.cases = [
 			(self.optimize(condition), self.optimize(body))
@@ -250,7 +269,7 @@ class Optimizer:
 			node.else_case = self.optimize(node.else_case)
 
 		return node
-	
+
 	def visit_SwitchStatement(self, node: SwitchStatement):
 		node.match_expr = self.optimize(node.match_expr)
 		node.cases = [
@@ -261,11 +280,11 @@ class Optimizer:
 			node.default_case = self.optimize(node.default_case)
 
 		return node
-	
+
 	def visit_FunctionDefinition(self, node: FunctionDefinition):
 		node.body = self.optimize(node.body)
 		return node
-	
+
 	def visit_ProcedureDefinition(self, node: ProcedureDefinition):
 		node.body = self.optimize(node.body)
 		return node
@@ -274,7 +293,7 @@ class Optimizer:
 		for i, elem in enumerate(node.elements):
 			node.elements[i] = self.optimize(elem)
 		return node
-	
+
 	def visit_StringOperation(self, node: StringOperation):
 		node.left = self.optimize(node.left)
 		node.right = self.optimize(node.right)
@@ -290,6 +309,7 @@ class Optimizer:
 		return node
 
 	def visit_MemberAccess(self, node: MemberAccess):
-		if getattr(node, "const_value") is not None:
+		if getattr(node, "const_value", None) is not None:
+			node.const_value.type = node.type
 			return node.const_value
 		return node

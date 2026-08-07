@@ -10,6 +10,7 @@ from xe_lang.stdlib import (
 	BuiltInID,
 )
 from xe_lang.syscall_abi import SyscallID
+from xe_lang.executable import static_layout_trailer
 
 from pathlib import Path
 import struct
@@ -241,6 +242,8 @@ def compile_ast(ast: Program, fn: str) -> Result:
 	instructions.append((None, None, f":SECTION_DATA_{name}"))
 
 	instructions.extend(data_lookup)
+	for word in static_layout_trailer(getattr(ast, "static_words", 0)):
+		instructions.append((None, None, word))
 	return res.success(instructions)
 
 
@@ -340,6 +343,8 @@ def emit_CharLiteral(node: CharLiteral) -> Result:
 
 
 def emit_Identifier(node: Identifier) -> Result:
+	if node.const_value is not None:
+		return emit(node.const_value)
 	opcode = "LOADSP" if node.is_local else "LOAD"
 	instructions = [
 		(
@@ -488,7 +493,8 @@ def emit_BinaryOperation(node: BinaryOperation) -> Result:
 def emit_VariableDeclaration(node: VariableDeclaration) -> Result:
 	return Result().success([])
 
-def emit_ConstantDeclaration(node: VariableDeclaration) -> Result:
+
+def emit_ConstantDeclaration(node: ConstantDeclaration) -> Result:
 	return Result().success([])
 
 
@@ -504,7 +510,7 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 			value_ins = res.register(emit_ArrayInitializer(node.value, node.address))
 			instructions.extend(value_ins)
 			return res.success(instructions)
-		
+
 		struct_sym = getattr(node, "struct_symbol", None)
 		is_by_value_struct = struct_sym is not None and node.type.pointer_layers == 0
 
@@ -543,7 +549,7 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 					)
 
 				return res.success(instructions)
-		
+
 		value_ins = res.register(emit(node.value))
 		if res.error:
 			return res
@@ -1004,9 +1010,6 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 			)
 		)
 
-		if i == len(node.cases) - 1:
-			instructions.append((node.end_pos, node.end_pos, "POP", 1))
-
 	# default
 	if node.default_case:
 		instructions.append(
@@ -1025,6 +1028,9 @@ def emit_SwitchStatement(node: SwitchStatement) -> Result:
 		instructions.extend(res.register(emit(node.default_case)))
 		if res.error:
 			return res
+
+	else:
+		instructions.append((node.end_pos, node.end_pos, "POP", 1))
 
 	instructions.append(
 		(
@@ -1271,6 +1277,24 @@ def emit_OutputStatement(node: OutputStatement) -> Result:
 	return res.success(instructions)
 
 
+def emit_InputStatement(node: InputStatement) -> Result:
+	if not isinstance(node.var, Identifier):
+		return Result().fail(
+			AssemblyError(
+				"Input currently requires a plain string variable.",
+				node.start_pos,
+				node.end_pos,
+			)
+		)
+	opcode = "STORESP" if node.var.is_local else "STORE"
+	return Result().success(
+		[
+			(node.start_pos, node.end_pos, "SYS", SyscallID.READ_STR),
+			(node.start_pos, node.end_pos, opcode, node.var.address),
+		]
+	)
+
+
 def emit_TypeCast(node: TypeCast) -> Result:
 	res = Result()
 	instructions = res.register(emit(node.value))
@@ -1349,7 +1373,7 @@ def emit_ArrayIndex(node: ArrayIndex) -> Result:
 		return res
 	instructions.extend(array_inst)
 
-	if node.array.type.base == "string":
+	if node.array.type.base == "string" and not node.array.type.is_array:
 		instructions.append(
 			(
 				node.start_pos,
@@ -1376,24 +1400,6 @@ def emit_ArrayIndex(node: ArrayIndex) -> Result:
 	return res.success(instructions)
 
 
-def emit_InputStatement(node: InputStatement) -> Result:
-	if not isinstance(node.var, Identifier):
-		return Result().fail(
-			AssemblyError(
-				"Input currently requires a plain string variable.",
-				node.start_pos,
-				node.end_pos,
-			)
-		)
-	opcode = "STORESP" if node.var.is_local else "STORE"
-	return Result().success(
-		[
-			(node.start_pos, node.end_pos, "SYS", SyscallID.READ_STR),
-			(node.start_pos, node.end_pos, opcode, node.var.address),
-		]
-	)
-
-
 def emit_ArrayAssign(node: ArrayAssign) -> Result:
 	res = Result()
 	instructions = []
@@ -1403,7 +1409,7 @@ def emit_ArrayAssign(node: ArrayAssign) -> Result:
 		if res.error:
 			return res
 		instructions.extend(array_inst)
-		if node.array.type.base == "string":
+		if node.array.type.base == "string" and not node.array.type.is_array:
 			instructions.append((node.start_pos, node.end_pos, "LOADIND"))
 
 		index_inst = res.register(emit(node.index))
@@ -1629,12 +1635,15 @@ def emit_ProcedureCall(node: ProcedureCall) -> Result:
 def emit_StructDefinition(node: StructDefinition) -> Result:
 	return Result().success([])
 
+
 def emit_EnumDeclaration(node: EnumDeclaration) -> Result:
 	return Result().success([])
 
 
 def emit_MemberAccess(node: MemberAccess) -> Result:
 	res = Result()
+	if getattr(node, "const_value", None) is not None:
+		return emit(node.const_value)
 
 	if is_pointer_base(node.parent):
 		addr_instructions = res.register(emit_pointer_field_address(node))
@@ -1942,7 +1951,7 @@ def emit_NewObjectExpression(node: NewObjectExpression) -> Result:
 			arg_instructions = res.register(emit_argument(arg))
 			if res.error:
 				return res
-			
+
 			if is_implicit_float_cast(arg.type, expected_type):
 				instructions.append((node.start_pos, node.end_pos, "I2F"))
 			instructions.extend(arg_instructions)
@@ -2099,22 +2108,24 @@ def emit_LibraryCall(node: LibraryCall) -> Result:
 
 
 def emit_FreePointer(node: FreePointer) -> Result:
-	instructions = []
-	instructions += [
-		(node.start_pos, node.end_pos, "PUSH", node.address),
-		(node.start_pos, node.end_pos, "LOADIND"),
+	load_opcode = "LOADSP" if node.is_local else "LOAD"
+	store_opcode = "STORESP" if node.is_local else "STORE"
+	instructions = [
+		(node.start_pos, node.end_pos, load_opcode, node.address),
 	]
-
 	if node.is_string:
-		instructions += [
-			(node.start_pos, node.end_pos, "DUP", 0),
-			(node.start_pos, node.end_pos, "LOADIND"),
+		instructions.extend(
+			[
+				(node.start_pos, node.end_pos, "DUP", 0),
+				(node.start_pos, node.end_pos, "LOADIND"),
+				(node.start_pos, node.end_pos, "SYS", SyscallID.OS_FREE),
+			]
+		)
+	instructions.extend(
+		[
 			(node.start_pos, node.end_pos, "SYS", SyscallID.OS_FREE),
+			(node.start_pos, node.end_pos, "PUSH", TRUE),
+			(node.start_pos, node.end_pos, store_opcode, node.address),
 		]
-
-	instructions += [
-		(node.start_pos, node.end_pos, "SYS", SyscallID.OS_FREE),
-		(node.start_pos, node.end_pos, "PUSH", TRUE),
-		(node.start_pos, node.end_pos, "STORE", node.address)
-	]
+	)
 	return Result().success(instructions)

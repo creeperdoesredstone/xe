@@ -1,4 +1,5 @@
 from .currency import CURRENCY_CODES, CurrencyDevice, CurrencySnapshot
+from .compiler import CompileSnapshot, CompilerDevice, VisualAtom, VisualDocument, VisualScript
 from .graphics import DEFAULT_PALETTE, FrameSnapshot, GraphicsDevice
 from .filesystem import FileSystemDevice
 from .input import InputDevice, InputFrame
@@ -12,6 +13,8 @@ __all__ = (
 	"CURRENCY_CODES",
 	"CurrencyDevice",
 	"CurrencySnapshot",
+	"CompileSnapshot",
+	"CompilerDevice",
 	"DEFAULT_PALETTE",
 	"SCREEN_HEIGHT",
 	"SCREEN_WIDTH",
@@ -26,4 +29,7 @@ __all__ = (
 	"PALETTES",
 	"WindowManager",
 	"WindowState",
+	"VisualAtom",
+	"VisualDocument",
+	"VisualScript",
 )

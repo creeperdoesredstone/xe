@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
+import time
+from typing import Callable
 
 from .graphics import GraphicsDevice
 from .input import InputDevice, InputFrame
@@ -54,8 +56,8 @@ class WindowTheme:
 	title_text_offset: int = 4
 	control_size: int = 12
 	control_gap: int = 2
-	minimum_width: int = 96
-	minimum_height: int = 72
+	minimum_width: int = 72
+	minimum_height: int = 54
 	resize_grab: int = 5
 	resize_outer_grab: int = 5
 
@@ -68,6 +70,7 @@ class WindowRecord:
 	state: WindowState = WindowState.NORMAL
 	restore_bounds: Rect | None = None
 	control_capture: str | None = None
+	ui_scale: int = 2
 
 
 @dataclass
@@ -76,6 +79,16 @@ class DragSession:
 	offset_x: int
 	offset_y: int
 	outline: Rect
+
+
+@dataclass
+class MaximizedDragCandidate:
+	handle: int
+	start_x: int
+	start_y: int
+	title_offset_x: int
+	title_offset_y: int
+	maximized_width: int
 
 
 @dataclass
@@ -88,6 +101,19 @@ class ResizeSession:
 	outline: Rect
 
 
+@dataclass
+class WindowTransition:
+	handle: int
+	start: Rect
+	target: Rect
+	started_at: float
+	duration_ms: int
+	target_state: WindowState
+	completion_event: int
+	snapshot: list[list[int]]
+	eased_progress: float = 0.0
+
+
 class WindowManager:
 	def __init__(
 		self,
@@ -95,6 +121,7 @@ class WindowManager:
 		input_device: InputDevice,
 		theme: WindowTheme | None = None,
 		appearance: object | None = None,
+		clock: Callable[[], float] | None = None,
 	) -> None:
 		self.graphics = graphics
 		self.input = input_device
@@ -106,10 +133,17 @@ class WindowManager:
 		self._z_order: list[int] = []
 		self._next_handle = 1
 		self._drag: DragSession | None = None
+		self._maximized_drag: MaximizedDragCandidate | None = None
 		self._resize: ResizeSession | None = None
+		self._transition: WindowTransition | None = None
 		self._widget_capture: tuple | None = None
+		self._active_overlay: dict[int, Rect] = {}
+		self._pending_overlay: dict[int, Rect] = {}
+		self._drawing_overlay: set[int] = set()
+		self._clock = clock or time.monotonic
+		self.transition_duration_ms = 210
 
-	def create(self, x: int, y: int, width: int, height: int, title: str) -> int:
+	def create(self, x: int, y: int, width: int, height: int, title: str, ui_scale: int = 2) -> int:
 		width = max(self.theme.minimum_width, min(self.work_width, int(width)))
 		height = max(self.theme.minimum_height, min(self.work_height, int(height)))
 		x = max(0, min(self.work_width - width, int(x)))
@@ -120,6 +154,7 @@ class WindowManager:
 			handle,
 			Rect(x, y, width, height),
 			title,
+			ui_scale=1 if int(ui_scale) == 1 else 2,
 		)
 		self._z_order.append(handle)
 		return handle
@@ -130,27 +165,46 @@ class WindowManager:
 			record.state = WindowState.CLOSED
 		if self._drag and self._drag.handle == handle:
 			self._drag = None
+		if self._maximized_drag and self._maximized_drag.handle == handle:
+			self._maximized_drag = None
 		if self._resize and self._resize.handle == handle:
 			self._resize = None
+		if self._transition and self._transition.handle == handle:
+			self._transition = None
 		if self._widget_capture and len(self._widget_capture) > 1:
 			if self._widget_capture[1] == handle:
 				self._widget_capture = None
+		self._active_overlay.pop(handle, None)
+		self._pending_overlay.pop(handle, None)
+		self._drawing_overlay.discard(handle)
+
+	def begin_widget_frame(self, handle: int) -> None:
+		"""Advance immediate-mode overlay hit testing by one rendered frame."""
+		pending = self._pending_overlay.pop(handle, None)
+		if pending is None:
+			self._active_overlay.pop(handle, None)
+		else:
+			self._active_overlay[handle] = pending
+		self._drawing_overlay.discard(handle)
 
 	def record(self, handle: int) -> WindowRecord | None:
 		return self._windows.get(handle)
 
 	def configure(
-		self, handle: int, x: int, y: int, width: int, height: int, title: str
+		self, handle: int, x: int, y: int, width: int, height: int, title: str,
+		ui_scale: int = 2,
 	) -> None:
 		record = self._windows.get(handle)
 		if not record or record.state == WindowState.CLOSED:
 			return
 		record.title = title
+		record.ui_scale = 1 if int(ui_scale) == 1 else 2
 		# A drag owns the geometry until release. Fullscreen geometry is also
 		# controlled by the window manager and restored atomically.
 		if record.state != WindowState.NORMAL or (
 			(self._drag and self._drag.handle == handle)
 			or (self._resize and self._resize.handle == handle)
+			or (self._transition and self._transition.handle == handle)
 		):
 			return
 		width = max(self.theme.minimum_width, min(self.work_width, int(width)))
@@ -168,9 +222,10 @@ class WindowManager:
 		bounds = record.bounds
 		size = self.theme.control_size
 		step = size + self.theme.control_gap
+		right_inset = self._appearance_value("window_corner_style", 0) * 2
 		return {
-			"close": Rect(bounds.x + bounds.width - size - 1, bounds.y + 1, size, size),
-			"maximize": Rect(bounds.x + bounds.width - size - step - 1, bounds.y + 1, size, size),
+			"close": Rect(bounds.x + bounds.width - size - right_inset - 1, bounds.y + 1, size, size),
+			"maximize": Rect(bounds.x + bounds.width - size - step - right_inset - 1, bounds.y + 1, size, size),
 		}
 
 	def _resize_region(self, record: WindowRecord, x: int, y: int) -> str | None:
@@ -196,6 +251,10 @@ class WindowManager:
 
 	def _hit_region(self, record: WindowRecord, x: int, y: int) -> str | None:
 		inside = record.bounds.contains(x, y)
+		if inside:
+			for name, rect in self._control_rects(record).items():
+				if rect.contains(x, y):
+					return name
 		resize_region = None
 		if record.state == WindowState.NORMAL:
 			resize_region = self._resize_region(record, x, y)
@@ -209,9 +268,6 @@ class WindowManager:
 				return resize_region
 		if not inside:
 			return None
-		for name, rect in self._control_rects(record).items():
-			if rect.contains(x, y):
-				return name
 		if resize_region:
 			return resize_region
 		if y < record.bounds.y + self.theme.title_height:
@@ -230,6 +286,64 @@ class WindowManager:
 			0,
 			min(self.work_height - outline.height, frame.y - self._drag.offset_y),
 		)
+
+	@staticmethod
+	def _scaled_drag_anchor(offset: int, source_size: int, target_size: int) -> int:
+		"""Map a pointer offset between differently sized title bars exactly."""
+		source_span = max(1, source_size - 1)
+		target_span = max(0, target_size - 1)
+		offset = max(0, min(source_span, offset))
+		return (offset * target_span + source_span // 2) // source_span
+
+	def _restore_for_maximized_drag(
+		self,
+		record: WindowRecord,
+		candidate: MaximizedDragCandidate,
+		frame: InputFrame,
+	) -> None:
+		restored = (record.restore_bounds or record.bounds).copy()
+		restored.width = max(
+			self.theme.minimum_width,
+			min(self.work_width, restored.width),
+		)
+		restored.height = max(
+			self.theme.minimum_height,
+			min(self.work_height, restored.height),
+		)
+		anchor_x = self._scaled_drag_anchor(
+			candidate.title_offset_x,
+			candidate.maximized_width,
+			restored.width,
+		)
+		anchor_y = min(
+			candidate.title_offset_y,
+			self.theme.title_height - 1,
+			restored.height - 1,
+		)
+		restored.x = max(
+			0,
+			min(self.work_width - restored.width, frame.x - anchor_x),
+		)
+		restored.y = max(
+			0,
+			min(self.work_height - restored.height, frame.y - anchor_y),
+		)
+
+		record.bounds = restored.copy()
+		record.state = WindowState.NORMAL
+		record.restore_bounds = None
+		record.control_capture = None
+		self._widget_capture = None
+		self._active_overlay.pop(record.handle, None)
+		self._pending_overlay.pop(record.handle, None)
+		self._drawing_overlay.discard(record.handle)
+		self._drag = DragSession(
+			record.handle,
+			anchor_x,
+			anchor_y,
+			restored,
+		)
+		self._maximized_drag = None
 
 	def _update_resize_outline(self, frame: InputFrame) -> None:
 		if not self._resize:
@@ -261,12 +375,76 @@ class WindowManager:
 
 		session.outline = Rect(left, top, right - left, bottom - top)
 
+	def _capture_window(self, bounds: Rect) -> list[list[int]]:
+		x0 = max(0, bounds.x)
+		y0 = max(0, bounds.y)
+		x1 = min(self.work_width, bounds.x + bounds.width)
+		y1 = min(self.work_height, bounds.y + bounds.height)
+		return [self.graphics.front_buffer[y][x0:x1] for y in range(y0, y1)]
+
+	def _start_transition(
+		self,
+		record: WindowRecord,
+		target: Rect,
+		target_state: WindowState,
+		completion_event: int,
+	) -> None:
+		self._transition = WindowTransition(
+			record.handle,
+			record.bounds.copy(),
+			target.copy(),
+			self._clock(),
+			self.transition_duration_ms,
+			target_state,
+			completion_event,
+			self._capture_window(record.bounds),
+		)
+		# A widget can hold capture independently of the title-bar control that
+		# started the transition.  Its old geometry is no longer authoritative
+		# once the window begins moving, so never carry that capture forward.
+		self._widget_capture = None
+		self._active_overlay.pop(record.handle, None)
+		self._pending_overlay.pop(record.handle, None)
+		self._drawing_overlay.discard(record.handle)
+
+	@staticmethod
+	def _interpolate(start: int, target: int, amount: float) -> int:
+		return round(start + (target - start) * amount)
+
+	def _advance_transition(self, record: WindowRecord) -> int:
+		transition = self._transition
+		if not transition or transition.handle != record.handle:
+			return EVENT_NONE
+		elapsed_ms = max(0.0, (self._clock() - transition.started_at) * 1000.0)
+		progress = min(1.0, elapsed_ms / max(1, transition.duration_ms))
+		# Bounds and the live/start-frame blend use this same value.  Keeping one
+		# clock prevents chrome, content, typography, and menus from settling on
+		# different frames.
+		eased = 1.0 - (1.0 - progress) ** 3
+		transition.eased_progress = eased
+		record.bounds = Rect(
+			self._interpolate(transition.start.x, transition.target.x, eased),
+			self._interpolate(transition.start.y, transition.target.y, eased),
+			self._interpolate(transition.start.width, transition.target.width, eased),
+			self._interpolate(transition.start.height, transition.target.height, eased),
+		)
+		if progress < 1.0:
+			return EVENT_NONE
+		record.bounds = transition.target.copy()
+		record.state = transition.target_state
+		if transition.completion_event == EVENT_RESTORED:
+			record.restore_bounds = None
+		self._transition = None
+		return transition.completion_event
+
 	def update(self, handle: int) -> int:
 		record = self._windows.get(handle)
 		if not record or record.state == WindowState.CLOSED:
 			return EVENT_CLOSED
 		frame = self.input.frame()
-		event = EVENT_NONE
+		event = self._advance_transition(record)
+		if event or (self._transition and self._transition.handle == handle):
+			return event
 		if record.state == WindowState.MINIMIZED:
 			return event
 
@@ -292,6 +470,24 @@ class WindowManager:
 					frame.y - record.bounds.y,
 					record.bounds.copy(),
 				)
+			elif region == "title" and record.state == WindowState.MAXIMIZED:
+				self._maximized_drag = MaximizedDragCandidate(
+					handle,
+					frame.x,
+					frame.y,
+					frame.x - record.bounds.x,
+					frame.y - record.bounds.y,
+					record.bounds.width,
+				)
+
+		if self._maximized_drag and self._maximized_drag.handle == handle:
+			candidate = self._maximized_drag
+			moved = (frame.x, frame.y) != (candidate.start_x, candidate.start_y)
+			if moved and (frame.left_down or frame.left_released):
+				self._restore_for_maximized_drag(record, candidate, frame)
+				event |= EVENT_RESTORED
+			elif frame.left_released or not frame.left_down:
+				self._maximized_drag = None
 
 		if self._drag and self._drag.handle == handle:
 			if frame.left_down or frame.left_released:
@@ -319,16 +515,78 @@ class WindowManager:
 					event |= EVENT_CLOSED
 				elif capture == "maximize":
 					if record.state == WindowState.MAXIMIZED:
-						record.bounds = (record.restore_bounds or record.bounds).copy()
-						record.restore_bounds = None
-						record.state = WindowState.NORMAL
-						event |= EVENT_RESTORED
+						self._start_transition(
+							record,
+							record.restore_bounds or record.bounds,
+							WindowState.NORMAL,
+							EVENT_RESTORED,
+						)
 					else:
 						record.restore_bounds = record.bounds.copy()
-						record.bounds = Rect(0, 0, self.work_width, self.work_height)
-						record.state = WindowState.MAXIMIZED
-						event |= EVENT_MAXIMIZED
+						self._start_transition(
+							record,
+							Rect(0, 0, self.work_width, self.work_height),
+							WindowState.MAXIMIZED,
+							EVENT_MAXIMIZED,
+						)
 		return event
+
+	def is_transitioning(self, handle: int) -> bool:
+		return bool(self._transition and self._transition.handle == handle)
+
+	def _blend_transition(self, transition: WindowTransition) -> None:
+		record = self._record(transition.handle)
+		if not record or not transition.snapshot or not transition.snapshot[0]:
+			return
+		# Xe renders indexed pixel art, so ordered coverage gives a deterministic
+		# crossfade without inventing intermediate palette colors.  Rounding makes
+		# the live frame fully authoritative just before completion, eliminating the
+		# old final-frame handoff snap.
+		live_slots = max(0, min(16, round(transition.eased_progress * 16)))
+		if live_slots >= 16:
+			return
+		thresholds = (
+			(0, 8, 2, 10),
+			(12, 4, 14, 6),
+			(3, 11, 1, 9),
+			(15, 7, 13, 5),
+		)
+		destination = record.bounds
+		source_height = len(transition.snapshot)
+		source_width = len(transition.snapshot[0])
+		x0 = max(0, destination.x)
+		y0 = max(0, destination.y)
+		x1 = min(self.work_width, destination.x + destination.width)
+		y1 = min(self.work_height, destination.y + destination.height)
+		for y in range(y0, y1):
+			source_y = min(
+				source_height - 1,
+				(y - destination.y) * source_height // max(1, destination.height),
+			)
+			source_row = transition.snapshot[source_y]
+			destination_row = self.graphics.back_buffer[y]
+			# Copy only the Bayer phases still owned by the captured frame.  Extended
+			# slice assignment moves the per-pixel loop into CPython while preserving
+			# exactly the same ordered coverage as the scalar implementation.
+			for phase in range(4):
+				if thresholds[y & 3][phase] < live_slots:
+					continue
+				first_x = x0 + ((phase - x0) & 3)
+				if first_x >= x1:
+					continue
+				destination_row[first_x:x1:4] = [
+					source_row[min(
+						source_width - 1,
+						(x - destination.x) * source_width // max(1, destination.width),
+					)]
+					for x in range(first_x, x1, 4)
+				]
+
+	def finish_draw(self, handle: int) -> None:
+		"""Blend the live transition frame after the app has rendered its content."""
+		transition = self._transition
+		if transition and transition.handle == handle:
+			self._blend_transition(transition)
 
 	def _draw_frame(self, rect: Rect, color: int, width: int) -> None:
 		width = max(1, width)
@@ -337,6 +595,15 @@ class WindowManager:
 		g.fill_rect(rect.x, rect.y + rect.height - width, rect.width, width, color)
 		g.fill_rect(rect.x, rect.y, width, rect.height, color)
 		g.fill_rect(rect.x + rect.width - width, rect.y, width, rect.height, color)
+
+	def _fit_text(self, text: str, maximum_width: int, scale: int, *, small: bool = False) -> str:
+		visible = ""
+		for char in text:
+			candidate = visible + char
+			if self.graphics.measure_text(candidate, scale, small=small) > maximum_width:
+				break
+			visible = candidate
+		return visible
 
 	def _appearance_value(self, name: str, default: int) -> int:
 		if self.appearance is None:
@@ -395,12 +662,15 @@ class WindowManager:
 			g.fill_rect(b.x + corner_inset, b.y + b.height - t.border_width, b.width - corner_inset * 2, t.border_width, t.border_color)
 			g.fill_rect(b.x, b.y + corner_inset, t.border_width, b.height - corner_inset * 2, t.border_color)
 			g.fill_rect(b.x + b.width - t.border_width, b.y + corner_inset, t.border_width, b.height - corner_inset * 2, t.border_color)
+			g.draw_line(b.x, b.y + corner_inset, b.x + corner_inset, b.y, t.border_color)
+			g.draw_line(b.x + b.width - corner_inset - 1, b.y, b.x + b.width - 1, b.y + corner_inset, t.border_color)
+			g.draw_line(b.x, b.y + b.height - corner_inset - 1, b.x + corner_inset, b.y + b.height - 1, t.border_color)
+			g.draw_line(b.x + b.width - corner_inset - 1, b.y + b.height - 1, b.x + b.width - 1, b.y + b.height - corner_inset - 1, t.border_color)
 		else:
 			self._draw_frame(b, t.border_color, t.border_width)
-		text_advance = 6 * g.text_scale
 		controls_width = (t.control_size + t.control_gap) * 2 + 4
-		max_chars = max(0, (b.width - t.title_text_offset - controls_width) // text_advance)
-		title = record.title[:max_chars]
+		title_width = max(0, b.width - t.title_text_offset - controls_width)
+		title = self._fit_text(record.title, title_width, g.text_scale)
 		g.draw_text(b.x + t.title_text_offset, b.y + 2, title, t.text_color)
 		controls = self._control_rects(record)
 		maximum = controls["maximize"]
@@ -454,7 +724,8 @@ class WindowManager:
 		return max(0, record.bounds.height - self.theme.title_height - self.theme.border_width)
 
 	def ui_scale(self, handle: int) -> int:
-		return max(1, self.graphics.text_scale) if self._record(handle) else 1
+		record = self._record(handle)
+		return record.ui_scale if record else 1
 
 	def draw_origin(self, handle: int) -> tuple[int, int]:
 		return self.content_x(handle), self.content_y(handle)
@@ -475,7 +746,11 @@ class WindowManager:
 
 	def is_maximized(self, handle: int) -> bool:
 		record = self._record(handle)
-		return bool(record and record.state == WindowState.MAXIMIZED)
+		if not record:
+			return False
+		if self._transition and self._transition.handle == handle:
+			return self._transition.target_state == WindowState.MAXIMIZED
+		return record.state == WindowState.MAXIMIZED
 
 	def button(
 		self,
@@ -503,12 +778,35 @@ class WindowManager:
 		)
 		frame = self.input.frame()
 		key = ("button", handle, x, y, width, height, label)
-		hovered = rect.contains(frame.x, frame.y)
-		if frame.left_pressed and hovered and self._drag is None and self._resize is None:
+		input_allowed = not self.is_transitioning(handle)
+		hovered = input_allowed and rect.contains(frame.x, frame.y)
+		interactive = framed or label != ""
+		if not framed and label == "":
+			# An unlabeled flat surface is the backdrop used by animated menus.
+			# Remember it for next-frame hit testing and let later-drawn children
+			# own input over controls visually covered by the menu.
+			self._pending_overlay[handle] = rect
+			self._drawing_overlay.add(handle)
+		overlay = self._active_overlay.get(handle)
+		if (
+			hovered
+			and overlay is not None
+			and overlay.contains(frame.x, frame.y)
+			and handle not in self._drawing_overlay
+		):
+			hovered = False
+		if (
+			frame.left_pressed
+			and hovered
+			and interactive
+			and (self._widget_capture is None or self._widget_capture[0] == "button")
+			and self._drag is None
+			and self._resize is None
+		):
 			self._widget_capture = key
-		pressed = self._widget_capture == key and frame.left_down
+		pressed = interactive and self._widget_capture == key and frame.left_down
 		clicked = False
-		if self._widget_capture == key and frame.left_released:
+		if interactive and self._widget_capture == key and frame.left_released:
 			clicked = hovered
 			self._widget_capture = None
 		normal_color = self.theme.button_color if base_color is None else base_color % 16
@@ -520,7 +818,10 @@ class WindowManager:
 			if not framed and self._appearance_value("theme_mode", 0) == 1 and normal_color == 1:
 				color = 8
 			elif not framed and self._appearance_value("theme_mode", 0) == 0 and normal_color == 8:
-				color = 1
+				# COLOR_1 is almost black in the dark palette and looked like a
+				# stray outline around dropdown rows.  Use a nearby palette accent
+				# so a flat control stays flat while still gaining clear hover state.
+				color = 5
 			elif base_color is None:
 				color = self.theme.button_hover_color
 			elif normal_color == 8:
@@ -535,11 +836,9 @@ class WindowManager:
 		if framed:
 			self._draw_frame(rect, self.theme.text_color, scale)
 		if height <= 7:
-			advance = 4 * scale
 			glyph_height = 5 * scale
-			max_chars = max(0, (rect.width - 2 * scale) // advance)
-			visible_label = label[:max_chars]
-			text_width = len(visible_label) * advance - (scale if visible_label else 0)
+			visible_label = self._fit_text(label, max(0, rect.width - 2 * scale), scale, small=True)
+			text_width = self.graphics.measure_text(visible_label, scale, small=True)
 			text_x = rect.x + max(scale, (rect.width - text_width) // 2)
 			text_y = rect.y + max(scale, (rect.height - glyph_height) // 2)
 			self.graphics.draw_text_small(
@@ -550,11 +849,9 @@ class WindowManager:
 				pixel_scale=scale,
 			)
 		else:
-			advance = 6 * scale
 			glyph_height = 7 * scale
-			max_chars = max(0, (rect.width - 2 * scale) // advance)
-			visible_label = label[:max_chars]
-			text_width = len(visible_label) * advance - (scale if visible_label else 0)
+			visible_label = self._fit_text(label, max(0, rect.width - 2 * scale), scale)
+			text_width = self.graphics.measure_text(visible_label, scale)
 			text_x = rect.x + max(scale, (rect.width - text_width) // 2)
 			text_y = rect.y + max(scale, (rect.height - glyph_height) // 2)
 			self.graphics.draw_text(
@@ -593,14 +890,28 @@ class WindowManager:
 		)
 		frame = self.input.frame()
 		key = ("slider", handle, x, y, width)
+		input_allowed = not self.is_transitioning(handle)
+		hovered = input_allowed and rect.contains(frame.x, frame.y)
+		overlay = self._active_overlay.get(handle)
+		covered_by_overlay = (
+			hovered
+			and overlay is not None
+			and overlay.contains(frame.x, frame.y)
+			and handle not in self._drawing_overlay
+		)
+		if covered_by_overlay:
+			hovered = False
+			if self._widget_capture == key:
+				self._widget_capture = None
 		if (
 			frame.left_pressed
-			and rect.contains(frame.x, frame.y)
+			and hovered
+			and self._widget_capture is None
 			and self._drag is None
 			and self._resize is None
 		):
 			self._widget_capture = key
-		active = self._widget_capture == key
+		active = input_allowed and self._widget_capture == key
 		if active and (frame.left_down or frame.left_released):
 			range_size = maximum - minimum
 			if range_size > 0:

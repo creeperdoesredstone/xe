@@ -5,7 +5,7 @@ from xe_lang.optimizer import Optimizer
 from xe_lang.codegen import compile_ast, format_instructions
 from xe_lang.ir_optimize import optimize, DEFAULT_PASSES
 from xe_lang.assembler import assemble
-from xe_lang.vm import VM, MAGIC, VERSION
+from xe_lang.vm import DEFAULT_DATA_WORDS, VM, MAGIC, VERSION
 from xe_lang.devices import OSDevice
 from xe_lang.helper import ANSI
 
@@ -23,6 +23,7 @@ class RuntimeContext:
 		filesystem_root: str | Path | None = None,
 		input_handler=None,
 		request_handler=None,
+		memory_words: int = DEFAULT_DATA_WORDS,
 	) -> None:
 		self.semantic = SemanticAnalyzer()
 		self.os_device = os_device or OSDevice()
@@ -30,7 +31,8 @@ class RuntimeContext:
 		self.vm_ready_handler = vm_ready_handler
 		self.input_handler = input_handler
 		self.request_handler = request_handler
-		self.filesystem_root = Path(filesystem_root or Path.cwd()).resolve()
+		self.memory_words = memory_words
+		self.filesystem_root = Path(filesystem_root).resolve() if filesystem_root is not None else None
 		self.cancel_event = threading.Event()
 		self.output_handler = None
 		self.vm = VM(
@@ -42,7 +44,9 @@ class RuntimeContext:
 			filesystem_root=self.filesystem_root,
 			input_handler=self.input_handler,
 			request_handler=self.request_handler,
+			memory_words=self.memory_words,
 		)
+		self.filesystem_root = self.vm.devices.files.root
 
 	def create_vm(self, program: list[int]) -> VM:
 		self.cancel_event.clear()
@@ -55,6 +59,7 @@ class RuntimeContext:
 			filesystem_root=self.filesystem_root,
 			input_handler=self.input_handler,
 			request_handler=self.request_handler,
+			memory_words=self.memory_words,
 		)
 		if self.vm_ready_handler:
 			self.vm_ready_handler(self.vm)
@@ -76,7 +81,7 @@ def run(
 		bytecode = assemble(fn, ftxt)
 		if bytecode.error:
 			return None, bytecode.error, None
-		
+
 		context.create_vm(bytecode.value)
 		context.vm.ip = 0
 
@@ -98,28 +103,23 @@ def run(
 		if __name__ == "__main__":
 			print(ast.value)
 
-		seman_res = context.semantic.visit(ast.value)
+		context.semantic = SemanticAnalyzer()
+		seman_res = context.semantic.analyze(ast.value)
 		if seman_res.error:
 			return None, seman_res.error, None
-		
+
 		optimized_ast = Optimizer().optimize(ast.value)
 
 		assembly = compile_ast(optimized_ast, fn)
 		if assembly.error:
 			return None, assembly.error, None
-
 		optimized_asm = optimize(assembly.value, DEFAULT_PASSES)
 		formatted_asm = format_instructions(optimized_asm)
 
-		fp = Path(fn).stem
-		if not fp[0] == "<":
-			with open(f"asm/{fp}.xas", "w") as file:
-				file.write(formatted_asm)
-	
 		bytecode = assemble(fn, formatted_asm)
 		if bytecode.error:
 			return None, bytecode.error, None
-		
+
 
 	if __name__ == "__main__":
 		print(f"\n\n{ANSI.BOLD}{ANSI.PURPLE}STDOUT:{ANSI.END}")
@@ -127,10 +127,10 @@ def run(
 	context.vm.ip = 0
 
 	result = context.vm.run()
-	print(f"Max stack depth: {context.vm.max_sp}")
+	stack_value = [] if result.value is None else result.value[:context.vm.sp][:32]
 
 	return (
-		result.value[:context.vm.sp][:32],
+		stack_value,
 		result.error,
 		formatted_asm,
 	)
@@ -142,7 +142,7 @@ if __name__ == "__main__":
 	print("Welcome to Xe Lang!")
 	print("1. Run a file")
 	print("2. Launch REPL")
-	
+
 	choice = input("Select mode (1 or 2): ").strip()
 	print()
 
@@ -154,9 +154,9 @@ if __name__ == "__main__":
 			try:
 				with open(path, "r") as file:
 					source_code = file.read()
-				
+
 				result, error, asm = run(path, source_code, None)
-				
+
 				print()
 				if error:
 					print(error)
@@ -170,7 +170,7 @@ if __name__ == "__main__":
 	elif choice == "2":
 		print("Xe Lang REPL Environment (Type 'exit' or 'quit' to leave)")
 		print("-" * 50)
-		
+
 		fn = "<repl>"
 		context = RuntimeContext()
 		while True:
@@ -180,9 +180,9 @@ if __name__ == "__main__":
 					continue
 				if text.lower() in ("exit", "quit"):
 					break
-				
+
 				result, error, asm = run(fn, text, context)
-				
+
 				if error:
 					print(error)
 				else:
@@ -190,7 +190,7 @@ if __name__ == "__main__":
 						print(f"Stack: {result}")
 					if asm:
 						print(f"{ANSI.PURPLE}{asm}{ANSI.END}")
-						
+
 			except KeyboardInterrupt:
 				print("\nExiting REPL.")
 				break

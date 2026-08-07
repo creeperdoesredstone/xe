@@ -112,6 +112,7 @@ def parse(tokens: list[Token]) -> Result:
 			ProcedureDefinition,
 			StructDefinition,
 			ClassDefinition,
+			EnumDeclaration,
 		)
 
 		while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
@@ -167,10 +168,10 @@ def parse(tokens: list[Token]) -> Result:
 				Program(current_tok.start_pos, current_tok.end_pos, [], [])
 			)
 
+		first_node = statements[0] if statements else definitions[0]
+		last_node = statements[-1] if statements else definitions[-1]
 		return res.success(
-			Program(
-				statements[0].start_pos, statements[-1].end_pos, statements, definitions
-			)
+			Program(first_node.start_pos, last_node.end_pos, statements, definitions)
 		)
 
 	def statement() -> Result:
@@ -281,20 +282,19 @@ def parse(tokens: list[Token]) -> Result:
 		)
 
 	def const_declaration() -> Result:
-		start_pos: Position = current_tok.start_pos.copy()
-		res: Result = Result()
-		
-		advance()  # consume 'const'
+		start_pos = current_tok.start_pos.copy()
+		res = Result()
+		advance()
 
 		if current_tok._type != TT.IDENT:
 			return res.fail(
 				InvalidSyntaxError(
-					f"Expected constant name after 'const' keyword, but found '{current_tok.value or current_tok._type.name}'.",
+					f"Expected constant name after 'const', but found '{current_tok.value or current_tok._type.name}'.",
 					current_tok.start_pos,
 					current_tok.end_pos,
 				)
 			)
-		const_name: str = current_tok.value
+		const_name = current_tok.value
 		advance()
 
 		if current_tok._type != TT.ASGN:
@@ -307,17 +307,10 @@ def parse(tokens: list[Token]) -> Result:
 			)
 		advance()
 
-		value: Node = res.register(literal())
-		if not isinstance(
-			value,
-			(
-				IntLiteral,
-				FloatLiteral,
-				StringLiteral,
-				BoolLiteral,
-				CharLiteral
-			),
-		):
+		value = res.register(literal())
+		if res.error:
+			return res
+		if not isinstance(value, (IntLiteral, FloatLiteral, StringLiteral, BoolLiteral, CharLiteral)):
 			return res.fail(
 				InvalidSyntaxError(
 					"Constant value must be a constant literal.",
@@ -325,24 +318,16 @@ def parse(tokens: list[Token]) -> Result:
 					value.end_pos,
 				)
 			)
-		end_pos = value.end_pos.copy()
 
 		if current_tok._type not in (TT.EOF, TT.NEWLINE, TT.SEMICOL, TT.RBR):
 			return res.fail(
 				InvalidSyntaxError(
-					f"Expected end of line (newline or ';') after variable declaration block, but found unexpected trailing token '{current_tok.value or current_tok._type.name}'.",
+					f"Expected end of line after constant declaration, but found '{current_tok.value or current_tok._type.name}'.",
 					current_tok.start_pos,
 					current_tok.end_pos,
 				)
 			)
-		return res.success(
-			ConstantDeclaration(
-				start_pos,
-				end_pos,
-				const_name,
-				value,
-			)
-		)
+		return res.success(ConstantDeclaration(start_pos, value.end_pos.copy(), const_name, value))
 
 	def array_declaration() -> Result:
 		start_pos: Position = current_tok.start_pos.copy()
@@ -843,7 +828,7 @@ def parse(tokens: list[Token]) -> Result:
 						FloatLiteral,
 						StringLiteral,
 						BoolLiteral,
-						CharLiteral
+						CharLiteral,
 					),
 				):
 					return res.fail(
@@ -958,6 +943,14 @@ def parse(tokens: list[Token]) -> Result:
 		values: list[Node] = []
 
 		advance()  # consume 'out'
+		if not lookahead_for_token(Token(TT.OSTREAM, None, None, None)):
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected '<<' after 'out', found {current_tok.value or current_tok._type.name} instead.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
 
 		while lookahead_for_token(Token(TT.OSTREAM, None, None, None)):
 			while current_tok._type in (TT.NEWLINE, TT.SEMICOL):
@@ -969,9 +962,9 @@ def parse(tokens: list[Token]) -> Result:
 				return res
 
 			values.append(value)
-			end_pos: Position = current_tok.end_pos.copy()
+			end_pos: Position = value.end_pos.copy()
 
-		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF, TT.RBR):
+		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
 			return res.fail(
 				InvalidSyntaxError(
 					f"Expected EOL or '<<', found {current_tok.value or current_tok._type.name} instead.",
@@ -1020,7 +1013,7 @@ def parse(tokens: list[Token]) -> Result:
 				)
 			)
 
-		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF, TT.RBR):
+		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
 			return res.fail(
 				InvalidSyntaxError(
 					f"Expected EOL, found {current_tok.value or current_tok._type.name} instead.",
@@ -1330,7 +1323,7 @@ def parse(tokens: list[Token]) -> Result:
 
 		advance()  # consume 'return'
 
-		if current_tok._type in (TT.NEWLINE, TT.SEMICOL, TT.EOF, TT.RBR):
+		if current_tok._type in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
 			end_pos = current_tok.end_pos.copy()
 			return res.success(ReturnStatement(start_pos, end_pos, None))
 
@@ -1704,7 +1697,7 @@ def parse(tokens: list[Token]) -> Result:
 		end_pos = current_tok.end_pos.copy()
 		advance()
 
-		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF, TT.RBR):
+		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF):
 			return res.fail(
 				InvalidSyntaxError(
 					"Expected end of line after procedure call.",
@@ -1728,8 +1721,8 @@ def parse(tokens: list[Token]) -> Result:
 		return res.success(ProcedureCall(start_pos, end_pos, proc_name, args))
 
 	def enum_declaration() -> Result:
-		start_pos: Position = current_tok.start_pos.copy()
-		res: Result = Result()
+		start_pos = current_tok.start_pos.copy()
+		res = Result()
 		advance()
 
 		if current_tok != Token(TT.KEYWORD, "class", None, None):
@@ -1737,120 +1730,115 @@ def parse(tokens: list[Token]) -> Result:
 				InvalidSyntaxError(
 					f"Expected 'class' after 'enum', found {current_tok.value or current_tok._type} instead.",
 					current_tok.start_pos,
-					current_tok.end_pos
+					current_tok.end_pos,
 				)
 			)
 		advance()
-
 		if current_tok._type != TT.IDENT:
 			return res.fail(
 				InvalidSyntaxError(
 					f"Expected an enum name after 'class', found {current_tok.value or current_tok._type} instead.",
 					current_tok.start_pos,
-					current_tok.end_pos
+					current_tok.end_pos,
 				)
 			)
-		enum_name: str = current_tok.value
+		enum_name = current_tok.value
 		advance()
-
 		if current_tok._type != TT.LBR:
 			return res.fail(
 				InvalidSyntaxError(
 					f"Expected '{{' after enum name, found {current_tok.value or current_tok._type} instead.",
 					current_tok.start_pos,
-					current_tok.end_pos
+					current_tok.end_pos,
 				)
 			)
 		advance()
-
-		enum_constants: list[str] = []
+		enum_constants = []
 
 		while current_tok._type not in (TT.RBR, TT.EOF):
-			while current_tok._type == TT.NEWLINE: advance()
+			while current_tok._type == TT.NEWLINE:
+				advance()
+			if current_tok._type == TT.RBR:
+				break
 			if current_tok._type != TT.IDENT:
 				return res.fail(
 					InvalidSyntaxError(
 						f"Expected an enum constant, found {current_tok.value or current_tok._type} instead.",
 						current_tok.start_pos,
-						current_tok.end_pos
+						current_tok.end_pos,
 					)
 				)
-
 			if current_tok.value in enum_constants:
 				return res.fail(
 					InvalidSyntaxError(
-						f"Enum constant '{current_tok.value} already defined.",
+						f"Enum constant '{current_tok.value}' already defined.",
 						current_tok.start_pos,
-						current_tok.end_pos
+						current_tok.end_pos,
 					)
 				)
-
 			enum_constants.append(current_tok.value)
 			advance()
-			while current_tok._type == TT.NEWLINE: advance()
-
+			while current_tok._type == TT.NEWLINE:
+				advance()
 			if current_tok._type not in (TT.COMMA, TT.RBR):
 				return res.fail(
 					InvalidSyntaxError(
 						f"Expected ',' or '}}' after enum constant, found {current_tok.value or current_tok._type} instead.",
 						current_tok.start_pos,
-						current_tok.end_pos
+						current_tok.end_pos,
 					)
 				)
-			if current_tok._type == TT.COMMA: advance()
+			if current_tok._type == TT.COMMA:
+				advance()
 
 		if current_tok._type != TT.RBR:
 			return res.fail(
 				InvalidSyntaxError(
 					f"Expected '}}' after enum declaration, found {current_tok.value or current_tok._type} instead.",
 					current_tok.start_pos,
-					current_tok.end_pos
+					current_tok.end_pos,
 				)
 			)
-		end_pos: Position = current_tok.end_pos.copy()
+		end_pos = current_tok.end_pos.copy()
 		advance()
-
-		return res.success(EnumDeclaration(
-			start_pos,
-			end_pos,
-			enum_name,
-			enum_constants
-		))
+		return res.success(EnumDeclaration(start_pos, end_pos, enum_name, enum_constants))
 
 	def free_statement() -> Result:
-		start_pos: Position = current_tok.start_pos.copy()
-		res: Result = Result()
+		start_pos = current_tok.start_pos.copy()
+		res = Result()
 		advance()
 
 		if current_tok._type != TT.AND:
-			return res.fail(InvalidSyntaxError(
-				f"Expected '&' after 'free', found {current_tok.value or current_tok._type} instead.",
-				current_tok.start_pos,
-				current_tok.end_pos
-			))
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected '&' after 'free', found '{current_tok.value or current_tok._type.name}'.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
 		advance()
 
 		if current_tok._type != TT.IDENT:
-			return res.fail(InvalidSyntaxError(
-				f"Expected an identifier after '&', found {current_tok.value or current_tok._type} instead.",
-				current_tok.start_pos,
-				current_tok.end_pos
-			))
-		iden_name: str = current_tok.value
-		end_pos: Position = current_tok.end_pos.copy()
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected an identifier after 'free &', found '{current_tok.value or current_tok._type.name}'.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+		name = current_tok.value
+		end_pos = current_tok.end_pos.copy()
 		advance()
 
 		if current_tok._type not in (TT.NEWLINE, TT.SEMICOL, TT.EOF, TT.RBR):
-			return res.fail(InvalidSyntaxError(
-				f"Expected EOL after identifier, found {current_tok.value or current_tok._type} instead.",
-				current_tok.start_pos,
-				current_tok.end_pos
-			))
-		return res.success(FreePointer(
-			start_pos,
-			end_pos,
-			iden_name
-		))
+			return res.fail(
+				InvalidSyntaxError(
+					f"Expected end of line after 'free &{name}', found '{current_tok.value or current_tok._type.name}'.",
+					current_tok.start_pos,
+					current_tok.end_pos,
+				)
+			)
+		return res.success(FreePointer(start_pos, end_pos, name))
 
 	# other parse subroutines
 	def expr() -> Result:

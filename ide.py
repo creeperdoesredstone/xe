@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 	QLineEdit,
 	QCheckBox,
 	QInputDialog,
+	QSizePolicy,
 )
 from PyQt6.QtGui import (
 	QSyntaxHighlighter,
@@ -41,7 +42,7 @@ from PyQt6.QtGui import (
 	QFont,
 	QTextOption,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QRect, QSize, QPoint
+from PyQt6.QtCore import QEvent, Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QRect, QSize, QPoint
 
 from xe_lang.lexer import lex
 from xe_lang.parser import parse
@@ -65,6 +66,7 @@ from xe_lang.devices import (
 	FrameSnapshot,
 	OSDevice,
 )
+from xe_lang.devices.keymap import normalize_key_code
 
 
 def _find_name_token_pos(tokens: list[Token], keyword_pos: Position, name: str) -> Position:
@@ -800,12 +802,12 @@ class XPP26SyntaxHighlighter(QSyntaxHighlighter):
 				"struct", "class", "new"
 			):
 				return True
-			
+
 			if prev._type == TT.COL:
 				return True
 
 			return False
-		
+
 		LIBRARY_NAMES = {"math", "window", "graphics", "os"}
 
 		def is_library_name(idx: int) -> bool:
@@ -913,18 +915,45 @@ class VMGraphicsWidget(QWidget):
 		super().__init__(parent)
 		self.width_px = SCREEN_WIDTH
 		self.height_px = SCREEN_HEIGHT
-		self.scale = 1
-		self.setFixedSize(self.width_px * self.scale, self.height_px * self.scale)
+		self.scale = 0.5
+		self.render_x = 0
+		self.render_y = 0
+		self.render_width = self.width_px // 2
+		self.render_height = self.height_px // 2
+		self.setMinimumSize(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
+		self.setSizePolicy(
+			QSizePolicy.Policy.Expanding,
+			QSizePolicy.Policy.Expanding,
+		)
 
 		self.image = QImage(self.width_px, self.height_px, QImage.Format.Format_RGB32)
 		self.image.fill(QColor("black"))
 		self.active_vm = None
+		self._forwarded_keys: dict[int, int] = {}
 
 		self.setMouseTracking(True)
 		self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
+	def sizeHint(self):
+		return QSize(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
+
+	def _fit_stage(self) -> None:
+		available_width = max(1, self.width())
+		available_height = max(1, self.height())
+		self.scale = max(
+			0.01,
+			min(available_width / self.width_px, available_height / self.height_px),
+		)
+		self.render_width = max(1, round(self.width_px * self.scale))
+		self.render_height = max(1, round(self.height_px * self.scale))
+		self.render_x = (available_width - self.render_width) // 2
+		self.render_y = (available_height - self.render_height) // 2
+
 	@pyqtSlot(object)
 	def set_active_vm(self, vm):
+		if self.active_vm is not None and self.active_vm is not vm:
+			self.active_vm.devices.input.release_all()
+		self._forwarded_keys.clear()
 		self.active_vm = vm
 
 	@pyqtSlot(object)
@@ -933,10 +962,7 @@ class VMGraphicsWidget(QWidget):
 			if (frame.width, frame.height) != (self.width_px, self.height_px):
 				self.width_px = frame.width
 				self.height_px = frame.height
-				self.setFixedSize(
-					self.width_px * self.scale,
-					self.height_px * self.scale,
-				)
+				self._fit_stage()
 			palette = frame.palette or tuple(PALETTE)
 			# The framebuffer is already an immutable byte-per-pixel image. Keep
 			# that indexed representation instead of performing 43,200 Python
@@ -963,18 +989,33 @@ class VMGraphicsWidget(QWidget):
 		self.update()
 
 	def paintEvent(self, event):
+		self._fit_stage()
 		painter = QPainter(self)
+		painter.fillRect(self.rect(), QColor("black"))
 		scaled_pixmap = QPixmap.fromImage(self.image).scaled(
-			self.size(),
+			self.render_width,
+			self.render_height,
 			Qt.AspectRatioMode.IgnoreAspectRatio,
 			Qt.TransformationMode.FastTransformation,
 		)
-		painter.drawPixmap(0, 0, scaled_pixmap)
+		painter.drawPixmap(self.render_x, self.render_y, scaled_pixmap)
 
 	def _pointer_position(self, event: QMouseEvent) -> tuple[int, int]:
 		return (
-			max(0, min(self.width_px - 1, int(event.position().x() // self.scale))),
-			max(0, min(self.height_px - 1, int(event.position().y() // self.scale))),
+			max(
+				0,
+				min(
+					self.width_px - 1,
+					int((event.position().x() - self.render_x) / self.scale),
+				),
+			),
+			max(
+				0,
+				min(
+					self.height_px - 1,
+					int((event.position().y() - self.render_y) / self.scale),
+				),
+			),
 		)
 
 	def _update_pointer(self, event: QMouseEvent) -> None:
@@ -995,25 +1036,51 @@ class VMGraphicsWidget(QWidget):
 
 	def _key_code(self, event: QKeyEvent) -> int:
 		key = event.key()
-		special = {
-			Qt.Key.Key_Backspace: 8,
-			Qt.Key.Key_Tab: 9,
-			Qt.Key.Key_Return: 13,
-			Qt.Key.Key_Enter: 13,
-			Qt.Key.Key_Escape: 27,
-			Qt.Key.Key_Space: 32,
-			Qt.Key.Key_Left: 3,
-			Qt.Key.Key_Up: 4,
-			Qt.Key.Key_Right: 5,
-			Qt.Key.Key_Down: 6,
-			Qt.Key.Key_Delete: 127,
-		}.get(key)
-		if special is not None:
-			return special
-		text = event.text()
-		if len(text) == 1 and ord(text) <= 0xFF:
-			return ord(text)
-		return int(key)
+		key_name = {
+			Qt.Key.Key_Backspace: "backspace",
+			Qt.Key.Key_Tab: "tab",
+			Qt.Key.Key_Backtab: "backtab",
+			Qt.Key.Key_Return: "return",
+			Qt.Key.Key_Enter: "enter",
+			Qt.Key.Key_Escape: "escape",
+			Qt.Key.Key_Space: "space",
+			Qt.Key.Key_Left: "left",
+			Qt.Key.Key_Up: "up",
+			Qt.Key.Key_Right: "right",
+			Qt.Key.Key_Down: "down",
+			Qt.Key.Key_Delete: "delete",
+		}.get(key, "")
+		if not key_name and Qt.Key.Key_A <= key <= Qt.Key.Key_Z:
+			key_name = chr(ord("a") + int(key - Qt.Key.Key_A))
+		return normalize_key_code(
+			key_name,
+			event.text(),
+			control=bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier),
+			fallback=int(key),
+		)
+
+	@staticmethod
+	def _physical_key(event: QKeyEvent) -> int:
+		key = int(event.key())
+		if key == int(Qt.Key.Key_Backtab):
+			return int(Qt.Key.Key_Tab)
+		return key
+
+	def event(self, event):
+		# QWidget normally consumes Tab/Backtab for host focus traversal before
+		# keyPressEvent sees them. While the VM stage owns focus, both events are
+		# virtual-machine input and must never move focus around the host IDE.
+		if self.active_vm and event.type() in (
+			QEvent.Type.KeyPress,
+			QEvent.Type.KeyRelease,
+		) and event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+			if event.type() == QEvent.Type.KeyPress:
+				self.keyPressEvent(event)
+			else:
+				self.keyReleaseEvent(event)
+			event.accept()
+			return True
+		return super().event(event)
 
 	def mouseMoveEvent(self, event: QMouseEvent):
 		self._update_pointer(event)
@@ -1043,19 +1110,31 @@ class VMGraphicsWidget(QWidget):
 
 	def keyPressEvent(self, event: QKeyEvent):
 		if self.active_vm and not event.isAutoRepeat():
+			key = self._key_code(event)
+			physical_key = self._physical_key(event)
+			previous = self._forwarded_keys.get(physical_key)
+			if previous is not None and previous != key:
+				self.active_vm.devices.input.set_key(
+					previous, False, self._modifier_mask(event)
+				)
+			self._forwarded_keys[physical_key] = key
 			self.active_vm.devices.input.set_key(
-				self._key_code(event), True, self._modifier_mask(event)
+				key, True, self._modifier_mask(event)
 			)
 
 	def keyReleaseEvent(self, event: QKeyEvent):
 		if self.active_vm and not event.isAutoRepeat():
+			key = self._forwarded_keys.pop(self._physical_key(event), None)
+			if key is None:
+				key = self._key_code(event)
 			self.active_vm.devices.input.set_key(
-				self._key_code(event), False, self._modifier_mask(event)
+				key, False, self._modifier_mask(event)
 			)
 
 	def focusOutEvent(self, event):
 		if self.active_vm:
 			self.active_vm.devices.input.release_all()
+		self._forwarded_keys.clear()
 		super().focusOutEvent(event)
 
 
@@ -1243,13 +1322,15 @@ class X26IDE(QMainWindow):
 		self.setFont(font)
 
 		self.setWindowTitle("Xenon IDE")
-		self.setGeometry(100, 100, 950, 650)
+		self.setGeometry(100, 100, 1200, 760)
 
 		self.current_file: Optional[Path] = None
 		self.os_device = OSDevice()
 		self.runtime_context = RuntimeContext(os_device=self.os_device)
 		self.current_theme = "Default Dark"
 		self.worker: Optional[VMWorkerThread] = None
+		self.graphics_maximized = False
+		self._graphics_splitter_sizes: tuple[list[int], list[int]] | None = None
 
 		self.refresh_timer = QTimer()
 		self.refresh_timer.timeout.connect(self.poll_vm_buffer)
@@ -1284,8 +1365,10 @@ class X26IDE(QMainWindow):
 		main_layout.addLayout(toolbar_layout)
 
 		main_splitter = QSplitter(Qt.Orientation.Horizontal)
+		self.main_splitter = main_splitter
 
 		editor_container = QWidget()
+		self.editor_container = editor_container
 		editor_layout = QVBoxLayout(editor_container)
 		editor_layout.setContentsMargins(0, 0, 0, 0)
 		editor_layout.addWidget(QLabel("Editor:"))
@@ -1309,8 +1392,10 @@ class X26IDE(QMainWindow):
 		main_splitter.addWidget(editor_container)
 
 		right_panel_splitter = QSplitter(Qt.Orientation.Vertical)
+		self.right_panel_splitter = right_panel_splitter
 
 		output_container = QWidget()
+		self.output_container = output_container
 		output_layout = QVBoxLayout(output_container)
 		output_layout.setContentsMargins(0, 0, 0, 0)
 		output_layout.addWidget(QLabel("Terminal:"))
@@ -1326,32 +1411,36 @@ class X26IDE(QMainWindow):
 		right_panel_splitter.addWidget(output_container)
 
 		graphics_container = QWidget()
+		self.graphics_container = graphics_container
 
 		graphics_layout = QVBoxLayout(graphics_container)
-		graphics_layout.setContentsMargins(8, 8, 8, 8)
-		graphics_layout.setSpacing(8)
+		graphics_layout.setContentsMargins(4, 4, 4, 4)
+		graphics_layout.setSpacing(4)
 
-		graphics_label = QLabel("Graphics View:")
-		graphics_layout.addWidget(graphics_label)
-
-		graphics_layout.addStretch(1)
+		graphics_header = QHBoxLayout()
+		graphics_header.addWidget(QLabel("Graphics View:"))
+		graphics_header.addStretch(1)
+		self.graphics_size_button = QPushButton("Maximize")
+		self.graphics_size_button.clicked.connect(self.toggle_graphics_view)
+		graphics_header.addWidget(self.graphics_size_button)
+		graphics_layout.addLayout(graphics_header)
 
 		self.graphics_view = VMGraphicsWidget()
 		graphics_layout.addWidget(
 			self.graphics_view,
-			alignment=Qt.AlignmentFlag.AlignCenter,
+			stretch=1,
 		)
-
-		graphics_layout.addStretch(1)
 
 		right_panel_splitter.addWidget(graphics_container)
 
+		right_panel_splitter.setSizes([180, 460])
 		right_panel_splitter.setStretchFactor(0, 1)
-		right_panel_splitter.setStretchFactor(1, 1)
+		right_panel_splitter.setStretchFactor(1, 3)
 		main_splitter.addWidget(right_panel_splitter)
 
 		main_splitter.setStretchFactor(0, 2)
 		main_splitter.setStretchFactor(1, 1)
+		main_splitter.setSizes([650, 520])
 		main_layout.addWidget(main_splitter)
 
 		self.setup_menu_bar()
@@ -1387,6 +1476,32 @@ class X26IDE(QMainWindow):
 			act.setShortcut(shortcut)
 			act.triggered.connect(slot)
 
+		view_menu = menubar.addMenu("View")
+		self.graphics_view_action = view_menu.addAction("Maximize Graphics View")
+		self.graphics_view_action.setShortcut("Ctrl+Shift+G")
+		self.graphics_view_action.triggered.connect(self.toggle_graphics_view)
+
+	def toggle_graphics_view(self):
+		self.graphics_maximized = not self.graphics_maximized
+		if self.graphics_maximized:
+			self._graphics_splitter_sizes = (
+				self.main_splitter.sizes(),
+				self.right_panel_splitter.sizes(),
+			)
+			self.editor_container.hide()
+			self.output_container.hide()
+			self.graphics_size_button.setText("Restore")
+			self.graphics_view_action.setText("Restore Graphics View")
+		else:
+			self.editor_container.show()
+			self.output_container.show()
+			if self._graphics_splitter_sizes:
+				self.main_splitter.setSizes(self._graphics_splitter_sizes[0])
+				self.right_panel_splitter.setSizes(self._graphics_splitter_sizes[1])
+			self.graphics_size_button.setText("Maximize")
+			self.graphics_view_action.setText("Maximize Graphics View")
+		self.graphics_view.setFocus(Qt.FocusReason.OtherFocusReason)
+
 	def apply_theme(self):
 		theme = THEMES[self.current_theme]
 		self.editor.line_number_bg = QColor(theme["toolbar_bg"])
@@ -1402,11 +1517,11 @@ class X26IDE(QMainWindow):
 			QTextEdit {{ background-color: {theme['background']}; color: {theme['foreground']}; border: 1px solid #555; }}
 			QLabel {{ color: {theme['foreground']}; }}
 			QSplitter::handle {{ background-color: #555; }}
-			QToolTip {{ 
-                background-color: {theme['toolbar_bg']}; 
-                color: {theme['foreground']}; 
-                border: none; 
-                padding: 0px; 
+			QToolTip {{
+                background-color: {theme['toolbar_bg']};
+                color: {theme['foreground']};
+                border: none;
+                padding: 0px;
             }}
 		"""
 		self.setStyleSheet(stylesheet)

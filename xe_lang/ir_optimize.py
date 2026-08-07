@@ -17,13 +17,19 @@ def _truncate_toward_zero(value: float) -> int:
 	return int(value)
 
 
+def _pow_i32(base: int, exponent: int) -> int:
+	if exponent < 0:
+		raise ValueError("integer exponent must be non-negative")
+	return pow(base & 0xFFFFFFFF, exponent, 1 << 32)
+
+
 BINARY_FOLDABLE = {
 	"ADDI": lambda a, b: a + b,
 	"SUBI": lambda a, b: a - b,
 	"MULI": lambda a, b: a * b,
 	"DIVI": lambda a, b: int(a / b),
 	"MODI": lambda a, b: a % b,
-	"POWI": lambda a, b: a ** b,
+	"POWI": _pow_i32,
 	"ANDI": lambda a, b: a & b,
 	"ORI": lambda a, b: a | b,
 	"XORI": lambda a, b: a ^ b,
@@ -82,9 +88,18 @@ def fold_constants(instructions: list[Instruction]) -> list[Instruction]:
 			and isinstance(out[-1][3], int)
 			and isinstance(out[-2][3], int)
 		):
-			b = out.pop()
-			a = out.pop()
-			folded = BINARY_FOLDABLE[_opcode(instr)](a[3], b[3])
+			b = out[-1]
+			a = out[-2]
+			try:
+				folded = BINARY_FOLDABLE[_opcode(instr)](a[3], b[3])
+			except (ArithmeticError, OverflowError, ValueError):
+				out.append(instr)
+				continue
+			if not isinstance(folded, int):
+				out.append(instr)
+				continue
+			out.pop()
+			out.pop()
 			out.append((a[0], instr[1], "PUSH", folded))
 		else:
 			out.append(instr)
