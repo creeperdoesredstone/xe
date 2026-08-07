@@ -56,6 +56,7 @@ from xe_lang.nodes import (
 	ProcedureDefinition,
 	StructDefinition,
 	ClassDefinition,
+	EnumDeclaration
 )
 from runtime import run, RuntimeContext
 from ide_themes import THEMES
@@ -108,6 +109,9 @@ def _collect_definitions(node, tokens: list[Token], definitions: dict) -> None:
 	elif isinstance(node, ClassDefinition):
 		pos = _find_name_token_pos(tokens, node.start_pos, node.name)
 		definitions.setdefault(node.name, []).append(("class", pos))
+	elif isinstance(node, EnumDeclaration):
+		pos = _find_name_token_pos(tokens, node.start_pos, node.enum_name)
+		definitions.setdefault(node.enum_name, []).append(("enum", pos))
 
 	for value in vars(node).values():
 		if isinstance(value, (Node, list, tuple)):
@@ -166,6 +170,9 @@ def _collect_definition_details(
 	elif isinstance(node, ClassDefinition):
 		pos = _find_name_token_pos(tokens, node.start_pos, node.name)
 		definitions.setdefault(node.name, []).append(("class", pos, sig))
+	elif isinstance(node, EnumDeclaration):
+		pos = _find_name_token_pos(tokens, node.start_pos, node.enum_name)
+		definitions.setdefault(node.enum_name, []).append(("enum", pos, sig))
 
 	for value in vars(node).values():
 		if isinstance(value, (Node, list, tuple)):

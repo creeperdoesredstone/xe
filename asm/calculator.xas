@@ -9451,7 +9451,7 @@ LOADSP 4
 PUSH 104
 LOAD 157
 PUSH 8
-SYS 110
+SYS 129
 :cleanup(draw_programmer_view)
 POPFP
 POP 5
