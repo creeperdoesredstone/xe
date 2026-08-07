@@ -1487,7 +1487,7 @@ if (graphical_mode) {
 				}
 
 				call draw_editor_key(keypad_x, 56, button_width, "**", graphics::COLOR_1, 1011, expression, &dirty, &error_code)
-				call draw_editor_key(keypad_x + button_width + 2, 56, button_width, "pi", graphics::COLOR_1, 1009, expression, &dirty, &error_code)
+				call draw_editor_key(keypad_x + button_width + 2, 56, button_width, "\x001f", graphics::COLOR_1, 1009, expression, &dirty, &error_code)
 				call draw_editor_key(keypad_x + (button_width + 2) * 2, 56, button_width, "e", graphics::COLOR_1, 1010, expression, &dirty, &error_code)
 				call draw_editor_key(keypad_x + (button_width + 2) * 3, 56, button_width, "(", graphics::COLOR_1, 40, expression, &dirty, &error_code)
 				call draw_editor_key(keypad_x + (button_width + 2) * 4, 56, button_width, ")", graphics::COLOR_1, 41, expression, &dirty, &error_code)

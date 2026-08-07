@@ -139,6 +139,29 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 		"\n": "",
 	}
 
+	HEX_DIGITS = "0123456789abcdefABCDEF"
+
+	def read_hex_escape() -> tuple[str, None] | tuple[None, LexError]:
+		nonlocal current_char
+		escape_start: Position = pos.copy()
+		advance()  # consume 'x'
+
+		hex_digits: str = ""
+		for _ in range(4):
+			if current_char is None or current_char not in HEX_DIGITS:
+				break
+			hex_digits += current_char
+			advance()
+
+		if len(hex_digits) == 0:
+			return None, LexError(
+				"Expected hexadecimal digits after '\\x' escape.",
+				escape_start,
+				pos.copy(),
+			)
+
+		return chr(int(hex_digits, 16)), None
+
 	# lex
 	while current_char != None:
 		start_pos = pos.copy()
@@ -211,10 +234,16 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 			if current_char != "'":
 				if current_char == "\\":
 					advance()
-					char = escape_map.get(current_char, current_char)
+					if current_char == "x":
+						char, hex_err = read_hex_escape()
+						if hex_err is not None:
+							return tokens, hex_err
+					else:
+						char = escape_map.get(current_char, current_char)
+						advance()
 				else:
 					char = current_char
-				advance()
+					advance()
 				
 				if current_char != "'":
 					return tokens, LexError(
@@ -231,8 +260,16 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 
 			while current_char not in (None, "\n") and current_char != '"' or escape:
 				if escape:
-					string += escape_map.get(current_char, current_char)
-					escape = False
+					if current_char == "x":
+						hex_char, hex_err = read_hex_escape()
+						if hex_err is not None:
+							return tokens, hex_err
+						string += hex_char
+						escape = False
+						continue  # read_hex_escape already advanced past the escape
+					else:
+						string += escape_map.get(current_char, current_char)
+						escape = False
 				else:
 					if current_char == "\\":
 						escape = True
