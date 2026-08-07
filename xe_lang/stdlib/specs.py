@@ -134,7 +134,7 @@ OS_SPEC = LibrarySpec(
 		_builtin("apply_settings", BuiltInID.OS_APPLY_SETTINGS, ("int", "int", "int"), "bool", SyscallID.APP_OS_APPLY_SETTINGS),
 		_builtin("background_count", BuiltInID.OS_BACKGROUND_COUNT, (), "int", SyscallID.APP_OS_BACKGROUND_COUNT),
 		_builtin("palette_count", BuiltInID.OS_PALETTE_COUNT, (), "int", SyscallID.APP_OS_PALETTE_COUNT),
-		_builtin("ticks", BuiltInID.OS_TICKS, (), "int", SyscallID.APP_OS_TICKS),
+		_builtin("ticks", BuiltInID.OS_TICKS, (), "int", SyscallID.OS_GET_TICKS),
 		_builtin("open_read", BuiltInID.OS_OPEN_READ, ("string",), "File", SyscallID.APP_OS_OPEN_READ),
 		_builtin("open_write", BuiltInID.OS_OPEN_WRITE, ("string",), "File", SyscallID.APP_OS_OPEN_WRITE),
 		_builtin("read", BuiltInID.OS_READ, ("File",), "string", SyscallID.APP_OS_READ),

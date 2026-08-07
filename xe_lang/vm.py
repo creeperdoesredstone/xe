@@ -923,28 +923,28 @@ class VM:
 								return res.fail(self._error(str(error)))
 							self.data_memory[descriptor + 1] = len(value) + 1
 							self.push(descriptor)
-						case SyscallID.GET_TIME:
+						case SyscallID.OS_GET_TICKS:
 							self.push(int((time.monotonic() - self.start_time) * 1000) & TRUE)
-						case SyscallID.MALLOC:
+						case SyscallID.OS_MALLOC:
 							words = res.register(self.pop())
 							if res.error:
 								return res
 
 							return self.malloc(words)
-						case SyscallID.FREE:
+						case SyscallID.OS_FREE:
 							ptr = res.register(self.pop())
 							if res.error:
 								return res
 							self.free(ptr, res)
 							if res.error:
 								return res
-						case SyscallID.EXIT:
+						case SyscallID.OS_EXIT:
 							code = res.register(self.pop())
 							if res.error:
 								return res
 							self.exit_code = code - 0x100000000 if code > 0x7FFFFFFF else code
 							return res.success(False)
-						case SyscallID.SLEEP:
+						case SyscallID.OS_SLEEP:
 							duration = res.register(self.pop())
 							if res.error:
 								return res

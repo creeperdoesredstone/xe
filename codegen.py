@@ -145,12 +145,12 @@ def emit_string_literal_init(node: StringLiteral) -> Result:
 	instructions = [
 		# allocate descriptor
 		(node.start_pos, node.end_pos, "PUSH", 3),
-		(node.start_pos, node.end_pos, "SYS", SyscallID.MALLOC),
+		(node.start_pos, node.end_pos, "SYS", SyscallID.OS_MALLOC),
 		(node.start_pos, node.end_pos, "DUP", 0),
 		(node.start_pos, node.end_pos, "DUP", 0),
 		# allocate character buffer
 		(node.start_pos, node.end_pos, "PUSH", len(node.value) + 1),
-		(node.start_pos, node.end_pos, "SYS", SyscallID.MALLOC),
+		(node.start_pos, node.end_pos, "SYS", SyscallID.OS_MALLOC),
 		# store pointer to buffer[0] at descriptor[0]
 		(node.start_pos, node.end_pos, "STREIND"),
 		(node.start_pos, node.end_pos, "INCI"),
@@ -1212,7 +1212,7 @@ def emit_OutputStatement(node: OutputStatement) -> Result:
 			instructions += (
 				[
 					(expr.end_pos, expr.end_pos, "PUSH", 10),
-					(expr.end_pos, expr.end_pos, "SYS", SyscallID.MALLOC),
+					(expr.end_pos, expr.end_pos, "SYS", SyscallID.OS_MALLOC),
 					(expr.end_pos, expr.end_pos, "DUP", 0),
 					(expr.end_pos, expr.end_pos, "DUP", 0),
 				]
@@ -1220,7 +1220,7 @@ def emit_OutputStatement(node: OutputStatement) -> Result:
 				+ [
 					(expr.end_pos, expr.end_pos, "SYS", SyscallID.INT_TO_HEX),
 					(expr.end_pos, expr.end_pos, "SYS", SyscallID.OUTPUT_CHARS),
-					(expr.end_pos, expr.end_pos, "SYS", SyscallID.FREE),
+					(expr.end_pos, expr.end_pos, "SYS", SyscallID.OS_FREE),
 				]
 			)
 		else:
@@ -1229,7 +1229,7 @@ def emit_OutputStatement(node: OutputStatement) -> Result:
 					instructions += (
 						[
 							(expr.end_pos, expr.end_pos, "PUSH", 16),
-							(expr.end_pos, expr.end_pos, "SYS", SyscallID.MALLOC),
+							(expr.end_pos, expr.end_pos, "SYS", SyscallID.OS_MALLOC),
 							(expr.end_pos, expr.end_pos, "DUP", 0),
 							(expr.end_pos, expr.end_pos, "DUP", 0),
 						]
@@ -1237,7 +1237,7 @@ def emit_OutputStatement(node: OutputStatement) -> Result:
 						+ [
 							(expr.end_pos, expr.end_pos, "SYS", SyscallID.FLOAT_TO_CHARS),
 							(expr.end_pos, expr.end_pos, "SYS", SyscallID.OUTPUT_CHARS),
-							(expr.end_pos, expr.end_pos, "SYS", SyscallID.FREE),
+							(expr.end_pos, expr.end_pos, "SYS", SyscallID.OS_FREE),
 						]
 					)
 				case "char":
@@ -1253,7 +1253,7 @@ def emit_OutputStatement(node: OutputStatement) -> Result:
 					instructions += (
 						[
 							(expr.end_pos, expr.end_pos, "PUSH", 16),
-							(expr.end_pos, expr.end_pos, "SYS", SyscallID.MALLOC),
+							(expr.end_pos, expr.end_pos, "SYS", SyscallID.OS_MALLOC),
 							(expr.end_pos, expr.end_pos, "DUP", 0),
 							(expr.end_pos, expr.end_pos, "DUP", 0),
 						]
@@ -1261,7 +1261,7 @@ def emit_OutputStatement(node: OutputStatement) -> Result:
 						+ [
 							(expr.end_pos, expr.end_pos, "SYS", SyscallID.INT_TO_CHARS),
 							(expr.end_pos, expr.end_pos, "SYS", SyscallID.OUTPUT_CHARS),
-							(expr.end_pos, expr.end_pos, "SYS", SyscallID.FREE),
+							(expr.end_pos, expr.end_pos, "SYS", SyscallID.OS_FREE),
 						]
 					)
 
@@ -1297,7 +1297,7 @@ def emit_ArrayDeclaration(node: ArrayDeclaration) -> Result:
 	return Result().success(
 		[
 			(node.start_pos, node.end_pos, "PUSH", node.size.value),
-			(node.start_pos, node.end_pos, "SYS", SyscallID.MALLOC),
+			(node.start_pos, node.end_pos, "SYS", SyscallID.OS_MALLOC),
 			(node.start_pos, node.end_pos, "STORE", node.address),
 		]
 	)
@@ -1913,7 +1913,7 @@ def emit_NewArrayExpression(node: NewArrayExpression) -> Result:
 		instructions.append((node.start_pos, node.end_pos, "PUSH", element_width))
 		instructions.append((node.start_pos, node.end_pos, "MULI"))
 
-	instructions.append((node.start_pos, node.end_pos, "SYS", SyscallID.MALLOC))
+	instructions.append((node.start_pos, node.end_pos, "SYS", SyscallID.OS_MALLOC))
 
 	return res.success(instructions)
 
@@ -1925,7 +1925,7 @@ def emit_NewObjectExpression(node: NewObjectExpression) -> Result:
 	size = node.struct_symbol.size
 
 	instructions.append((node.start_pos, node.end_pos, "PUSH", size))
-	instructions.append((node.start_pos, node.end_pos, "SYS", SyscallID.MALLOC))
+	instructions.append((node.start_pos, node.end_pos, "SYS", SyscallID.OS_MALLOC))
 
 	init_method = getattr(node, "init_method", None)
 
