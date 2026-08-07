@@ -3,28 +3,43 @@
 
 var calculator_window: graphics::Window
 
+enum class FunctionCode {
+	NONE,
+	SIN,
+	COS,
+	TAN,
+	ASIN,
+	ACOS,
+	ATAN,
+	SQRT,
+	POW
+}
+
+enum class ErrorCode {
+	NONE,
+	EXPECTED_VALUE,
+	MALFORMED_NUM,
+	UNK_IDENT,
+	EXPECTED_PR_OR_COMMA,
+	ZERO_DIV_OR_MOD,
+	DOMAIN_ERROR,
+	UNEXPECTED_TRAIL
+}
+
 fn is_whitespace(value: char) bool {
-	var code: int
-	code = (int)value
-	return code == 32 || code == 9 || code == 10 || code == 13
+	return value == 32 || value == 9 || value == 10 || value == 13
 }
 
 fn is_digit(value: char) bool {
-	var code: int
-	code = (int)value
-	return code >= 48 && code <= 57
+	return value >= 48 && value <= 57
 }
 
 fn is_letter(value: char) bool {
-	var code: int
-	code = (int)value
-	return (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+	return (value >= 65 && value <= 90) || (value >= 97 && value <= 122)
 }
 
 fn is_identifier_char(value: char) bool {
-	var code: int
-	code = (int)value
-	return is_letter(value) || is_digit(value) || code == 95
+	return is_letter(value) || is_digit(value) || value == 95
 }
 
 fn is_integral(value: float) bool {
@@ -106,23 +121,15 @@ fn read_operator_code(text: string, position: int) int {
 	var code: int
 	code = peek_code(text, position)
 
-	if (code == 43) {
-		return 1
-	}
-	elseif (code == 45) {
-		return 2
-	}
-	elseif (code == 42) {
-		if (peek_code(text, position + 1) == 42) {
-			return 6
+	switch (code) {
+		case '+' { return 1 }
+		case '-' { return 2 }
+		case '*' {
+			if (peek_code(text, position + 1) == '*') { return 6 }
+			return 3
 		}
-		return 3
-	}
-	elseif (code == 47) {
-		return 4
-	}
-	elseif (code == 37) {
-		return 5
+		case '/' { return 4 }
+		case '%' { return 5 }
 	}
 
 	return 0
@@ -150,22 +157,22 @@ fn apply_function(function_code: int, first: float, second: float, degrees_mode:
 		angle = first * 180.0 / math::pi
 	}
 
-	if (function_code == 1) {
+	if (function_code == FunctionCode.SIN) {
 		return math::sin(angle)
 	}
-	elseif (function_code == 2) {
+	elseif (function_code == FunctionCode.COS) {
 		return math::cos(angle)
 	}
-	elseif (function_code == 3) {
+	elseif (function_code == FunctionCode.TAN) {
 		return math::tan(angle)
 	}
-	elseif (function_code == 4 || function_code == 5) {
+	elseif (function_code == FunctionCode.ASIN || function_code == FunctionCode.ACOS) {
 		if (first < -1.0 || first > 1.0) {
 			call set_error(error_code, error_position, 6, function_position)
 			return 0.0
 		}
 
-		if (function_code == 4) {
+		if (function_code == FunctionCode.ASIN) {
 			result = math::asin(first)
 		}
 		else {
@@ -177,21 +184,21 @@ fn apply_function(function_code: int, first: float, second: float, degrees_mode:
 		}
 		return result
 	}
-	elseif (function_code == 6) {
+	elseif (function_code == FunctionCode.ATAN) {
 		result = math::atan(first)
 		if (!degrees_mode) {
 			result = result * math::pi / 180.0
 		}
 		return result
 	}
-	elseif (function_code == 7) {
+	elseif (function_code == FunctionCode.SQRT) {
 		if (first < 0.0) {
 			call set_error(error_code, error_position, 6, function_position)
 			return 0.0
 		}
 		return math::sqrt(first)
 	}
-	elseif (function_code == 8) {
+	elseif (function_code == FunctionCode.POW) {
 		if (first == 0.0 && second < 0.0) {
 			call set_error(error_code, error_position, 6, function_position)
 			return 0.0
@@ -240,15 +247,15 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 		return 0.0
 	}
 
-	if (current_code == 43 || current_code == 45) {
+	if (current_code == '+' || current_code == '-') {
 		sign_code = current_code
 		*position += 1
 		left = parse_expression(text, position, 25, degrees_mode, error_code, error_position)
-		if (sign_code == 45) {
+		if (sign_code == '-') {
 			left = -left
 		}
 	}
-	elseif ((current_code >= 48 && current_code <= 57) || current_code == 46) {
+	elseif ((current_code >= '0' && current_code <= '9') || current_code == '.') {
 		left = 0.0
 		divisor = 1.0
 		has_digit = false
@@ -257,18 +264,18 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 
 		while (scanning_number) {
 			current_code = peek_code(text, *position)
-			if (current_code >= 48 && current_code <= 57) {
+			if (current_code >= '0' && current_code <= '9') {
 				has_digit = true
 				if (has_decimal) {
 					divisor *= 10.0
-					left += (float)(current_code - 48) / divisor
+					left += (float)(current_code - '0') / divisor
 				}
 				else {
-					left = left * 10.0 + (float)(current_code - 48)
+					left = left * 10.0 + (float)(current_code - '0')
 				}
 				*position += 1
 			}
-			elseif (current_code == 46) {
+			elseif (current_code == '.') {
 				if (has_decimal) {
 					call set_error(error_code, error_position, 2, *position)
 					return 0.0
@@ -286,14 +293,14 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 			return 0.0
 		}
 	}
-	elseif (current_code == 40) {
+	elseif (current_code == '(') {
 		*position += 1
 		left = parse_expression(text, position, 0, degrees_mode, error_code, error_position)
 		if (*error_code != 0) {
 			return 0.0
 		}
 		call skip_whitespace(text, position)
-		if (peek_code(text, *position) != 41) {
+		if (peek_code(text, *position) != ')') {
 			call set_error(error_code, error_position, 4, *position)
 			return 0.0
 		}
@@ -312,28 +319,28 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 			matched_constant = true
 		}
 		elseif (match_name(text, position, "sin")) {
-			function_code = 1
+			function_code = FunctionCode.SIN
 		}
 		elseif (match_name(text, position, "cos")) {
-			function_code = 2
+			function_code = FunctionCode.COS
 		}
 		elseif (match_name(text, position, "tan")) {
-			function_code = 3
+			function_code = FunctionCode.TAN
 		}
 		elseif (match_name(text, position, "asin")) {
-			function_code = 4
+			function_code = FunctionCode.ASIN
 		}
 		elseif (match_name(text, position, "acos")) {
-			function_code = 5
+			function_code = FunctionCode.ACOS
 		}
 		elseif (match_name(text, position, "atan")) {
-			function_code = 6
+			function_code = FunctionCode.ATAN
 		}
 		elseif (match_name(text, position, "sqrt")) {
-			function_code = 7
+			function_code = FunctionCode.SQRT
 		}
 		elseif (match_name(text, position, "pow")) {
-			function_code = 8
+			function_code = FunctionCode.POW
 		}
 		else {
 			scanning_identifier = true
@@ -509,25 +516,25 @@ fn evaluate_expression(text: string, degrees_mode: bool, error_code: int*, error
 proc print_calculator_error(error_code: int, error_position: int) {
 	out << "Error at " << error_position + 1 << ": "
 
-	if (error_code == 1) {
+	if (error_code == ErrorCode.EXPECTED_VALUE) {
 		out << "expected a value"
 	}
-	elseif (error_code == 2) {
+	elseif (error_code == ErrorCode.MALFORMED_NUM) {
 		out << "malformed number"
 	}
-	elseif (error_code == 3) {
+	elseif (error_code == ErrorCode.UNK_IDENT) {
 		out << "unknown identifier or function"
 	}
-	elseif (error_code == 4) {
+	elseif (error_code == ErrorCode.EXPECTED_PR_OR_COMMA) {
 		out << "expected '(', ')', or ','"
 	}
-	elseif (error_code == 5) {
+	elseif (error_code == ErrorCode.ZERO_DIV_MOD) {
 		out << "division or modulo by zero"
 	}
-	elseif (error_code == 6) {
+	elseif (error_code == ErrorCode.DOMAIN_ERROR) {
 		out << "math domain error"
 	}
-	elseif (error_code == 7) {
+	elseif (error_code == ErrorCode.UNEXPECTED_TRAIL) {
 		out << "unexpected trailing input"
 	}
 	else {
