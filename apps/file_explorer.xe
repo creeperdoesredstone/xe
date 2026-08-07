@@ -846,7 +846,7 @@ proc reset_energy_shells() {
 	count = os::entry_count(current_path)
 	if (count > 64) { count = 64 }
 	cached_entry_count = count
-	shell_capacity = 6
+	shell_capacity = 8
 	if (count >= 48) {
 		shell_capacity = (count + 8) / 8
 		if (shell_capacity > 8) { shell_capacity = 8 }
@@ -2149,7 +2149,7 @@ transition_destination = ""
 transition_target_name = ""
 transition_hops = 1
 transition_step = 1
-shell_capacity = 6
+shell_capacity = 8
 last_click_entry = -1
 last_click_ticks = -1000
 context_open = false
