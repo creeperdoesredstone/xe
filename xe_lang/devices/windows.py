@@ -60,6 +60,7 @@ class WindowTheme:
 	minimum_height: int = 54
 	resize_grab: int = 5
 	resize_outer_grab: int = 5
+	maximize_snap_margin: int = 6
 
 
 @dataclass
@@ -79,6 +80,8 @@ class DragSession:
 	offset_x: int
 	offset_y: int
 	outline: Rect
+	floating_outline: Rect
+	snap_maximize: bool = False
 
 
 @dataclass
@@ -277,15 +280,24 @@ class WindowManager:
 	def _update_drag_outline(self, frame: InputFrame) -> None:
 		if not self._drag:
 			return
-		outline = self._drag.outline
-		outline.x = max(
+		session = self._drag
+		floating = session.floating_outline
+		floating.x = max(
 			0,
-			min(self.work_width - outline.width, frame.x - self._drag.offset_x),
+			min(self.work_width - floating.width, frame.x - session.offset_x),
 		)
-		outline.y = max(
+		floating.y = max(
 			0,
-			min(self.work_height - outline.height, frame.y - self._drag.offset_y),
+			min(self.work_height - floating.height, frame.y - session.offset_y),
 		)
+		session.snap_maximize = (
+			0 <= frame.x < self.work_width
+			and 0 <= frame.y < max(1, self.theme.maximize_snap_margin)
+		)
+		if session.snap_maximize:
+			session.outline = Rect(0, 0, self.work_width, self.work_height)
+		else:
+			session.outline = floating.copy()
 
 	@staticmethod
 	def _scaled_drag_anchor(offset: int, source_size: int, target_size: int) -> int:
@@ -341,7 +353,8 @@ class WindowManager:
 			record.handle,
 			anchor_x,
 			anchor_y,
-			restored,
+			restored.copy(),
+			restored.copy(),
 		)
 		self._maximized_drag = None
 
@@ -469,6 +482,7 @@ class WindowManager:
 					frame.x - record.bounds.x,
 					frame.y - record.bounds.y,
 					record.bounds.copy(),
+					record.bounds.copy(),
 				)
 			elif region == "title" and record.state == WindowState.MAXIMIZED:
 				self._maximized_drag = MaximizedDragCandidate(
@@ -493,10 +507,20 @@ class WindowManager:
 			if frame.left_down or frame.left_released:
 				self._update_drag_outline(frame)
 			if frame.left_released:
-				record.bounds.x = self._drag.outline.x
-				record.bounds.y = self._drag.outline.y
+				session = self._drag
 				self._drag = None
-				event |= EVENT_MOVED
+				if session.snap_maximize:
+					record.restore_bounds = session.floating_outline.copy()
+					self._start_transition(
+						record,
+						Rect(0, 0, self.work_width, self.work_height),
+						WindowState.MAXIMIZED,
+						EVENT_MAXIMIZED,
+					)
+				else:
+					record.bounds.x = session.outline.x
+					record.bounds.y = session.outline.y
+					event |= EVENT_MOVED
 
 		if self._resize and self._resize.handle == handle:
 			if frame.left_down or frame.left_released:
@@ -620,7 +644,7 @@ class WindowManager:
 			return
 		if transparency == 100:
 			return
-		opaque_slots = max(1, 4 - int(round(transparency * 4 / 100)))
+		opaque_slots = max(0, min(4, int(round((100 - transparency) * 4 / 100))))
 		self.graphics.fill_dithered_rect(
 			rect.x,
 			rect.y,
@@ -656,7 +680,7 @@ class WindowManager:
 		else:
 			self._fill_window_rect(b, t.content_color, transparency)
 		title_rect = Rect(b.x + corner_inset, b.y, b.width - corner_inset * 2, t.title_height)
-		self._fill_window_rect(title_rect, t.title_color, transparency // 2)
+		self._fill_window_rect(title_rect, t.title_color, transparency)
 		if corner_inset:
 			g.fill_rect(b.x + corner_inset, b.y, b.width - corner_inset * 2, t.border_width, t.border_color)
 			g.fill_rect(b.x + corner_inset, b.y + b.height - t.border_width, b.width - corner_inset * 2, t.border_width, t.border_color)

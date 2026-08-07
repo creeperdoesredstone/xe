@@ -2,6 +2,8 @@
 
 var terminal_window: graphics::Window
 var terminal_command: string
+var terminal_clipboard: string
+var terminal_selected_all: bool
 var tab_1_command: string
 var tab_2_command: string
 var tab_3_command: string
@@ -42,6 +44,56 @@ proc clear_terminal_text(text: string) {
 proc set_terminal_text(target: string, source: string) {
 	call clear_terminal_text(target)
 	call xestring::append(target, source)
+}
+
+proc terminal_select_all() {
+	terminal_selected_all = xestring::strlen(terminal_command) > 0
+}
+
+proc terminal_copy_selection() {
+	if (terminal_selected_all) {
+		call set_terminal_text(terminal_clipboard, terminal_command)
+	}
+}
+
+proc terminal_cut_selection() {
+	if (terminal_selected_all) {
+		call terminal_copy_selection()
+		call clear_terminal_text(terminal_command)
+		terminal_selected_all = false
+		history_position = 0
+	}
+}
+
+proc terminal_paste_clipboard() {
+	if (xestring::strlen(terminal_clipboard) > 0) {
+		if (terminal_selected_all) { call clear_terminal_text(terminal_command) }
+		call xestring::append(terminal_command, terminal_clipboard)
+		terminal_selected_all = false
+		history_position = 0
+	}
+}
+
+proc handle_terminal_control_shortcut(key: int) {
+	if (key == 1 || key == 65 || key == 97) {
+		call terminal_select_all()
+	}
+	elseif (key == 3 || key == 67 || key == 99) {
+		call terminal_copy_selection()
+	}
+	elseif (key == 24 || key == 88 || key == 120) {
+		call terminal_cut_selection()
+	}
+	elseif (key == 22 || key == 86 || key == 118) {
+		call terminal_paste_clipboard()
+	}
+}
+
+proc append_terminal_character(key: int) {
+	if (terminal_selected_all) { call clear_terminal_text(terminal_command) }
+	terminal_selected_all = false
+	call xestring::append_char(terminal_command, (char)key)
+	history_position = 0
 }
 
 proc append_padded_terminal_number(target: string, value: int, digits: int) {
@@ -124,6 +176,7 @@ proc load_active_command() {
 	else {
 		call set_terminal_text(terminal_command, tab_3_command)
 	}
+	terminal_selected_all = false
 }
 
 proc clear_active_output() {
@@ -275,6 +328,7 @@ proc execute_terminal_command() {
 	var echo_index: int
 	if (xestring::strlen(terminal_command) == 0) {
 		call clear_terminal_text(terminal_command)
+		terminal_selected_all = false
 		return
 	}
 	elseif (terminal_command == "help") {
@@ -390,7 +444,7 @@ proc execute_terminal_command() {
 		call set_active_output("Previous command saved")
 	}
 	elseif (terminal_command == "about") {
-		call set_active_output("Xenon Terminal - deterministic Xe shell")
+		call set_active_output("Placeholder")
 	}
 	elseif (terminal_command == "version") {
 		call set_active_output("Xenon Terminal 1.0 / Xe current")
@@ -415,6 +469,7 @@ proc execute_terminal_command() {
 	}
 	call push_terminal_history(terminal_command)
 	call clear_terminal_text(terminal_command)
+	terminal_selected_all = false
 	call save_active_command()
 	history_position = 0
 }
@@ -453,6 +508,7 @@ proc autocomplete_terminal_command() {
 	elseif (terminal_starts_with(terminal_command, "ex")) {
 		call set_terminal_text(terminal_command, "exit")
 	}
+	terminal_selected_all = false
 }
 
 proc recall_terminal_history(direction: int) {
@@ -470,10 +526,17 @@ proc recall_terminal_history(direction: int) {
 	else {
 		call set_terminal_text(terminal_command, history_3)
 	}
+	terminal_selected_all = false
 }
 
 proc erase_terminal_character() {
 	var length: int
+	if (terminal_selected_all) {
+		call clear_terminal_text(terminal_command)
+		terminal_selected_all = false
+		history_position = 0
+		return
+	}
 	length = xestring::strlen(terminal_command)
 	if (length > 0) {
 		terminal_command[length - 1] = '\0'
@@ -746,6 +809,8 @@ proc set_and_execute_command(text: string) {
 }
 
 terminal_command = ""
+terminal_clipboard = ""
+terminal_selected_all = false
 tab_1_command = ""
 tab_2_command = ""
 tab_3_command = ""
@@ -815,6 +880,7 @@ var current_ticks: int
 var delta_ms: int
 var visible_command_chars: int
 var maximum_command_chars: int
+var command_color: int
 
 terminal_window.x = 44
 terminal_window.y = 34
@@ -1021,14 +1087,17 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 				call graphics::draw_text_small(terminal_window, side_x + 2, body_y + 1, "Saved", graphics::COLOR_14)
 				if (graphics::button(terminal_window, side_x, body_y + 8, side_width, 7, saved_1)) {
 					call set_terminal_text(terminal_command, saved_1)
+					terminal_selected_all = false
 					saved_list_open = false
 				}
 				if (graphics::button(terminal_window, side_x, body_y + 16, side_width, 7, saved_2)) {
 					call set_terminal_text(terminal_command, saved_2)
+					terminal_selected_all = false
 					saved_list_open = false
 				}
 				if (graphics::button(terminal_window, side_x, body_y + 24, side_width, 7, saved_3)) {
 					call set_terminal_text(terminal_command, saved_3)
+					terminal_selected_all = false
 					saved_list_open = false
 				}
 				if (graphics::button(terminal_window, side_x, body_y + 34, side_width, 7, "Back")) { saved_list_open = false }
@@ -1037,14 +1106,16 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 
 		call graphics::fill_rect(terminal_window, 4, command_y, command_width, command_height, graphics::COLOR_1)
 		call graphics::draw_rect(terminal_window, 4, command_y, command_width, command_height, accent_color)
+		command_color = graphics::WHITE
+		if (terminal_selected_all) { command_color = graphics::COLOR_14 }
 		if (active_terminal_text_large() && command_height >= 9) {
 			call graphics::draw_text(terminal_window, 7, command_y + 2, ">", accent_color)
-			call draw_terminal_line(12, command_y + 2, command_width - 10, terminal_command, graphics::WHITE)
+			call draw_terminal_line(12, command_y + 2, command_width - 10, terminal_command, command_color)
 			maximum_command_chars = (command_width - 18) / 6
 		}
 		else {
 			call graphics::draw_text_small(terminal_window, 7, command_y + 1, ">", accent_color)
-			call draw_terminal_line_small(12, command_y + 1, command_width - 10, terminal_command, graphics::WHITE)
+			call draw_terminal_line_small(12, command_y + 1, command_width - 10, terminal_command, command_color)
 			maximum_command_chars = (command_width - 14) / 4
 		}
 		if (maximum_command_chars < 0) { maximum_command_chars = 0 }
@@ -1061,7 +1132,10 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 
 			key = graphics::read_key()
 			while (key != 0) {
-				if (key == graphics::KEY_BACKSPACE) {
+				if ((graphics::modifiers() & graphics::MOD_CTRL) != 0) {
+					call handle_terminal_control_shortcut(key)
+				}
+				elseif (key == graphics::KEY_BACKSPACE) {
 					call erase_terminal_character()
 				}
 				elseif (key == graphics::KEY_ENTER) {
@@ -1077,8 +1151,7 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 					call autocomplete_terminal_command()
 				}
 				elseif (key >= 32 && key <= 126) {
-					call xestring::append_char(terminal_command, (char)key)
-					history_position = 0
+					call append_terminal_character(key)
 				}
 				key = graphics::read_key()
 			}

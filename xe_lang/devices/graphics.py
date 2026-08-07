@@ -711,6 +711,61 @@ class GraphicsDevice:
 		glyph = font.get(char, font["\x7f"])
 		return (glyph[0] + 1) * scale
 
+	def styled_char_advance(self, char: str, font_size: int) -> int:
+		small = font_size <= 1
+		font_scale = 1 if font_size <= 2 else 2
+		return self.text_advance(char, font_scale, small=small)
+
+	def draw_char_styled(
+		self,
+		x: int,
+		y: int,
+		char: str,
+		color: int,
+		font_size: int,
+		style: int,
+		pixel_scale: int | None = None,
+	) -> None:
+		if char in "\r\n":
+			return
+		small = font_size <= 1
+		font_scale = 1 if font_size <= 2 else 2
+		font = FONT_3X5 if small else FONT_5X7
+		base_scale = self.text_scale if pixel_scale is None else max(1, int(pixel_scale))
+		scale = base_scale * font_scale
+		if char == "\t":
+			return
+		glyph = font.get(char, font["\x7f"])
+		glyph_width = glyph[0]
+		rows = tuple(bits >> (5 - glyph_width) for bits in glyph[1:])
+		bold = bool(style & 1)
+		italic = bool(style & 2)
+		# Styled glyphs must remain inside the same proportional cell advertised
+		# by styled_char_advance().  The final blank font column is available for
+		# slant and weight, but neither effect may spill into the next character.
+		maximum_column = glyph_width - 1 if bold else glyph_width
+		for row, bits in enumerate(rows):
+			slant = (len(rows) - 1 - row) // (2 if small else 3) if italic else 0
+			for column in range(glyph_width):
+				if bits & (1 << (glyph_width - 1 - column)):
+					draw_column = min(column + slant, maximum_column)
+					self.fill_rect(
+						x + draw_column * scale,
+						y + row * scale,
+						scale * (2 if bold else 1),
+						scale,
+						color,
+					)
+		if style & 4:
+			advance = self.styled_char_advance(char, font_size) * base_scale
+			self.fill_rect(
+				x,
+				y + len(rows) * scale,
+				max(base_scale, advance - base_scale),
+				base_scale,
+				color,
+			)
+
 	def measure_text(
 		self,
 		text: str,

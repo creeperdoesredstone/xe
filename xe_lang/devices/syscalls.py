@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import random
 import struct
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -27,6 +28,12 @@ from .windows import WindowManager, WindowState
 
 TRUE = 0xFFFFFFFF
 FALSE = 0
+COMPILER_RUN_INSTRUCTION_LIMIT = 500_000
+COMPILER_RUN_OUTPUT_LIMIT = 8_192
+COMPILER_RUN_SOURCE_LIMIT = 32_768
+COMPILER_RUN_TIME_LIMIT = 2.0
+COMPILER_RUN_TRUNCATION_MARKER = "\n[output truncated]"
+_compiler_run_state = threading.local()
 
 WINDOW_X = 0
 WINDOW_Y = 1
@@ -135,6 +142,7 @@ class DeviceRuntime:
 			SyscallID.APP_GRAPHICS_MOUSE_DOWN: self._graphics_mouse_down,
 			SyscallID.APP_GRAPHICS_MOUSE_PRESSED: self._graphics_mouse_pressed,
 			SyscallID.APP_GRAPHICS_MOUSE_RELEASED: self._graphics_mouse_released,
+			SyscallID.APP_GRAPHICS_SCROLL_DELTA: self._graphics_scroll_delta,
 			SyscallID.APP_GRAPHICS_KEY_DOWN: self._graphics_key_down,
 			SyscallID.APP_GRAPHICS_READ_KEY: self._graphics_read_key,
 			SyscallID.APP_GRAPHICS_CONTENT_WIDTH: self._graphics_content_width,
@@ -150,6 +158,8 @@ class DeviceRuntime:
 			SyscallID.APP_GRAPHICS_BUTTON_FLAT: self._graphics_button_flat,
 			SyscallID.APP_GRAPHICS_DRAW_ATOM: self._graphics_draw_atom,
 			SyscallID.APP_GRAPHICS_DRAW_ICON: self._graphics_draw_icon,
+			SyscallID.APP_GRAPHICS_CHAR_ADVANCE: self._graphics_char_advance,
+			SyscallID.APP_GRAPHICS_DRAW_CHAR_STYLED: self._graphics_draw_char_styled,
 			SyscallID.APP_GRAPHICS_MODIFIERS: self._graphics_modifiers,
 			SyscallID.APP_GRAPHICS_RIGHT_MOUSE_DOWN: self._graphics_right_mouse_down,
 			SyscallID.APP_GRAPHICS_RIGHT_MOUSE_PRESSED: self._graphics_right_mouse_pressed,
@@ -238,6 +248,7 @@ class DeviceRuntime:
 			SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_LINE: self._compiler_document_script_line,
 			SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_ENABLED: self._compiler_document_script_enabled,
 			SyscallID.APP_COMPILER_DOCUMENT_SOURCE: self._compiler_document_source,
+			SyscallID.APP_COMPILER_RUN: self._compiler_run,
 		}
 
 	def set_frame_handler(self, handler: Callable[[FrameSnapshot], None] | None) -> None:
@@ -929,6 +940,31 @@ class DeviceRuntime:
 			pixel_scale=scale,
 		)
 
+	def _graphics_char_advance(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 2)
+		if args is None:
+			return
+		value, font_size = args
+		vm.push(self.graphics.styled_char_advance(chr(value & 0xFF), _signed(font_size)))
+
+	def _graphics_draw_char_styled(self, vm: Any, result: Any) -> None:
+		entry = self._window_args(vm, result, 7)
+		if not entry or not entry[1]:
+			return
+		_, handle, values = entry
+		x, y, value, color, font_size, style = values
+		ox, oy = self._origin(handle)
+		scale = self._target_scale(handle)
+		self.graphics.draw_char_styled(
+			ox + _signed(x) * scale,
+			oy + _signed(y) * scale,
+			chr(value & 0xFF),
+			_signed(color),
+			_signed(font_size),
+			_signed(style),
+			pixel_scale=scale,
+		)
+
 	def _graphics_button(self, vm: Any, result: Any) -> None:
 		entry = self._window_args(vm, result, 6)
 		if not entry or not entry[1]:
@@ -1133,6 +1169,9 @@ class DeviceRuntime:
 	def _graphics_mouse_released(self, vm: Any, result: Any) -> None:
 		self._push_bool(vm, self.input.frame().left_released)
 
+	def _graphics_scroll_delta(self, vm: Any, result: Any) -> None:
+		vm.push(self.input.frame().scroll_delta & TRUE)
+
 	def _graphics_key_down(self, vm: Any, result: Any) -> None:
 		args = self._args(vm, result, 1)
 		if args is not None:
@@ -1180,7 +1219,7 @@ class DeviceRuntime:
 	def _os_sleep(self, vm: Any, result: Any) -> None:
 		args = self._args(vm, result, 1)
 		if args is not None:
-			vm.cancel_event.wait(max(0, _signed(args[0])) / 1000.0)
+			vm.wait_interruptibly(max(0, _signed(args[0])) / 1000.0)
 
 	def _os_exit(self, vm: Any, result: Any) -> None:
 		args = self._args(vm, result, 1)
@@ -1522,6 +1561,106 @@ class DeviceRuntime:
 		args = self._args(vm, result, 1)
 		if args is not None:
 			self._push_string(vm, result, self.compiler.document_source(_signed(args[0])))
+
+	def _compiler_run(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is None:
+			return
+		source = self._read_string(vm, args[0])
+
+		def bounded_text(value: str) -> str:
+			text = str(value).replace("\x00", "\\0")
+			if len(text) <= COMPILER_RUN_OUTPUT_LIMIT:
+				return text
+			limit = COMPILER_RUN_OUTPUT_LIMIT - len(COMPILER_RUN_TRUNCATION_MARKER)
+			return text[:limit] + COMPILER_RUN_TRUNCATION_MARKER
+
+		depth = getattr(_compiler_run_state, "depth", 0)
+		if depth > 0:
+			message = "Runtime error: nested compiler::run is not allowed"
+			self.compiler.set_runtime_error(message)
+			self._push_string(vm, result, message)
+			return
+		if len(source) > COMPILER_RUN_SOURCE_LIMIT:
+			message = f"Compile error: source exceeds {COMPILER_RUN_SOURCE_LIMIT} characters"
+			self.compiler.set_runtime_error(message)
+			self._push_string(vm, result, message)
+			return
+		if vm.cancel_event.is_set():
+			message = "Runtime canceled."
+			self.compiler.set_runtime_error(message)
+			self._push_string(vm, result, message)
+			return
+		if not self.compiler.compile(source):
+			message = bounded_text(
+				f"Compile error at {self.compiler.snapshot.line}:"
+				f"{self.compiler.snapshot.column}: {self.compiler.snapshot.error}"
+			)
+			self._push_string(vm, result, message)
+			return
+
+		output: list[str] = []
+		output_length = 0
+		truncated = False
+		capture_limit = COMPILER_RUN_OUTPUT_LIMIT - len(COMPILER_RUN_TRUNCATION_MARKER)
+
+		def capture(text: str) -> None:
+			nonlocal output_length, truncated
+			if output_length >= capture_limit:
+				truncated = True
+				return
+			piece = str(text).replace("\x00", "\\0")
+			remaining = capture_limit - output_length
+			if len(piece) > remaining:
+				piece = piece[:remaining]
+				truncated = True
+			output.append(piece)
+			output_length += len(piece)
+
+		try:
+			from xe_lang.vm import VM
+
+			_compiler_run_state.depth = depth + 1
+			child = VM(
+				list(self.compiler.bytecode),
+				output_handler=capture,
+				os_device=self.os,
+				frame_handler=lambda _snapshot: None,
+				cancel_event=vm.cancel_event,
+				filesystem_root=self.files.root,
+				input_handler=lambda _prompt="": "",
+				request_handler=None,
+				memory_words=len(vm.data_memory),
+			)
+			run_result = child.run(
+				instruction_limit=COMPILER_RUN_INSTRUCTION_LIMIT,
+				wall_time_limit=COMPILER_RUN_TIME_LIMIT,
+			)
+			if vm.cancel_event.is_set():
+				message = "Runtime canceled."
+				self.compiler.set_runtime_error(message)
+				self._push_string(vm, result, message)
+				return
+			if run_result.error is not None:
+				description = getattr(run_result.error, "desc", str(run_result.error))
+				message = bounded_text(f"Runtime error: {description}")
+				self.compiler.set_runtime_error(message)
+				self._push_string(vm, result, message)
+				return
+		except Exception as error:
+			message = bounded_text(f"Runtime error: {error}")
+			self.compiler.set_runtime_error(message)
+			self._push_string(vm, result, message)
+			return
+		finally:
+			_compiler_run_state.depth = depth
+
+		text = "".join(output)
+		if truncated:
+			text += COMPILER_RUN_TRUNCATION_MARKER
+		if not text:
+			text = "Program completed."
+		self._push_string(vm, result, text)
 
 	def _string_append(self, vm: Any, result: Any) -> None:
 		args = self._args(vm, result, 2)

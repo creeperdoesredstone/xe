@@ -1,4 +1,5 @@
 import struct
+import sys
 import tkinter as tk
 import time
 import math
@@ -6,6 +7,7 @@ import threading
 from bisect import bisect_right
 from xe_lang.helper import Result, VMError, Position
 from xe_lang.devices import DEFAULT_PALETTE, DeviceRuntime, FrameSnapshot, OSDevice
+from xe_lang.devices.input import normalize_tk_scroll_steps
 from xe_lang.devices.keymap import normalize_key_code
 from xe_lang.executable import MAX_STATIC_WORDS, decode_static_layout
 from xe_lang.syscall_abi import SyscallID
@@ -112,6 +114,7 @@ class VM:
 
 		self.labels = {}
 		self.start_time = time.monotonic()
+		self.execution_deadline: float | None = None
 		self.output_handler = output_handler  # for ide
 		self.input_handler = input_handler or input
 		self.request_handler = request_handler
@@ -142,6 +145,7 @@ class VM:
 		self.canvas_image_id = None
 		self.display_img = None
 		self._tk_forwarded_keys: dict[int, int] = {}
+		self._tk_wheel_delta_remainder = 0
 		self.heap_pointer = self.heap_start
 		self._binary_position = Position(0, 0, 0, "<bin>", "")
 
@@ -217,6 +221,7 @@ class VM:
 			self.canvas.bind("<Motion>", self._on_mouse_move)
 			self.canvas.bind("<ButtonPress>", self._on_mouse_press)
 			self.canvas.bind("<ButtonRelease>", self._on_mouse_release)
+			self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
 			self.root.bind("<KeyPress>", self._on_key_press)
 			self.root.bind("<KeyRelease>", self._on_key_release)
 			self.root.bind("<FocusOut>", self._release_host_input)
@@ -258,6 +263,9 @@ class VM:
 
 	def _on_mouse_press(self, event):
 		self.devices.input.move_pointer(event.x // 3, event.y // 3)
+		if int(getattr(event, "num", 0)) in (4, 5):
+			self._on_mouse_wheel(event)
+			return
 		button = {1: 1, 2: 4, 3: 2}.get(event.num)
 		if button:
 			self.devices.input.set_button(button, True)
@@ -267,6 +275,21 @@ class VM:
 		button = {1: 1, 2: 4, 3: 2}.get(event.num)
 		if button:
 			self.devices.input.set_button(button, False)
+
+	def _on_mouse_wheel(self, event):
+		self.devices.input.move_pointer(event.x // 3, event.y // 3)
+		button = int(getattr(event, "num", 0))
+		delta = int(getattr(event, "delta", 0))
+		if button in (4, 5):
+			steps = normalize_tk_scroll_steps(button=button)
+		elif sys.platform.startswith("win"):
+			total = self._tk_wheel_delta_remainder + delta
+			steps = normalize_tk_scroll_steps(total, platform=sys.platform)
+			self._tk_wheel_delta_remainder = total - steps * 120
+		else:
+			steps = normalize_tk_scroll_steps(delta, platform=sys.platform)
+		if steps:
+			self.devices.input.add_scroll_delta(steps)
 
 	def _on_key_press(self, event):
 		mod = self._get_mod_state(event.state)
@@ -297,6 +320,7 @@ class VM:
 	def _release_host_input(self, _event=None):
 		self.devices.input.release_all()
 		self._tk_forwarded_keys.clear()
+		self._tk_wheel_delta_remainder = 0
 
 	def _get_mod_state(self, state):
 		mask = 0
@@ -450,10 +474,19 @@ class VM:
 		position = self._binary_position
 		return VMError(message, position.copy(), position.copy())
 
-	def run(self) -> Result:
+	def run(
+		self,
+		instruction_limit: int | None = None,
+		wall_time_limit: float | None = None,
+	) -> Result:
 		res = Result()
 		execution_result = Result()
 		self.start_time = time.monotonic()
+		self.execution_deadline = (
+			self.start_time + max(0.0, float(wall_time_limit))
+			if wall_time_limit is not None
+			else None
+		)
 		self.stack = [0] * STACK_SIZE
 		self.call_stack.clear()
 		self.cr = 0
@@ -477,8 +510,13 @@ class VM:
 
 		try:
 			while self.ip < len(self.instructions):
-				if instruction_count & 0xFF == 0 and self.cancel_event.is_set():
-					break
+				if instruction_limit is not None and instruction_count >= instruction_limit:
+					return res.fail(self._error("Instruction limit exceeded"))
+				if self.execution_deadline is not None and time.monotonic() >= self.execution_deadline:
+					return res.fail(self._error("Execution time limit exceeded"))
+				if instruction_count & 0xFF == 0:
+					if self.cancel_event.is_set():
+						break
 				exec_res = self.execute(self.instructions[self.ip], execution_result)
 				instruction_count += 1
 				# print(self.stack[: self.sp][:32])
@@ -508,8 +546,15 @@ class VM:
 
 			return res.success(self.stack[:self.sp])
 		finally:
+			self.execution_deadline = None
 			self.close_graphics_window()
 			self.devices.files.close_all()
+
+	def wait_interruptibly(self, seconds: float) -> None:
+		seconds = max(0.0, float(seconds))
+		if self.execution_deadline is not None:
+			seconds = min(seconds, max(0.0, self.execution_deadline - time.monotonic()))
+		self.cancel_event.wait(seconds)
 
 	def push(self, value) -> None:
 		if self.sp >= STACK_SIZE:
@@ -1174,7 +1219,7 @@ class VM:
 								return res
 							if duration > 0x7FFFFFFF:
 								duration -= 0x100000000
-							self.cancel_event.wait(max(0, duration) / 1000.0)
+							self.wait_interruptibly(max(0, duration) / 1000.0)
 						case SyscallID.REQUEST:
 							destination = self._pop_value(res)
 							backend_id = self._pop_value(res)

@@ -2,6 +2,9 @@
 # Edit `expression` and `degrees_mode` at the bottom of this file.
 
 var calculator_window: graphics::Window
+var calculator_clipboard: string
+var calculator_selected_all: bool
+var calculator_number_text: string
 
 enum class FunctionCode {
 	NONE,
@@ -572,7 +575,35 @@ proc draw_calculator_status(x: int, y: int, text: string, result: float, error_c
 	}
 }
 
+proc clear_calculator_text(text: string) {
+	if (xestring::strlen(text) > 0) {
+		text[0] = '\0'
+		call xestring::update_length(text)
+	}
+}
+
+proc set_calculator_text(target: string, source: string) {
+	call clear_calculator_text(target)
+	call xestring::append(target, source)
+}
+
+fn calculator_editor_key_supported(key: int) bool {
+	if (key >= 48 && key <= 57) { return true }
+	if (key == 32 || key == 37 || key == 40 || key == 41 || key == 42 || key == 43 || key == 44 || key == 45 || key == 46 || key == 47 || key == 94) { return true }
+	if (key == 65 || key == 97 || key == 67 || key == 99 || key == 69 || key == 101 || key == 73 || key == 105 || key == 78 || key == 110 || key == 79 || key == 111 || key == 80 || key == 112 || key == 81 || key == 113 || key == 82 || key == 114 || key == 83 || key == 115 || key == 84 || key == 116 || key == 87 || key == 119) { return true }
+	return key >= 1001 && key <= 1011
+}
+
+proc prepare_calculator_insert(text: string) {
+	if (calculator_selected_all) {
+		call clear_calculator_text(text)
+		calculator_selected_all = false
+	}
+}
+
 proc append_editor_key(text: string, key: int) {
+	if (!calculator_editor_key_supported(key)) { return }
+	call prepare_calculator_insert(text)
 	if (key == 48) {
 		call xestring::append(text, "0")
 	}
@@ -742,6 +773,11 @@ proc draw_shift_editor_key(x: int, y: int, width: int, label: string, key: int, 
 
 proc erase_last_editor_key(text: string) {
 	var length: int
+	if (calculator_selected_all) {
+		call clear_calculator_text(text)
+		calculator_selected_all = false
+		return
+	}
 	length = xestring::strlen(text)
 	if (length > 0) {
 		text[length - 1] = '\0'
@@ -750,9 +786,51 @@ proc erase_last_editor_key(text: string) {
 }
 
 proc clear_editor(text: string) {
-	if (xestring::strlen(text) > 0) {
-		text[0] = '\0'
-		call xestring::update_length(text)
+	call clear_calculator_text(text)
+	calculator_selected_all = false
+}
+
+proc calculator_select_all() {
+	calculator_selected_all = xestring::strlen(expression) > 0
+}
+
+proc calculator_copy_selection() {
+	if (calculator_selected_all) {
+		call set_calculator_text(calculator_clipboard, expression)
+	}
+}
+
+proc calculator_cut_selection() {
+	if (calculator_selected_all) {
+		call calculator_copy_selection()
+		call clear_editor(expression)
+		dirty = true
+		error_code = 0
+	}
+}
+
+proc calculator_paste_clipboard() {
+	if (xestring::strlen(calculator_clipboard) > 0) {
+		call prepare_calculator_insert(expression)
+		call xestring::append(expression, calculator_clipboard)
+		calculator_selected_all = false
+		dirty = true
+		error_code = 0
+	}
+}
+
+proc handle_calculator_control_shortcut(key: int) {
+	if (key == 1 || key == 65 || key == 97) {
+		call calculator_select_all()
+	}
+	elseif (key == 3 || key == 67 || key == 99) {
+		call calculator_copy_selection()
+	}
+	elseif (key == 24 || key == 88 || key == 120) {
+		call calculator_cut_selection()
+	}
+	elseif (key == 22 || key == 86 || key == 118) {
+		call calculator_paste_clipboard()
 	}
 }
 
@@ -774,6 +852,9 @@ proc draw_expression_editor(x: int, y: int, width: int, text: string, error_code
 		draw_x = x + 3 + (index - start) * 4
 		if (error_code != 0 && index == error_position) {
 			call graphics::draw_char_small(calculator_window, draw_x, y, text[index], graphics::COLOR_12)
+		}
+		elseif (calculator_selected_all) {
+			call graphics::draw_char_small(calculator_window, draw_x, y, text[index], graphics::COLOR_14)
 		}
 		else {
 			call graphics::draw_char_small(calculator_window, draw_x, y, text[index], graphics::WHITE)
@@ -1115,6 +1196,181 @@ proc draw_vertical_arrow(x: int, y: int, direction: int, color: int) {
 	}
 }
 
+proc append_calculator_positive_int(target: string, value: int) {
+	var divisor: int
+	if (value < 0) { value = -value }
+	divisor = 1
+	while (value / divisor >= 10) {
+		divisor *= 10
+	}
+	while (divisor > 0) {
+		call xestring::append_char(target, (char)(48 + (value / divisor) % 10))
+		divisor /= 10
+	}
+}
+
+proc format_currency_number(target: string, value: float, decimal_count: int) {
+	var magnitude: float
+	var group: int
+	var small_exponent: int
+	var decimal_scale: int
+	var rounded: int
+	var whole: int
+	var fraction: int
+	var digit_divisor: int
+	var digit_index: int
+
+	call clear_calculator_text(target)
+	if (value != value) {
+		call xestring::append(target, "NaN")
+		return
+	}
+	magnitude = value
+	if (magnitude < 0.0) {
+		call xestring::append(target, "-")
+		magnitude = -magnitude
+	}
+	group = 0
+	while (magnitude >= 999.995 && group < 12) {
+		magnitude /= 1000.0
+		group += 1
+	}
+	if (magnitude >= 1000.0) {
+		call xestring::append(target, "MAX")
+		return
+	}
+	small_exponent = 0
+	if (magnitude > 0.0 && magnitude < 0.01) {
+		while (magnitude < 1.0 && small_exponent < 38) {
+			magnitude *= 10.0
+			small_exponent += 1
+		}
+	}
+	if (decimal_count < 0) { decimal_count = 0 }
+	if (decimal_count > 2) { decimal_count = 2 }
+	decimal_scale = 1
+	digit_index = 0
+	while (digit_index < decimal_count) {
+		decimal_scale *= 10
+		digit_index += 1
+	}
+	rounded = (int)(magnitude * (float)decimal_scale + 0.5)
+	whole = rounded / decimal_scale
+	fraction = rounded % decimal_scale
+	call append_calculator_positive_int(target, whole)
+	if (decimal_count > 0) {
+		call xestring::append(target, ".")
+		digit_divisor = decimal_scale / 10
+		while (digit_divisor > 0) {
+			call xestring::append_char(target, (char)(48 + (fraction / digit_divisor) % 10))
+			digit_divisor /= 10
+		}
+	}
+	if (small_exponent > 0) {
+		call xestring::append(target, "e-")
+		call append_calculator_positive_int(target, small_exponent)
+	}
+	elseif (group == 1) { call xestring::append(target, "K") }
+	elseif (group == 2) { call xestring::append(target, "M") }
+	elseif (group == 3) { call xestring::append(target, "B") }
+	elseif (group == 4) { call xestring::append(target, "T") }
+	elseif (group > 4) {
+		call xestring::append(target, "e")
+		call append_calculator_positive_int(target, group * 3)
+	}
+}
+
+fn calculator_small_text_width(text: string) int {
+	var index: int
+	var result: int
+	index = 0
+	result = 0
+	while (index < xestring::strlen(text)) {
+		result += graphics::char_advance(text[index], graphics::FONT_SMALL)
+		index += 1
+	}
+	return result
+}
+
+proc format_currency_marker(target: string, value: float) {
+	var magnitude: float
+	var group: int
+	var small_exponent: int
+	call clear_calculator_text(target)
+	if (value != value) {
+		call xestring::append(target, "?")
+		return
+	}
+	magnitude = value
+	if (magnitude < 0.0) {
+		call xestring::append(target, "-")
+		magnitude = -magnitude
+	}
+	group = 0
+	while (magnitude >= 1000.0 && group < 12) {
+		magnitude /= 1000.0
+		group += 1
+	}
+	small_exponent = 0
+	if (magnitude > 0.0 && magnitude < 0.01) {
+		while (magnitude < 1.0 && small_exponent < 38) {
+			magnitude *= 10.0
+			small_exponent += 1
+		}
+	}
+	if (group > 0) {
+		call xestring::append(target, "e")
+		call append_calculator_positive_int(target, group * 3)
+	}
+	elseif (small_exponent > 0) {
+		call xestring::append(target, "e-")
+		call append_calculator_positive_int(target, small_exponent)
+	}
+	else {
+		call xestring::append(target, "#")
+	}
+}
+
+proc fit_currency_number(target: string, value: float, width: int) {
+	var text_width: int
+	var marker_width: int
+	call format_currency_number(target, value, 2)
+	text_width = calculator_small_text_width(target)
+	if (text_width > width) {
+		call format_currency_number(target, value, 1)
+		text_width = calculator_small_text_width(target)
+	}
+	if (text_width > width) {
+		call format_currency_number(target, value, 0)
+		text_width = calculator_small_text_width(target)
+	}
+	if (text_width > width) {
+		call format_currency_marker(target, value)
+		text_width = calculator_small_text_width(target)
+	}
+	if (text_width > width) {
+		call clear_calculator_text(target)
+		marker_width = graphics::char_advance('#', graphics::FONT_SMALL)
+		if (value < 0.0 && graphics::char_advance('-', graphics::FONT_SMALL) <= width) {
+			call xestring::append(target, "-")
+		}
+		elseif (marker_width <= width) {
+			call xestring::append(target, "#")
+		}
+	}
+}
+
+proc draw_compact_currency_number(x: int, y: int, width: int, value: float, color: int) {
+	var text_width: int
+	var text_x: int
+	call fit_currency_number(calculator_number_text, value, width)
+	text_width = calculator_small_text_width(calculator_number_text)
+	if (xestring::strlen(calculator_number_text) > 0 && text_width <= width) {
+		text_x = x + (width - text_width) / 2
+		call graphics::draw_text_small(calculator_window, text_x, y, calculator_number_text, color)
+	}
+}
+
 fn draw_currency_selector(x: int, y: int, width: int, code: string, open: bool) bool {
 	var clicked: bool
 	var surface: int
@@ -1159,6 +1415,33 @@ proc draw_currency_date(x: int, y: int, text: string, color: int) {
 	}
 }
 
+fn calculator_pointer_inside(x: int, y: int, width: int, height: int) bool {
+	var pointer_x: int
+	var pointer_y: int
+	pointer_x = graphics::pointer_x(calculator_window)
+	pointer_y = graphics::pointer_y(calculator_window)
+	return pointer_x >= x && pointer_x < x + width && pointer_y >= y && pointer_y < y + height
+}
+
+proc apply_currency_scroll_delta(scroll: int*, delta: int, maximum_scroll: int) {
+	if (maximum_scroll < 0) { maximum_scroll = 0 }
+	if (*scroll < 0) { *scroll = 0 }
+	if (*scroll > maximum_scroll) { *scroll = maximum_scroll }
+	while (delta > 0 && *scroll > 0) {
+		*scroll -= 1
+		delta -= 1
+	}
+	while (delta < 0 && *scroll < maximum_scroll) {
+		*scroll += 1
+		delta += 1
+	}
+}
+
+proc apply_mode_page_scroll(page: int*, delta: int) {
+	if (delta > 0) { *page = 0 }
+	elseif (delta < 0) { *page = 1 }
+}
+
 proc draw_currency_dropdown(x: int, y: int, width: int, height: int, selected: int*, scroll: int*, open: bool*) {
 	var count: int
 	var visible_rows: int
@@ -1167,19 +1450,24 @@ proc draw_currency_dropdown(x: int, y: int, width: int, height: int, selected: i
 	var surface: int
 	var foreground: int
 	var clicked: bool
+	var dropdown_height: int
 	count = currency::count()
 	visible_rows = (height - 12) / 6
 	if (visible_rows < 1) { visible_rows = 1 }
 	if (visible_rows > 6) { visible_rows = 6 }
 	if (*scroll > count - visible_rows) { *scroll = count - visible_rows }
 	if (*scroll < 0) { *scroll = 0 }
+	dropdown_height = 12 + visible_rows * 6
+	if (!mode_menu_open && calculator_pointer_inside(x, y, width, dropdown_height)) {
+		call apply_currency_scroll_delta(scroll, graphics::scroll_delta(), count - visible_rows)
+	}
 	surface = graphics::COLOR_8
 	foreground = graphics::WHITE
 	if (os::theme_mode == os::THEME_LIGHT) {
 		surface = graphics::COLOR_7
 		foreground = graphics::COLOR_1
 	}
-	clicked = graphics::button_flat(calculator_window, x, y, width, 12 + visible_rows * 6, "", surface)
+	clicked = graphics::button_flat(calculator_window, x, y, width, dropdown_height, "", surface)
 	if (graphics::button_flat(calculator_window, x + 1, y + 1, width - 2, 5, " ", surface)) {
 		if (*scroll > 0) { *scroll -= 1 }
 	}
@@ -1251,6 +1539,8 @@ proc draw_currency_view(x: int, y: int, width: int, height: int, result: float, 
 	var hover_label_x: int
 	var hover_label_y: int
 	var hover_label_width: int
+	var value_width: int
+	var rate_width: int
 
 	count = currency::count()
 	selector_width = (width - 16) / 2
@@ -1316,11 +1606,18 @@ proc draw_currency_view(x: int, y: int, width: int, height: int, result: float, 
 		amount = result
 		if (xestring::strlen(expression) == 0) { amount = 1.0 }
 		converted = amount * rate
-		call graphics::draw_float_small(calculator_window, x, y + 17, amount, graphics::COLOR_7)
-		call graphics::draw_text_small(calculator_window, x + 42, y + 17, "=", graphics::COLOR_11)
-		call graphics::draw_float_small(calculator_window, x + 49, y + 17, converted, graphics::WHITE)
+		value_width = (width - 8) / 2
+		call draw_compact_currency_number(x, y + 17, value_width, amount, graphics::COLOR_7)
+		call graphics::draw_text_small(calculator_window, x + value_width + 2, y + 17, "=", graphics::COLOR_11)
+		call draw_compact_currency_number(x + value_width + 8, y + 17, value_width, converted, graphics::WHITE)
 		call graphics::draw_text_small(calculator_window, x, y + 23, "Rate", graphics::COLOR_8)
-		call graphics::draw_float_small(calculator_window, x + 20, y + 23, rate, graphics::COLOR_14)
+		if (width >= 100) {
+			rate_width = width - 70
+		}
+		else {
+			rate_width = width - 20
+		}
+		call draw_compact_currency_number(x + 18, y + 23, rate_width, rate, graphics::COLOR_14)
 
 		graph_y = y + 30
 		graph_height = height - 31
@@ -1363,15 +1660,15 @@ proc draw_currency_view(x: int, y: int, width: int, height: int, result: float, 
 				}
 				pointer_x = graphics::pointer_x(calculator_window)
 				pointer_y = graphics::pointer_y(calculator_window)
-				if (pointer_x >= x + width - 7 && pointer_x < x + width && pointer_y >= y + 21 && pointer_y < y + 29) {
+				if (width >= 100 && pointer_x >= x + width - 7 && pointer_x < x + width && pointer_y >= y + 21 && pointer_y < y + 29) {
 					if (change > padding / 10.0) {
-						call graphics::draw_text_small(calculator_window, x + width - 48, y + 17, "Appreciating", trend_color)
+						call graphics::draw_text_small(calculator_window, x + width - 48, y + 23, "Appreciating", trend_color)
 					}
 					elseif (change < -padding / 10.0) {
-						call graphics::draw_text_small(calculator_window, x + width - 48, y + 17, "Depreciating", trend_color)
+						call graphics::draw_text_small(calculator_window, x + width - 48, y + 23, "Depreciating", trend_color)
 					}
 					else {
-						call graphics::draw_text_small(calculator_window, x + width - 32, y + 17, "Stable", trend_color)
+						call graphics::draw_text_small(calculator_window, x + width - 32, y + 23, "Stable", trend_color)
 					}
 				}
 				grid_index = 0
@@ -1434,7 +1731,7 @@ proc draw_currency_view(x: int, y: int, width: int, height: int, result: float, 
 					if (hover_label_y > plot_bottom - 7) { hover_label_y = plot_bottom - 7 }
 					call graphics::fill_rect(calculator_window, hover_label_x, hover_label_y, hover_label_width, 7, graphics::COLOR_8)
 					call draw_currency_date(hover_label_x + 2, hover_label_y + 1, currency::point_date(hover_index), graphics::WHITE)
-					call graphics::draw_float_small(calculator_window, hover_label_x + 27, hover_label_y + 1, hover_value, graphics::WHITE)
+					call draw_compact_currency_number(hover_label_x + 24, hover_label_y + 1, hover_label_width - 26, hover_value, graphics::WHITE)
 				}
 			}
 		}
@@ -1622,12 +1919,17 @@ proc draw_mode_switch(x: int, width: int, height: int, mode: int*, menu_open: bo
 	if (clicked) {
 		*menu_open = !*menu_open
 		if (*menu_open) {
+			currency_from_menu_open = false
+			currency_to_menu_open = false
 			if (*mode >= 4) { *page = 1 }
 			else { *page = 0 }
 		}
 	}
 	if (*progress > 0) {
 		menu_block_clicked = graphics::button_flat(calculator_window, button_x, 14, button_width, menu_height, "", menu_surface)
+		if (*menu_open && calculator_pointer_inside(button_x, 14, button_width, menu_height)) {
+			call apply_mode_page_scroll(page, graphics::scroll_delta())
+		}
 		if (*page == 0) {
 			if (menu_height >= 9) {
 				if (graphics::button_flat(calculator_window, button_x + 3, 16, button_width - 6, 7, "Standard", menu_surface)) { *mode = 0; *menu_open = false }
@@ -1704,6 +2006,9 @@ var current_ticks: int
 var delta_ms: int
 
 expression = ""
+calculator_clipboard = ""
+calculator_selected_all = false
+calculator_number_text = ""
 degrees_mode = true
 graphical_mode = true
 dirty = false
@@ -1779,7 +2084,10 @@ if (graphical_mode) {
 
 			key = graphics::read_key()
 			while (key != 0) {
-				if (key == graphics::KEY_BACKSPACE) {
+				if ((graphics::modifiers() & graphics::MOD_CTRL) != 0) {
+					call handle_calculator_control_shortcut(key)
+				}
+				elseif (key == graphics::KEY_BACKSPACE) {
 					call erase_last_editor_key(expression)
 					error_code = 0
 					dirty = true

@@ -89,7 +89,10 @@ layouts. The `Window.width` and `Window.height` fields and `graphics::width()` /
 
 The title bar contains only maximize/restore and close controls. Maximize fills the
 available framebuffer and pressing the same control again restores the last normal
-bounds. Both directions use one 210 ms cubic ease-out curve for position, size, title bar,
+bounds. Dragging a title to the six-pixel top-edge snap region previews those bounds
+with the same white outline; moving away cancels the preview, while releasing starts
+the normal maximize transition and retains the pointer-aligned floating bounds for a
+later restore. Both directions use one 210 ms cubic ease-out curve for position, size, title bar,
 title text, controls, and content. During the transition the manager scales an
 immutable snapshot of the complete last window, blocks content hit-testing, and
 commits the exact target geometry at completion; this prevents responsive controls
@@ -125,14 +128,17 @@ the same integer pixel density before, during, and after the commit.
 - Shapes: `clear`, `set_pixel`, `draw_circle`, `draw_line`, `draw_rect`, `fill_rect`,
   `draw_atom`, and `draw_icon`
 - Text: `draw_text`, `draw_char`, `draw_int`, `draw_float`, plus the compact
-  `draw_text_small`, `draw_char_small`, `draw_int_small`, and `draw_float_small`
+  `draw_text_small`, `draw_char_small`, `draw_int_small`, and `draw_float_small`;
+  `char_advance` and `draw_char_styled` provide proportional layout with composable
+  bold, italic, and underline flags
 - Controls: `button`, `button_tone`, `button_flat`, `slider`
 - Input: `mouse_x`, `mouse_y`, `mouse_down`, `mouse_pressed`, `mouse_released`,
   `right_mouse_down`, `right_mouse_pressed`, `right_mouse_released`, `key_down`,
-  `read_key`, and `modifiers`
+  `read_key`, `modifiers`, and `scroll_delta`
 - Constants: screen dimensions, `COLOR_0` through `COLOR_15`, `BLACK`, `WHITE`,
   window states, atom/ring states, `MOUSE_LEFT`, `MOUSE_RIGHT`, common key codes,
-  and `MOD_SHIFT`, `MOD_CTRL`, `MOD_ALT`
+  `MOD_SHIFT`, `MOD_CTRL`, `MOD_ALT`, `FONT_SMALL`, `FONT_NORMAL`, `FONT_LARGE`,
+  `TEXT_BOLD`, `TEXT_ITALIC`, and `TEXT_UNDERLINE`
 
 `read_key()` emits an initial key press and deterministic held-key repeats after a
 380 ms delay at roughly 45 ms intervals. The queue is bounded after a stalled frame,
@@ -143,6 +149,14 @@ depending on host-specific key values.
 The three unprefixed mouse functions report the primary/left button. The matching
 `right_mouse_*` functions expose the secondary button without changing the raw
 mouse ABI, allowing contextual menus to remain deterministic in Xe applications.
+
+`scroll_delta()` returns signed logical wheel notches: positive values mean up or
+away from the user, and negative values mean down or toward the user. Multiple
+events accumulate, so the magnitude may exceed one. The value is stable across
+all reads in one `begin_draw`/`update` frame and is consumed by `update`; the next
+frame reads zero unless more wheel input arrived. Standalone and IDE hosts normalize
+their native wheel units. Scratch and other embedders can inject signed steps, or
+leave the value at its deterministic zero default.
 
 Lifecycle, size/pointer, shape, text, atom, and icon functions accept either a
 `graphics::Screen` or `graphics::Window` as their first argument. Controls remain
@@ -208,6 +222,11 @@ ranges. `apply_settings` remains available for the original atomic three-value
 commit. `apply_preferences(master, music, effects, background, palette, theme,
 transparency, corners, icons, clock, enabled)` validates first and atomically
 commits the complete Settings model.
+
+Window transparency is direct: `0` is an opaque content/title surface and `100` is
+fully transparent. Intermediate values use deterministic four-slot ordered dithering so the
+selected OS background remains visible without introducing colors outside the active
+palette. Borders, title text, and window controls remain opaque for legibility.
 
 Palettes `0-2` are the dark Xenon variants and `3-5` are coordinated light
 variants. Changing `theme_mode` preserves the palette variant while moving it to
@@ -294,6 +313,16 @@ code generator, and assembler in-process. Diagnostics are available through
 `error()`, `error_line()`, and `error_column()`; successful builds expose
 `assembly()` and `bytecode_size()`.
 
+`compiler::run(source)` compiles and executes source in a bounded child XVM and
+returns the program's captured output. It shares the calling VM's private virtual
+filesystem root and OS preference state, uses non-blocking empty input, does not
+present a graphics framebuffer, and caps output at 8192 characters. Child dispatch
+stops after 500,000 instructions and checks a two-second execution deadline between
+instructions; sleeps are clamped to the remaining deadline. Source is capped at
+32,768 characters, NUL output is escaped as `\0`, and all returned diagnostics obey
+the same output bound. Compile and runtime failures are returned as readable text;
+nested `compiler::run` calls are rejected.
+
 The original line-atom API remains available: `load_visual`, `atom_count`,
 `atom_text`, `atom_kind`, `atom_line`, `atom_enabled`, `set_atom_enabled`, and
 `visual_source`. The script graph is a compatible higher-level model:
@@ -307,7 +336,7 @@ out << compiler::document_script_shell(0, 0)
 
 Top-level main/function/procedure/class-like scripts are grouped by call connectivity.
 Connected scripts share a shell; disconnected components receive different shells.
-Four independent document slots are available for Scratch-portable multi-view tools.
+Sixteen independent document slots are available for Scratch-portable multi-view tools.
 Use `document_script_count`, `document_script_name`, `document_script_shell`,
 `document_script_line`, `document_script_enabled`, and `document_source`. The
 single-document `script_*` calls describe the most recent `load_visual` result.
@@ -332,19 +361,19 @@ assembly programs and compiled `graphics::`/`os::` calls cannot collide.
   and pointer bounds testing).
 - Backend request: `80` `REQUEST`, through the runtime's injectable synchronous request
   handler. With no handler, it deterministically writes an empty response.
-- High-level app extensions: graphics `100-129`, `142-145`, `208`, and `246-249`, OS
+- High-level app extensions: graphics `100-129` (including `124`
+  `APP_GRAPHICS_SCROLL_DELTA`), `142-145`, `208-209`, `246-249`, and `254`, OS
   settings/utilities `130-141` and `180-196`, `Window` methods `150-152`, files
   `160-164` and `210-217`, mutable string append operations `170-171`, currency
-  `200-207`, compiler services `220-245`, calendar date components `250-252`, and
-  compact palette-icon drawing `253`.
+  `200-207`, compiler services `220-245` and `255`, calendar date components
+  `250-252`, and compact palette-icon drawing `253`.
 
 Compiled Screen resource references set bit 31 and retain the static address in bits
 `0-30`. The runtime strips that tag before bounds checks. Static resources remain in
 the 16-bit XAssembly address range, so existing Window references and bytecode are
 unchanged and the representation is exact in the Scratch VM.
 
-IDs absent from those ranges are reserved, including `13-19`, `57-59`, and
-`254-255`;
+IDs absent from those ranges are reserved, including `13-19` and `57-59`;
 invoking one reports `Unknown system call` rather than silently doing the wrong
 operation.
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
+import sys
 from threading import RLock
 import time
 from typing import Callable
@@ -14,6 +15,26 @@ RIGHT_BUTTON = 2
 MIDDLE_BUTTON = 4
 
 
+def normalize_tk_scroll_steps(
+	delta: int = 0,
+	button: int = 0,
+	platform: str | None = None,
+) -> int:
+	"""Translate Tk wheel conventions into signed logical wheel notches."""
+	button = int(button)
+	if button == 4:
+		return 1
+	if button == 5:
+		return -1
+
+	delta = int(delta)
+	if delta == 0:
+		return 0
+	if (platform or sys.platform).startswith("win"):
+		return delta // 120 if delta > 0 else -((-delta) // 120)
+	return 1 if delta > 0 else -1
+
+
 @dataclass(frozen=True)
 class InputFrame:
 	x: int
@@ -23,6 +44,7 @@ class InputFrame:
 	released: int
 	keys_down: frozenset[int]
 	modifiers: int
+	scroll_delta: int = 0
 
 	@property
 	def left_down(self) -> bool:
@@ -69,6 +91,7 @@ class InputDevice:
 		self._buttons = 0
 		self._pending_pressed = 0
 		self._pending_released = 0
+		self._pending_scroll = 0
 		self._keys_down: set[int] = set()
 		self._key_queue: deque[int] = deque()
 		self._repeat_next: dict[int, float] = {}
@@ -122,6 +145,11 @@ class InputDevice:
 				self._pending_released |= button
 				self._last_mouse_event = int(MouseEvent.RELEASE)
 				self._mouse_events.append((self._last_mouse_event, self._x, self._y))
+
+	def add_scroll_delta(self, steps: int) -> None:
+		"""Accumulate signed logical wheel notches for the next input frame."""
+		with self._lock:
+			self._pending_scroll += int(steps)
 
 	def set_key(self, key: int, down: bool, modifiers: int = 0) -> None:
 		key = int(key)
@@ -179,6 +207,7 @@ class InputDevice:
 			self._repeat_next.clear()
 			self._key_modifiers.clear()
 			self._modifiers = 0
+			self._pending_scroll = 0
 
 	def frame(self) -> InputFrame:
 		with self._lock:
@@ -192,9 +221,11 @@ class InputDevice:
 					self._pending_released,
 					frozenset(self._keys_down),
 					self._modifiers,
+					self._pending_scroll,
 				)
 				self._pending_pressed = 0
 				self._pending_released = 0
+				self._pending_scroll = 0
 			return self._latched
 
 	def finish_frame(self) -> None:

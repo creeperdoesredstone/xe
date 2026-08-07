@@ -87,6 +87,7 @@ GRAPHICS_SPEC = LibrarySpec(
 		_builtin("mouse_down", BuiltInID.GRAPHICS_MOUSE_DOWN, (), "bool", SyscallID.APP_GRAPHICS_MOUSE_DOWN),
 		_builtin("mouse_pressed", BuiltInID.GRAPHICS_MOUSE_PRESSED, (), "bool", SyscallID.APP_GRAPHICS_MOUSE_PRESSED),
 		_builtin("mouse_released", BuiltInID.GRAPHICS_MOUSE_RELEASED, (), "bool", SyscallID.APP_GRAPHICS_MOUSE_RELEASED),
+		_builtin("scroll_delta", BuiltInID.GRAPHICS_SCROLL_DELTA, (), "int", SyscallID.APP_GRAPHICS_SCROLL_DELTA),
 		_builtin("key_down", BuiltInID.GRAPHICS_KEY_DOWN, ("int",), "bool", SyscallID.APP_GRAPHICS_KEY_DOWN),
 		_builtin("read_key", BuiltInID.GRAPHICS_READ_KEY, (), "int", SyscallID.APP_GRAPHICS_READ_KEY),
 		_builtin("content_width", BuiltInID.GRAPHICS_CONTENT_WIDTH, ("Window",), "int", SyscallID.APP_GRAPHICS_CONTENT_WIDTH, WINDOW_REF),
@@ -102,6 +103,8 @@ GRAPHICS_SPEC = LibrarySpec(
 		_builtin("button_flat", BuiltInID.GRAPHICS_BUTTON_FLAT, ("Window", "int", "int", "int", "int", "string", "int"), "bool", SyscallID.APP_GRAPHICS_BUTTON_FLAT, WINDOW_REF),
 		_builtin("draw_atom", BuiltInID.GRAPHICS_DRAW_ATOM, ("Window", "int", "int", "int", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_DRAW_ATOM, WINDOW_REF),
 		_builtin("draw_icon", BuiltInID.GRAPHICS_DRAW_ICON, ("Window", "int", "int", "int", "int", "string"), None, SyscallID.APP_GRAPHICS_DRAW_ICON, WINDOW_REF),
+		_builtin("char_advance", BuiltInID.GRAPHICS_CHAR_ADVANCE, ("char", "int"), "int", SyscallID.APP_GRAPHICS_CHAR_ADVANCE),
+		_builtin("draw_char_styled", BuiltInID.GRAPHICS_DRAW_CHAR_STYLED, ("Window", "int", "int", "char", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_DRAW_CHAR_STYLED, WINDOW_REF),
 		_builtin("modifiers", BuiltInID.GRAPHICS_MODIFIERS, (), "int", SyscallID.APP_GRAPHICS_MODIFIERS),
 		_builtin("right_mouse_down", BuiltInID.GRAPHICS_RIGHT_MOUSE_DOWN, (), "bool", SyscallID.APP_GRAPHICS_RIGHT_MOUSE_DOWN),
 		_builtin("right_mouse_pressed", BuiltInID.GRAPHICS_RIGHT_MOUSE_PRESSED, (), "bool", SyscallID.APP_GRAPHICS_RIGHT_MOUSE_PRESSED),
@@ -142,6 +145,12 @@ GRAPHICS_SPEC = LibrarySpec(
 		ConstantSpec("RING_NONE", 0),
 		ConstantSpec("RING_SOLID", 1),
 		ConstantSpec("RING_DOTTED", 2),
+		ConstantSpec("FONT_SMALL", 1),
+		ConstantSpec("FONT_NORMAL", 2),
+		ConstantSpec("FONT_LARGE", 3),
+		ConstantSpec("TEXT_BOLD", 1),
+		ConstantSpec("TEXT_ITALIC", 2),
+		ConstantSpec("TEXT_UNDERLINE", 4),
 	),
 )
 
@@ -267,6 +276,7 @@ COMPILER_SPEC = LibrarySpec(
 		_builtin("document_script_line", BuiltInID.COMPILER_DOCUMENT_SCRIPT_LINE, ("int", "int"), "int", SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_LINE),
 		_builtin("document_script_enabled", BuiltInID.COMPILER_DOCUMENT_SCRIPT_ENABLED, ("int", "int"), "bool", SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_ENABLED),
 		_builtin("document_source", BuiltInID.COMPILER_DOCUMENT_SOURCE, ("int",), "string", SyscallID.APP_COMPILER_DOCUMENT_SOURCE),
+		_builtin("run", BuiltInID.COMPILER_RUN, ("string",), "string", SyscallID.APP_COMPILER_RUN),
 	),
 	(
 		ConstantSpec("ATOM_EVENT", 0),

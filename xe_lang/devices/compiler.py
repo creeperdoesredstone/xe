@@ -60,12 +60,14 @@ class CompilerDevice:
 
 	def __init__(self) -> None:
 		self.snapshot = CompileSnapshot(False)
+		self.bytecode: tuple[int, ...] = ()
 		self.visual_source = ""
 		self.atoms: list[VisualAtom] = []
 		self.scripts: list[VisualScript] = []
 		self.documents: list[VisualDocument] = [VisualDocument("", "", ()) for _ in range(16)]
 
 	def compile(self, source: str, filename: str = "workspace.xe") -> bool:
+		self.bytecode = ()
 		try:
 			return self._compile(source, filename)
 		except Exception as error:
@@ -100,8 +102,19 @@ class CompilerDevice:
 		if bytecode.error is not None:
 			self._set_error(bytecode.error)
 			return False
-		self.snapshot = CompileSnapshot(True, assembly=formatted, bytecode_size=len(bytecode.value))
+		self.bytecode = tuple(bytecode.value)
+		self.snapshot = CompileSnapshot(True, assembly=formatted, bytecode_size=len(self.bytecode))
 		return True
+
+	def set_runtime_error(self, message: str) -> None:
+		self.snapshot = CompileSnapshot(
+			False,
+			message,
+			1,
+			1,
+			self.snapshot.assembly,
+			self.snapshot.bytecode_size,
+		)
 
 	def _set_error(self, error) -> None:
 		start = getattr(error, "start_pos", None)

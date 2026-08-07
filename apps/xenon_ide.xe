@@ -24,6 +24,13 @@ var ribbon_file_menu_open: bool
 var file_menu_guard: int
 var ribbon_file_menu_guard: int
 var file_menu_path: string
+var open_picker_open: bool
+var open_picker_path: string
+var open_picker_selected: int
+var open_picker_scroll: int
+var open_picker_guard: int
+var open_picker_last_entry: int
+var open_picker_last_ticks: int
 var rename_active: bool
 var rename_path: string
 var rename_text: string
@@ -64,15 +71,17 @@ var compile_ok: bool
 var dirty: bool
 var running: bool
 var run_started: int
+var run_output: string
 var rotating_view: int
+var rotation_dragging: bool
+var rotation_press_x: int
+var rotation_press_y: int
 var last_pointer_x: int
 var last_pointer_y: int
 var hovered_atom: int
 var hovered_view: int
 var hover_started: int
 var selected_atom: int
-var pinned_atom: int
-var pinned_view: int
 var explorer_scroll: int
 var operation_ok: bool
 var status_is_error: bool
@@ -89,6 +98,7 @@ var view_update: int
 var view_rotation_step: int
 var view_tilt_step: int
 var view_orbit_step: int
+var camera_step: int
 var ui_input_blocked: bool
 var explorer_popup_active: bool
 var explorer_toggle_lock: bool
@@ -96,6 +106,7 @@ var edit_pointer_inside: bool
 var ribbon_file_pointer_inside: bool
 var main_pointer_x: int
 var main_pointer_y: int
+var ide_scroll_delta: int
 array view_path: string[16]
 array view_is_folder: int[16]
 array view_rotation: int[16]
@@ -122,6 +133,31 @@ proc ide_clear(target: string) {
 proc ide_set(target: string, value: string) {
 	call ide_clear(target)
 	call xestring::append(target, value)
+}
+
+proc ide_terminal_append(value: string) {
+	if (xestring::strlen(value) == 0) { return }
+	if (xestring::strlen(terminal_text) > 0) {
+		call xestring::append(terminal_text, "\n")
+	}
+	call xestring::append(terminal_text, value)
+}
+
+fn ide_editor_font_size() int {
+	if (ide_font_large) { return graphics::FONT_NORMAL }
+	return graphics::FONT_SMALL
+}
+
+fn ide_editor_row_height() int {
+	if (ide_font_large) { return 8 }
+	return 6
+}
+
+fn ide_tab_advance(column: int, font_size: int) int {
+	var tab_width: int
+	tab_width = graphics::char_advance(' ', font_size) * 4
+	if (tab_width < 4) { tab_width = 4 }
+	return tab_width - column % tab_width
 }
 
 fn ide_strings_equal(left: string, right: string) bool {
@@ -729,22 +765,43 @@ proc ide_save() {
 }
 
 proc ide_check_and_run() {
+	terminal_open = true
 	compile_ok = compiler::check(source)
 	if (compile_ok) {
 		running = true
 		run_started = current_ticks
 		if (visual_mode) {
 			call ide_report("Reaction started", false)
+			call ide_terminal_append("Reaction started")
 		}
 		else {
 			call ide_report("Program started", false)
+			call ide_terminal_append("Program started")
 		}
-		call ide_set(terminal_text, "Build succeeded. Bytecode words: ")
+		call ide_set(run_output, compiler::run(source))
+		if (xestring::strlen(compiler::error()) > 0) {
+			running = false
+			compile_ok = false
+			call ide_terminal_append(compiler::error())
+			call ide_report(compiler::error(), true)
+		}
+		else {
+			if (xestring::strlen(run_output) > 0) {
+				call ide_terminal_append(run_output)
+			}
+			else {
+				call ide_terminal_append("(no output)")
+			}
+			running = false
+			if (visual_mode) { call ide_report("Reaction finished", false) }
+			else { call ide_report("Program finished", false) }
+		}
 	}
 	else {
 		running = false
 		call ide_report(compiler::error(), true)
-		call ide_set(terminal_text, compiler::error())
+		call ide_terminal_append("Build failed")
+		call ide_terminal_append(compiler::error())
 	}
 }
 
@@ -792,26 +849,29 @@ proc ide_terminal_execute() {
 	if (terminal_command == "clear") {
 		call ide_clear(terminal_text)
 	}
-	elseif (terminal_command == "help") {
-		call ide_set(terminal_text, "help clear check run dir")
-	}
-	elseif (terminal_command == "check") {
-		compile_ok = compiler::check(source)
-		if (compile_ok) {
-			call ide_set(terminal_text, "No compiler errors")
+	else {
+		call ide_terminal_append(xestring::concat("> ", terminal_command))
+		if (terminal_command == "help") {
+			call ide_terminal_append("help clear check run dir")
+		}
+		elseif (terminal_command == "check") {
+			compile_ok = compiler::check(source)
+			if (compile_ok) {
+				call ide_terminal_append("No compiler errors")
+			}
+			else {
+				call ide_terminal_append(compiler::error())
+			}
+		}
+		elseif (terminal_command == "run") {
+			call ide_check_and_run()
+		}
+		elseif (terminal_command == "dir") {
+			call ide_terminal_append("Use the workspace explorer to browse files")
 		}
 		else {
-			call ide_set(terminal_text, compiler::error())
+			call ide_terminal_append("Unknown IDE command")
 		}
-	}
-	elseif (terminal_command == "run") {
-		call ide_check_and_run()
-	}
-	elseif (terminal_command == "dir") {
-		call ide_set(terminal_text, "Use the workspace explorer to browse files")
-	}
-	else {
-		call ide_set(terminal_text, "Unknown IDE command")
 	}
 	call ide_clear(terminal_command)
 }
@@ -877,19 +937,196 @@ proc ide_handle_key(value: int, target: int) {
 
 proc draw_ide_text_clipped(x: int, y: int, text: string, maximum: int, color: int) {
 	var index: int
+	var offset: int
 	index = 0
+	offset = 0
 	while (index < xestring::strlen(text) && index < maximum) {
-		call graphics::draw_char_small(ide_window, x + index * 4, y, text[index], color)
+		call graphics::draw_char_styled(ide_window, x + offset, y, text[index], color, graphics::FONT_SMALL, 0)
+		offset += graphics::char_advance(text[index], graphics::FONT_SMALL)
 		index += 1
 	}
 }
 
 proc draw_ide_text_clipped_large(x: int, y: int, text: string, maximum: int, color: int) {
 	var index: int
+	var offset: int
 	index = 0
+	offset = 0
 	while (index < xestring::strlen(text) && index < maximum) {
-		call graphics::draw_char(ide_window, x + index * 6, y, text[index], color)
+		call graphics::draw_char_styled(ide_window, x + offset, y, text[index], color, graphics::FONT_NORMAL, 0)
+		offset += graphics::char_advance(text[index], graphics::FONT_NORMAL)
 		index += 1
+	}
+}
+
+fn ide_text_width_prefix(text: string, maximum: int, font_size: int) int {
+	var index: int
+	var result: int
+	index = 0
+	result = 0
+	while (index < xestring::strlen(text) && index < maximum) {
+		result += graphics::char_advance(text[index], font_size)
+		index += 1
+	}
+	return result
+}
+
+fn ide_text_fit_count(text: string, maximum_width: int, font_size: int) int {
+	var index: int
+	var used_width: int
+	var advance: int
+	index = 0
+	used_width = 0
+	while (index < xestring::strlen(text)) {
+		advance = graphics::char_advance(text[index], font_size)
+		if (used_width + advance > maximum_width) { return index }
+		used_width += advance
+		index += 1
+	}
+	return index
+}
+
+fn ide_terminal_word_end(text: string, start: int) int {
+	var index: int
+	var code: int
+	index = start
+	while (index < xestring::strlen(text)) {
+		code = (int)(text[index])
+		if (code == 9 || code == 10 || code == 13 || code == 32) { return index }
+		index += 1
+	}
+	return index
+}
+
+fn ide_terminal_word_width(text: string, start: int, finish: int, font_size: int) int {
+	var index: int
+	var result: int
+	index = start
+	result = 0
+	while (index < finish) {
+		result += graphics::char_advance(text[index], font_size)
+		index += 1
+	}
+	return result
+}
+
+fn ide_terminal_wrapped_rows(text: string, maximum_width: int, font_size: int) int {
+	var index: int
+	var word_end: int
+	var word_width: int
+	var offset: int
+	var rows: int
+	var code: int
+	var advance: int
+	if (maximum_width < 1) { maximum_width = 1 }
+	index = 0
+	offset = 0
+	rows = 1
+	while (index < xestring::strlen(text)) {
+		code = (int)(text[index])
+		if (code == 13) {
+			index += 1
+		}
+		elseif (code == 10) {
+			rows += 1
+			offset = 0
+			index += 1
+		}
+		elseif (code == 9 || code == 32) {
+			if (code == 9) { advance = ide_tab_advance(offset, font_size) }
+			else { advance = graphics::char_advance(' ', font_size) }
+			if (offset > 0 && offset + advance > maximum_width) {
+				rows += 1
+				offset = 0
+			}
+			else { offset += advance }
+			index += 1
+		}
+		else {
+			word_end = ide_terminal_word_end(text, index)
+			word_width = ide_terminal_word_width(text, index, word_end, font_size)
+			if (offset > 0 && offset + word_width > maximum_width) {
+				rows += 1
+				offset = 0
+			}
+			while (index < word_end) {
+				advance = graphics::char_advance(text[index], font_size)
+				if (offset > 0 && offset + advance > maximum_width) {
+					rows += 1
+					offset = 0
+				}
+				offset += advance
+				index += 1
+			}
+		}
+	}
+	return rows
+}
+
+proc draw_ide_terminal_output(x: int, y: int, draw_width: int, draw_height: int, text: string, color: int, font_size: int) {
+	var index: int
+	var word_end: int
+	var word_width: int
+	var offset: int
+	var row: int
+	var first_row: int
+	var visible_rows: int
+	var total_rows: int
+	var row_height: int
+	var code: int
+	var advance: int
+	if (font_size == graphics::FONT_SMALL) { row_height = 6 }
+	else { row_height = 8 }
+	if (draw_width < 1) { draw_width = 1 }
+	visible_rows = draw_height / row_height
+	if (visible_rows < 1) { visible_rows = 1 }
+	total_rows = ide_terminal_wrapped_rows(text, draw_width, font_size)
+	first_row = total_rows - visible_rows
+	if (first_row < 0) { first_row = 0 }
+	index = 0
+	offset = 0
+	row = 0
+	while (index < xestring::strlen(text)) {
+		code = (int)(text[index])
+		if (code == 13) {
+			index += 1
+		}
+		elseif (code == 10) {
+			row += 1
+			offset = 0
+			index += 1
+		}
+		elseif (code == 9 || code == 32) {
+			if (code == 9) { advance = ide_tab_advance(offset, font_size) }
+			else { advance = graphics::char_advance(' ', font_size) }
+			if (offset > 0 && offset + advance > draw_width) {
+				row += 1
+				offset = 0
+			}
+			else { offset += advance }
+			index += 1
+		}
+		else {
+			word_end = ide_terminal_word_end(text, index)
+			word_width = ide_terminal_word_width(text, index, word_end, font_size)
+			if (offset > 0 && offset + word_width > draw_width) {
+				row += 1
+				offset = 0
+			}
+			while (index < word_end) {
+				advance = graphics::char_advance(text[index], font_size)
+				if (offset > 0 && offset + advance > draw_width) {
+					row += 1
+					offset = 0
+				}
+				if (row >= first_row && row < first_row + visible_rows && code >= 32 && code <= 126) {
+					call graphics::draw_char_styled(ide_window, x + offset, y + (row - first_row) * row_height, text[index], color, font_size, 0)
+				}
+				offset += advance
+				index += 1
+				if (index < xestring::strlen(text)) { code = (int)(text[index]) }
+			}
+		}
 	}
 }
 
@@ -939,10 +1176,11 @@ proc draw_ide_source(x: int, y: int, area_width: int, area_height: int, show_cur
 	var index: int
 	var line: int
 	var column: int
-	var columns: int
+	var visible_width: int
 	var rows: int
 	var color: int
 	var advance: int
+	var font_size: int
 	var row_height: int
 	var in_string: bool
 	var in_comment: bool
@@ -958,12 +1196,12 @@ proc draw_ide_source(x: int, y: int, area_width: int, area_height: int, show_cur
 	var pointer_x: int
 	var pointer_y: int
 	var tab_width: int
-	advance = 4
-	row_height = 6
-	if (ide_font_large) { advance = 6; row_height = 8 }
-	columns = (area_width - 22) / advance
+	var selection_width: int
+	font_size = ide_editor_font_size()
+	row_height = ide_editor_row_height()
+	visible_width = area_width - 22
 	rows = area_height / row_height
-	if (columns < 1) { columns = 1 }
+	if (visible_width < 1) { visible_width = 1 }
 	if (rows < 1) { rows = 1 }
 	index = 0
 	line = 0
@@ -989,33 +1227,32 @@ proc draw_ide_source(x: int, y: int, area_width: int, area_height: int, show_cur
 		}
 		else {
 			if ((int)(source[index]) == 9) {
-				tab_width = 4 - column % 4
-				if (column < columns && index >= selection_begin && index < selection_finish) {
-					if (tab_width > columns - column) { tab_width = columns - column }
-					call graphics::fill_rect(ide_window, x + 22 + column * advance, y + line * row_height, tab_width * advance, row_height, graphics::COLOR_5)
+				tab_width = ide_tab_advance(column, font_size)
+				if (column < visible_width && index >= selection_begin && index < selection_finish) {
+					selection_width = tab_width
+					if (selection_width > visible_width - column) { selection_width = visible_width - column }
+					if (selection_width > 0) { call graphics::fill_rect(ide_window, x + 22 + column, y + line * row_height, selection_width, row_height, graphics::COLOR_5) }
 				}
-				column += 4 - column % 4
+				column += tab_width
 			}
 			else {
 				if ((int)(source[index]) == 35 && !in_string) { in_comment = true }
 				if ((int)(source[index]) == 34 && !in_comment) { in_string = !in_string }
-				if (column < columns) {
+				advance = graphics::char_advance(source[index], font_size)
+				if (column < visible_width) {
 					color = graphics::COLOR_10
 					if (in_comment) { color = graphics::COLOR_8 }
 					elseif (in_string || (int)(source[index]) == 34) { color = graphics::COLOR_11 }
 					elseif ((int)(source[index]) >= 48 && (int)(source[index]) <= 57) { color = graphics::COLOR_14 }
 					if (index >= selection_begin && index < selection_finish) {
-						call graphics::fill_rect(ide_window, x + 22 + column * advance, y + line * row_height, advance, row_height, graphics::COLOR_5)
+						selection_width = advance
+						if (selection_width > visible_width - column) { selection_width = visible_width - column }
+						if (selection_width > 0) { call graphics::fill_rect(ide_window, x + 22 + column, y + line * row_height, selection_width, row_height, graphics::COLOR_5) }
 						color = graphics::WHITE
 					}
-					if (ide_font_large) {
-						call graphics::draw_char(ide_window, x + 22 + column * advance, y + line * row_height, source[index], color)
-					}
-					else {
-						call graphics::draw_char_small(ide_window, x + 22 + column * advance, y + line * row_height, source[index], color)
-					}
+					call graphics::draw_char_styled(ide_window, x + 22 + column, y + line * row_height, source[index], color, font_size, 0)
 				}
-				column += 1
+				column += advance
 			}
 		}
 		index += 1
@@ -1045,40 +1282,41 @@ proc draw_ide_source(x: int, y: int, area_width: int, area_height: int, show_cur
 			call draw_ide_text_clipped(x + 23, tooltip_y + 1, compiler::error(), (area_width - 27) / 4, graphics::WHITE)
 		}
 	}
-	if (show_cursor && cursor_found && !ide_has_selection() && (current_ticks / 450) % 2 == 0 && cursor_column < columns && cursor_line < rows) {
-		call graphics::draw_line(ide_window, x + 22 + cursor_column * advance, y + cursor_line * row_height, x + 22 + cursor_column * advance, y + cursor_line * row_height + row_height - 2, graphics::COLOR_13)
+	if (show_cursor && cursor_found && !ide_has_selection() && (current_ticks / 450) % 2 == 0 && cursor_column <= visible_width && cursor_line < rows) {
+		call graphics::draw_line(ide_window, x + 22 + cursor_column, y + cursor_line * row_height, x + 22 + cursor_column, y + cursor_line * row_height + row_height - 2, graphics::COLOR_13)
 	}
 }
 
 fn ide_source_index_at(pointer_x: int, pointer_y: int, x: int, y: int, area_width: int, area_height: int) int {
 	var advance: int
+	var font_size: int
 	var row_height: int
 	var target_line: int
 	var target_column: int
 	var index: int
 	var line: int
 	var column: int
-	advance = 4
-	row_height = 6
-	if (ide_font_large) { advance = 6; row_height = 8 }
+	font_size = ide_editor_font_size()
+	row_height = ide_editor_row_height()
 	target_line = (pointer_y - y) / row_height
 	if (target_line < 0) { target_line = 0 }
-	target_column = (pointer_x - x - 22 + advance / 2) / advance
+	target_column = pointer_x - x - 22
 	if (target_column < 0) { target_column = 0 }
 	index = 0
 	line = 0
 	column = 0
 	while (index < xestring::strlen(source)) {
-		if (line == target_line) {
-			if (column >= target_column || (int)(source[index]) == 10) { return index }
-		}
 		if ((int)(source[index]) == 10) {
 			if (line >= target_line) { return index }
 			line += 1
 			column = 0
 		}
-		elseif ((int)(source[index]) == 9) { column += 4 - column % 4 }
-		else { column += 1 }
+		else {
+			if ((int)(source[index]) == 9) { advance = ide_tab_advance(column, font_size) }
+			else { advance = graphics::char_advance(source[index], font_size) }
+			if (line == target_line && target_column < column + (advance + 1) / 2) { return index }
+			column += advance
+		}
 		index += 1
 	}
 	return xestring::strlen(source)
@@ -1160,6 +1398,195 @@ fn ide_base_name(path: string) string {
 		index += 1
 	}
 	return result
+}
+
+proc ide_begin_open_picker() {
+	open_picker_open = true
+	call ide_set(open_picker_path, ".")
+	open_picker_selected = -1
+	open_picker_scroll = 0
+	open_picker_guard = 2
+	open_picker_last_entry = -1
+	open_picker_last_ticks = -1000
+	ribbon_file_menu_open = false
+	edit_menu_open = false
+	plus_menu_open = false
+	file_menu_open = false
+	selection_dragging = false
+	call ide_report("Choose a file", false)
+}
+
+proc ide_open_picker_entry(index: int) {
+	var name: string
+	var path: string
+	if (index < 0 || index >= os::entry_count(open_picker_path)) {
+		call ide_report("Select a file", true)
+		return
+	}
+	name = os::entry_name(open_picker_path, index)
+	path = ide_join_path(open_picker_path, name)
+	if (os::entry_is_directory(open_picker_path, index)) {
+		call ide_set(open_picker_path, path)
+		open_picker_selected = -1
+		open_picker_scroll = 0
+		open_picker_last_entry = -1
+		call ide_report("Folder opened", false)
+		return
+	}
+	if (dirty) {
+		call ide_report("Save before opening another file", true)
+		return
+	}
+	if (!os::path_exists(path)) {
+		call ide_report("File no longer exists", true)
+		open_picker_selected = -1
+		return
+	}
+	open_picker_open = false
+	call ide_open_file(path)
+}
+
+proc ide_open_picker_back() {
+	if (open_picker_path != ".") {
+		call ide_set(open_picker_path, ide_parent_path(open_picker_path))
+		open_picker_selected = -1
+		open_picker_scroll = 0
+		open_picker_last_entry = -1
+	}
+}
+
+fn ide_open_picker_visible_rows(window_height: int) int {
+	var picker_panel_height: int
+	var result: int
+	picker_panel_height = window_height - 24
+	if (picker_panel_height > 174) { picker_panel_height = 174 }
+	result = (picker_panel_height - 34) / 9
+	if (result < 1) { result = 1 }
+	return result
+}
+
+proc ide_handle_open_picker_key(value: int) {
+	var count: int
+	var visible_rows: int
+	count = os::entry_count(open_picker_path)
+	visible_rows = ide_open_picker_visible_rows(height)
+	if (value == graphics::KEY_ESCAPE) {
+		open_picker_open = false
+		call ide_report("Open canceled", false)
+	}
+	elseif (value == graphics::KEY_BACKSPACE) {
+		call ide_open_picker_back()
+	}
+	elseif (value == graphics::KEY_UP && count > 0) {
+		if (open_picker_selected < 0) { open_picker_selected = 0 }
+		elseif (open_picker_selected > 0) { open_picker_selected -= 1 }
+		if (open_picker_selected < open_picker_scroll) { open_picker_scroll = open_picker_selected }
+	}
+	elseif (value == graphics::KEY_DOWN && count > 0) {
+		if (open_picker_selected < 0) { open_picker_selected = 0 }
+		elseif (open_picker_selected < count - 1) { open_picker_selected += 1 }
+		if (open_picker_selected >= open_picker_scroll + visible_rows) { open_picker_scroll = open_picker_selected - visible_rows + 1 }
+	}
+	elseif (value == graphics::KEY_ENTER) {
+		call ide_open_picker_entry(open_picker_selected)
+	}
+}
+
+proc draw_ide_open_picker(window_width: int, window_height: int) {
+	var panel_x: int
+	var panel_y: int
+	var panel_width: int
+	var panel_height: int
+	var list_y: int
+	var list_height: int
+	var visible_rows: int
+	var count: int
+	var maximum_scroll: int
+	var visible_index: int
+	var entry_index: int
+	var row_y: int
+	var row_width: int
+	var row_tone: int
+	var row_clicked: bool
+	var entry_name: string
+	var is_folder: bool
+	var button_width: int
+	if (window_width < 92 || window_height < 66) {
+		call graphics::fill_rect(ide_window, 1, 10, window_width - 2, window_height - 12, graphics::COLOR_8)
+		call draw_ide_text_clipped(4, 14, "Open: enlarge window", (window_width - 8) / 4, graphics::WHITE)
+		return
+	}
+	panel_width = window_width - 20
+	if (panel_width > 250) { panel_width = 250 }
+	panel_height = window_height - 24
+	if (panel_height > 174) { panel_height = 174 }
+	panel_x = (window_width - panel_width) / 2
+	panel_y = (window_height - panel_height) / 2
+	call graphics::fill_rect(ide_window, panel_x, panel_y, panel_width, panel_height, graphics::COLOR_8)
+	call graphics::draw_rect(ide_window, panel_x, panel_y, panel_width, panel_height, graphics::COLOR_13)
+	call draw_ide_text_clipped(panel_x + 4, panel_y + 3, "Open file", 20, graphics::WHITE)
+	if (open_picker_path != ".") {
+		if (open_picker_guard == 0 && graphics::button_flat(ide_window, panel_x + 3, panel_y + 10, 32, 8, "Back", graphics::COLOR_8)) { call ide_open_picker_back() }
+	}
+	else {
+		call draw_ide_passive_button(panel_x + 3, panel_y + 10, 32, 8, "Back", graphics::COLOR_1)
+	}
+	call draw_ide_text_clipped(panel_x + 39, panel_y + 12, open_picker_path, (panel_width - 44) / 4, graphics::COLOR_7)
+	list_y = panel_y + 21
+	list_height = panel_height - 34
+	visible_rows = ide_open_picker_visible_rows(window_height)
+	count = os::entry_count(open_picker_path)
+	maximum_scroll = count - visible_rows
+	if (maximum_scroll < 0) { maximum_scroll = 0 }
+	if (open_picker_guard == 0 && graphics::pointer_x(ide_window) >= panel_x + 3 && graphics::pointer_x(ide_window) < panel_x + panel_width - 3 && graphics::pointer_y(ide_window) >= list_y && graphics::pointer_y(ide_window) < list_y + list_height) {
+		open_picker_scroll -= ide_scroll_delta
+	}
+	if (open_picker_scroll > maximum_scroll) { open_picker_scroll = maximum_scroll }
+	if (open_picker_scroll < 0) { open_picker_scroll = 0 }
+	if (open_picker_selected >= count) { open_picker_selected = -1 }
+	row_width = panel_width - 8
+	if (count > visible_rows) { row_width -= 14 }
+	visible_index = 0
+	while (visible_index < visible_rows && open_picker_scroll + visible_index < count) {
+		entry_index = open_picker_scroll + visible_index
+		entry_name = os::entry_name(open_picker_path, entry_index)
+		is_folder = os::entry_is_directory(open_picker_path, entry_index)
+		row_y = list_y + visible_index * 9
+		row_tone = graphics::COLOR_8
+		if (entry_index == open_picker_selected) { row_tone = graphics::COLOR_5 }
+		row_clicked = false
+		if (open_picker_guard == 0) { row_clicked = graphics::button_flat(ide_window, panel_x + 3, row_y, row_width, 8, "", row_tone) }
+		else { call graphics::fill_rect(ide_window, panel_x + 3, row_y, row_width, 8, row_tone) }
+		if (is_folder) { call graphics::draw_text_small(ide_window, panel_x + 6, row_y + 2, "D", graphics::COLOR_10) }
+		else { call graphics::draw_text_small(ide_window, panel_x + 6, row_y + 2, "F", graphics::COLOR_7) }
+		call draw_ide_text_clipped(panel_x + 12, row_y + 2, entry_name, (row_width - 12) / 4, graphics::WHITE)
+		if (row_clicked) {
+			if (open_picker_last_entry == entry_index && current_ticks - open_picker_last_ticks <= 450) {
+				call ide_open_picker_entry(entry_index)
+			}
+			else {
+				open_picker_selected = entry_index
+				open_picker_last_entry = entry_index
+				open_picker_last_ticks = current_ticks
+			}
+		}
+		visible_index += 1
+	}
+	if (count > visible_rows) {
+		if (open_picker_guard == 0 && graphics::button_flat(ide_window, panel_x + panel_width - 16, list_y, 12, 8, "Up", graphics::COLOR_8) && open_picker_scroll > 0) { open_picker_scroll -= 1 }
+		if (open_picker_guard == 0 && graphics::button_flat(ide_window, panel_x + panel_width - 16, list_y + list_height - 8, 12, 8, "Dn", graphics::COLOR_8) && open_picker_scroll < maximum_scroll) { open_picker_scroll += 1 }
+	}
+	button_width = (panel_width - 10) / 2
+	if (open_picker_selected >= 0) {
+		if (open_picker_guard == 0 && graphics::button_flat(ide_window, panel_x + 3, panel_y + panel_height - 11, button_width, 8, "Open", graphics::COLOR_10)) { call ide_open_picker_entry(open_picker_selected) }
+	}
+	else {
+		call draw_ide_passive_button(panel_x + 3, panel_y + panel_height - 11, button_width, 8, "Open", graphics::COLOR_1)
+	}
+	if (open_picker_guard == 0 && graphics::button_flat(ide_window, panel_x + 7 + button_width, panel_y + panel_height - 11, button_width, 8, "Cancel", graphics::COLOR_8)) {
+		open_picker_open = false
+		call ide_report("Open canceled", false)
+	}
 }
 
 proc ide_append_positive_int(target: string, value: int) {
@@ -1472,8 +1899,6 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 	total = ide_explorer_row_count()
 	rows = (panel_height - 22) / 8
 	if (rows < 1) { rows = 1 }
-	if (explorer_scroll > total - rows) { explorer_scroll = total - rows }
-	if (explorer_scroll < 0) { explorer_scroll = 0 }
 	call graphics::fill_rect(ide_window, x, y, panel_width, panel_height, graphics::COLOR_1)
 	pointer_x = graphics::pointer_x(ide_window)
 	pointer_y = graphics::pointer_y(ide_window)
@@ -1484,6 +1909,11 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 	if (menu_x < x + 2) { menu_x = x + 2 }
 	popup_open = plus_menu_open || file_menu_open || rename_active
 	popup_pointer_inside = (plus_menu_open || file_menu_open) && pointer_x >= menu_x && pointer_x < menu_x + menu_width && pointer_y >= y + 9 && pointer_y < y + 36
+	if (interactive && !popup_open && pointer_x >= x && pointer_x < x + panel_width && pointer_y >= y + 9 && pointer_y < y + panel_height - 8) {
+		explorer_scroll -= ide_scroll_delta
+	}
+	if (explorer_scroll > total - rows) { explorer_scroll = total - rows }
+	if (explorer_scroll < 0) { explorer_scroll = 0 }
 	if (rename_active) {
 		popup_pointer_inside = rename_field_x >= 0 && pointer_x >= rename_field_x && pointer_x < rename_field_x + rename_field_width && pointer_y >= rename_field_y && pointer_y < rename_field_y + 7
 	}
@@ -2163,6 +2593,8 @@ proc draw_visual_workspace(x: int, y: int, area_width: int, area_height: int, in
 	var cell_height: int
 	var pointer_x: int
 	var pointer_y: int
+	var drag_dx: int
+	var drag_dy: int
 	hovered_atom = -1
 	file_count = ide_file_view_count()
 	if (file_count < 1) {
@@ -2199,32 +2631,44 @@ proc draw_visual_workspace(x: int, y: int, area_width: int, area_height: int, in
 		else {
 			call draw_file_nucleus_view(slot, cell_x, cell_y, cell_width, cell_height, slot == active_view)
 		}
-		if (interactive && graphics::mouse_pressed() && hovered_atom < 0 && pointer_x >= cell_x && pointer_x < cell_x + cell_width && pointer_y >= cell_y && pointer_y < cell_y + cell_height) {
+		if (interactive && graphics::mouse_pressed() && pointer_x >= cell_x && pointer_x < cell_x + cell_width && pointer_y >= cell_y && pointer_y < cell_y + cell_height) {
 			call ide_activate_view(slot)
-			pinned_atom = -1
-			pinned_view = -1
-			rotating_view = slot
-			last_pointer_x = pointer_x
-			last_pointer_y = pointer_y
-		}
-		elseif (interactive && graphics::mouse_pressed() && hovered_atom >= 0 && pointer_x >= cell_x && pointer_x < cell_x + cell_width && pointer_y >= cell_y && pointer_y < cell_y + cell_height) {
-			call ide_activate_view(slot)
-			pinned_atom = hovered_atom
-			pinned_view = slot
-			rotating_view = -1
+			if (active_view == slot) {
+				rotating_view = slot
+				rotation_dragging = false
+				rotation_press_x = pointer_x
+				rotation_press_y = pointer_y
+				last_pointer_x = pointer_x
+				last_pointer_y = pointer_y
+			}
 		}
 		item += 1
 	}
 	if (interactive && rotating_view >= 0 && graphics::mouse_down()) {
-		view_rotation_target[rotating_view] += (pointer_x - last_pointer_x) * 2
-		view_tilt_target[rotating_view] += (pointer_y - last_pointer_y) * 2
-		if (view_tilt_target[rotating_view] > 70) { view_tilt_target[rotating_view] = 70 }
-		if (view_tilt_target[rotating_view] < -70) { view_tilt_target[rotating_view] = -70 }
-		last_pointer_x = pointer_x
-		last_pointer_y = pointer_y
+		drag_dx = pointer_x - rotation_press_x
+		drag_dy = pointer_y - rotation_press_y
+		if (!rotation_dragging && drag_dx * drag_dx + drag_dy * drag_dy >= 16) {
+			rotation_dragging = true
+			last_pointer_x = rotation_press_x
+			last_pointer_y = rotation_press_y
+		}
+		if (rotation_dragging) {
+			drag_dx = pointer_x - last_pointer_x
+			drag_dy = pointer_y - last_pointer_y
+			if (drag_dx > 8) { drag_dx = 8 }
+			if (drag_dx < -8) { drag_dx = -8 }
+			if (drag_dy > 8) { drag_dy = 8 }
+			if (drag_dy < -8) { drag_dy = -8 }
+			view_rotation_target[rotating_view] += drag_dx
+			view_tilt_target[rotating_view] += drag_dy
+			if (view_tilt_target[rotating_view] > 70) { view_tilt_target[rotating_view] = 70 }
+			if (view_tilt_target[rotating_view] < -70) { view_tilt_target[rotating_view] = -70 }
+			last_pointer_x = pointer_x
+			last_pointer_y = pointer_y
+		}
 	}
-	if (!interactive) { rotating_view = -1 }
-	if (graphics::mouse_released()) { rotating_view = -1 }
+	if (!interactive) { rotating_view = -1; rotation_dragging = false }
+	if (graphics::mouse_released()) { rotating_view = -1; rotation_dragging = false }
 	if (shown_count == 1 && view_count > 1) {
 		call graphics::draw_int_small(ide_window, x + area_width - 18, y + 3, active_view + 1, graphics::COLOR_7)
 		call graphics::draw_text_small(ide_window, x + area_width - 12, y + 3, "/", graphics::COLOR_7)
@@ -2268,7 +2712,7 @@ proc draw_ribbon_file_menu(window_width: int) {
 	menu_width = 80
 	if (menu_width > window_width - 4) { menu_width = window_width - 4 }
 	if (menu_width < 24) { menu_width = 24 }
-	menu_block_clicked = graphics::button_flat(ide_window, 2, 10, menu_width, 35, "", graphics::COLOR_8)
+	menu_block_clicked = graphics::button_flat(ide_window, 2, 10, menu_width, 43, "", graphics::COLOR_8)
 	if (ribbon_file_menu_guard == 0 && graphics::button_flat(ide_window, 3, 11, menu_width - 2, 7, "New file", graphics::COLOR_8)) {
 		new_name = ide_unique_template_name(false)
 		if (os::make_file(new_name)) {
@@ -2291,7 +2735,10 @@ proc draw_ribbon_file_menu(window_width: int) {
 		}
 		ribbon_file_menu_open = false
 	}
-	if (ribbon_file_menu_guard == 0 && graphics::button_flat(ide_window, 3, 27, menu_width - 2, 7, "Save", graphics::COLOR_8)) {
+	if (ribbon_file_menu_guard == 0 && graphics::button_flat(ide_window, 3, 27, menu_width - 2, 7, "Open", graphics::COLOR_8)) {
+		call ide_begin_open_picker()
+	}
+	if (ribbon_file_menu_guard == 0 && graphics::button_flat(ide_window, 3, 35, menu_width - 2, 7, "Save", graphics::COLOR_8)) {
 		if (view_is_folder[active_view] == 0) {
 			call ide_save()
 		}
@@ -2300,14 +2747,15 @@ proc draw_ribbon_file_menu(window_width: int) {
 		}
 		ribbon_file_menu_open = false
 	}
-	if (ribbon_file_menu_guard == 0 && graphics::button_flat(ide_window, 3, 35, menu_width - 2, 7, "Close", graphics::COLOR_1)) {
+	if (ribbon_file_menu_guard == 0 && graphics::button_flat(ide_window, 3, 43, menu_width - 2, 7, "Close", graphics::COLOR_1)) {
 		ribbon_file_menu_open = false
 	}
 	if (ribbon_file_menu_guard > 0) {
 		call draw_ide_passive_button(3, 11, menu_width - 2, 7, "New file", graphics::COLOR_8)
 		call draw_ide_passive_button(3, 19, menu_width - 2, 7, "New folder", graphics::COLOR_8)
-		call draw_ide_passive_button(3, 27, menu_width - 2, 7, "Save", graphics::COLOR_8)
-		call draw_ide_passive_button(3, 35, menu_width - 2, 7, "Close", graphics::COLOR_1)
+		call draw_ide_passive_button(3, 27, menu_width - 2, 7, "Open", graphics::COLOR_8)
+		call draw_ide_passive_button(3, 35, menu_width - 2, 7, "Save", graphics::COLOR_8)
+		call draw_ide_passive_button(3, 43, menu_width - 2, 7, "Close", graphics::COLOR_1)
 	}
 }
 
@@ -2325,6 +2773,13 @@ file_menu_open = false
 ribbon_file_menu_open = false
 file_menu_guard = 0
 ribbon_file_menu_guard = 0
+open_picker_open = false
+open_picker_path = "."
+open_picker_selected = -1
+open_picker_scroll = 0
+open_picker_guard = 0
+open_picker_last_entry = -1
+open_picker_last_ticks = -1000
 file_menu_path = ""
 rename_active = false
 rename_path = ""
@@ -2364,12 +2819,14 @@ selection_end = cursor_index
 selection_dragging = false
 dirty = false
 running = false
+run_output = ""
 rotating_view = -1
+rotation_dragging = false
+rotation_press_x = 0
+rotation_press_y = 0
 hovered_atom = -1
 hovered_view = -1
 selected_atom = -1
-pinned_atom = -1
-pinned_view = -1
 explorer_scroll = 0
 explorer_toggle_lock = false
 status_is_error = false
@@ -2377,6 +2834,7 @@ status_expires = 0
 view_count = 1
 active_view = 0
 tab_scroll = 0
+ide_scroll_delta = 0
 view_path[0] = xestring::concat("", source_path)
 view_is_folder[0] = 0
 view_rotation[0] = 0
@@ -2415,23 +2873,28 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 	}
 	if (file_menu_guard > 0) { file_menu_guard -= 1 }
 	if (ribbon_file_menu_guard > 0) { ribbon_file_menu_guard -= 1 }
+	if (open_picker_guard > 0) { open_picker_guard -= 1 }
 	if (rename_pointer_guard > 0) { rename_pointer_guard -= 1 }
 	animation_step = delta_ms * 100 / 220
 	if (animation_step < 1) { animation_step = 1 }
 	if (animation_step > 24) { animation_step = 24 }
+	camera_step = delta_ms * 100 / 120
+	if (camera_step < 1) { camera_step = 1 }
+	if (camera_step > 40) { camera_step = 40 }
 	if (running && current_ticks - run_started > 900) { running = false }
 	view_update = 0
 	while (view_update < view_count) {
-		view_rotation_step = (view_rotation_target[view_update] - view_rotation[view_update]) * animation_step / 100
+		view_rotation_step = (view_rotation_target[view_update] - view_rotation[view_update]) * camera_step / 100
 		if (view_rotation_step == 0 && view_rotation_target[view_update] > view_rotation[view_update]) { view_rotation_step = 1 }
 		if (view_rotation_step == 0 && view_rotation_target[view_update] < view_rotation[view_update]) { view_rotation_step = -1 }
 		view_rotation[view_update] += view_rotation_step
-		view_tilt_step = (view_tilt_target[view_update] - view_tilt[view_update]) * animation_step / 100
+		view_tilt_step = (view_tilt_target[view_update] - view_tilt[view_update]) * camera_step / 100
 		if (view_tilt_step == 0 && view_tilt_target[view_update] > view_tilt[view_update]) { view_tilt_step = 1 }
 		if (view_tilt_step == 0 && view_tilt_target[view_update] < view_tilt[view_update]) { view_tilt_step = -1 }
 		view_tilt[view_update] += view_tilt_step
 		view_orbit_target[view_update] = 24
-		if (hovered_view == view_update || rotating_view == view_update || pinned_view == view_update) { view_orbit_target[view_update] = 0 }
+		if (hovered_view == view_update) { view_orbit_target[view_update] = 6 }
+		if (rotation_dragging && rotating_view == view_update) { view_orbit_target[view_update] = 0 }
 		view_orbit_step = (view_orbit_target[view_update] - view_orbit_speed[view_update]) * animation_step / 100
 		if (view_orbit_step == 0 && view_orbit_target[view_update] > view_orbit_speed[view_update]) { view_orbit_step = 1 }
 		if (view_orbit_step == 0 && view_orbit_target[view_update] < view_orbit_speed[view_update]) { view_orbit_step = -1 }
@@ -2442,6 +2905,7 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 	hovered_view = -1
 
 	call graphics::begin_draw(ide_window)
+	ide_scroll_delta = graphics::scroll_delta()
 	if (!ide_window.is_minimized()) {
 		width = graphics::content_width(ide_window)
 		height = graphics::content_height(ide_window)
@@ -2452,13 +2916,13 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		main_pointer_x = graphics::pointer_x(ide_window)
 		main_pointer_y = graphics::pointer_y(ide_window)
 		edit_pointer_inside = main_pointer_x >= 32 && main_pointer_x < 108 && main_pointer_y >= 10 && main_pointer_y < 61
-		ribbon_file_pointer_inside = main_pointer_x >= 2 && main_pointer_x < 82 && main_pointer_x < width - 2 && main_pointer_y >= 2 && main_pointer_y < 45
+		ribbon_file_pointer_inside = main_pointer_x >= 2 && main_pointer_x < 82 && main_pointer_x < width - 2 && main_pointer_y >= 2 && main_pointer_y < 53
 		if (ribbon_file_menu_open && ribbon_file_menu_guard == 0 && graphics::mouse_pressed() && !ribbon_file_pointer_inside) {
 			ribbon_file_menu_open = false
 			ribbon_file_menu_guard = 1
 		}
-		ui_input_blocked = rename_active || delete_confirm || ribbon_file_menu_open || ribbon_file_menu_guard > 0 || (edit_menu_open && (edit_pointer_inside || graphics::mouse_pressed()))
-		explorer_popup_active = plus_menu_open || file_menu_open || rename_active || ribbon_file_menu_open
+		ui_input_blocked = rename_active || delete_confirm || open_picker_open || ribbon_file_menu_open || ribbon_file_menu_guard > 0 || (edit_menu_open && (edit_pointer_inside || graphics::mouse_pressed()))
+		explorer_popup_active = plus_menu_open || file_menu_open || rename_active || open_picker_open || ribbon_file_menu_open
 		if (edit_menu_open && graphics::mouse_pressed() && !edit_pointer_inside) {
 			edit_menu_open = false
 		}
@@ -2593,6 +3057,9 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 			elseif (displayed_tabs == 1 && tab_width > available_tabs_width) { tab_width = available_tabs_width }
 			maximum_tab_scroll = view_count - displayed_tabs
 			if (maximum_tab_scroll < 0) { maximum_tab_scroll = 0 }
+			if (!ui_input_blocked && !explorer_popup_active && main_pointer_x >= editor_x && main_pointer_x < editor_x + tabs_width && main_pointer_y >= 12 && main_pointer_y < 19) {
+				tab_scroll -= ide_scroll_delta
+			}
 			if (tab_scroll > maximum_tab_scroll) { tab_scroll = maximum_tab_scroll }
 			if (tab_scroll < 0) { tab_scroll = 0 }
 			if (!ui_input_blocked && !explorer_popup_active && ide_chevron_button(editor_x, 12, 9, 7, 3, graphics::COLOR_8)) {
@@ -2699,42 +3166,41 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		if (terminal_open && height >= 120) {
 			call graphics::fill_rect(ide_window, editor_x, 23 + editor_height, width - editor_x - 2, height - editor_height - 34, graphics::COLOR_1)
 			if (ide_font_large) {
-				terminal_columns = (width - editor_x - 8) / 6
-				if (terminal_columns < 1) { terminal_columns = 1 }
-				call draw_ide_text_clipped_large(editor_x + 3, 26 + editor_height, terminal_text, terminal_columns, graphics::COLOR_10)
+				call draw_ide_terminal_output(editor_x + 3, 26 + editor_height, width - editor_x - 8, height - editor_height - 47, terminal_text, graphics::COLOR_10, graphics::FONT_NORMAL)
 				call graphics::draw_text(ide_window, editor_x + 3, height - 18, ">", graphics::COLOR_13)
-				terminal_columns = (width - editor_x - 14) / 6
+				terminal_columns = ide_text_fit_count(terminal_command, width - editor_x - 14, graphics::FONT_NORMAL)
 				if (terminal_columns < 1) { terminal_columns = 1 }
 				call draw_ide_text_clipped_large(editor_x + 11, height - 18, terminal_command, terminal_columns, graphics::WHITE)
 				terminal_length = xestring::strlen(terminal_command)
 				if (terminal_length > terminal_columns) { terminal_length = terminal_columns }
 				if (editor_focus == 1 && (current_ticks / 450) % 2 == 0) {
-					call graphics::draw_line(ide_window, editor_x + 11 + terminal_length * 6, height - 18, editor_x + 11 + terminal_length * 6, height - 12, graphics::COLOR_13)
+					call graphics::draw_line(ide_window, editor_x + 11 + ide_text_width_prefix(terminal_command, terminal_length, graphics::FONT_NORMAL), height - 18, editor_x + 11 + ide_text_width_prefix(terminal_command, terminal_length, graphics::FONT_NORMAL), height - 12, graphics::COLOR_13)
 				}
 			}
 			else {
-				terminal_columns = (width - editor_x - 8) / 4
-				if (terminal_columns < 1) { terminal_columns = 1 }
-				call draw_ide_text_clipped(editor_x + 3, 26 + editor_height, terminal_text, terminal_columns, graphics::COLOR_10)
+				call draw_ide_terminal_output(editor_x + 3, 26 + editor_height, width - editor_x - 8, height - editor_height - 47, terminal_text, graphics::COLOR_10, graphics::FONT_SMALL)
 				call graphics::draw_text_small(ide_window, editor_x + 3, height - 17, ">", graphics::COLOR_13)
-				terminal_columns = (width - editor_x - 12) / 4
+				terminal_columns = ide_text_fit_count(terminal_command, width - editor_x - 12, graphics::FONT_SMALL)
 				if (terminal_columns < 1) { terminal_columns = 1 }
 				call draw_ide_text_clipped(editor_x + 9, height - 17, terminal_command, terminal_columns, graphics::WHITE)
 				terminal_length = xestring::strlen(terminal_command)
 				if (terminal_length > terminal_columns) { terminal_length = terminal_columns }
 				if (editor_focus == 1 && (current_ticks / 450) % 2 == 0) {
-					call graphics::draw_line(ide_window, editor_x + 9 + terminal_length * 4, height - 17, editor_x + 9 + terminal_length * 4, height - 13, graphics::COLOR_13)
+					call graphics::draw_line(ide_window, editor_x + 9 + ide_text_width_prefix(terminal_command, terminal_length, graphics::FONT_SMALL), height - 17, editor_x + 9 + ide_text_width_prefix(terminal_command, terminal_length, graphics::FONT_SMALL), height - 13, graphics::COLOR_13)
 				}
 			}
 		}
 		status_color = graphics::COLOR_7
 		if (status_is_error) { status_color = graphics::COLOR_12 }
 		call draw_ide_text_clipped(editor_x + 3, height - 9, status_text, (width - editor_x - 6) / 4, status_color)
-		if (edit_menu_open && !delete_confirm) {
+		if (edit_menu_open && !delete_confirm && !open_picker_open) {
 			call draw_edit_menu()
 		}
-		if (ribbon_file_menu_open && !delete_confirm) {
+		if (ribbon_file_menu_open && !delete_confirm && !open_picker_open) {
 			call draw_ribbon_file_menu(width)
+		}
+		if (open_picker_open && !delete_confirm) {
+			call draw_ide_open_picker(width, height)
 		}
 
 		if (delete_confirm) {
@@ -2756,7 +3222,10 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 
 		key = graphics::read_key()
 		while (key != 0) {
-			if (rename_active) {
+			if (open_picker_open) {
+				call ide_handle_open_picker_key(key)
+			}
+			elseif (rename_active) {
 				call ide_handle_rename_key(key)
 			}
 			elseif (edit_menu_open || delete_confirm || plus_menu_open || file_menu_open || ribbon_file_menu_open) {

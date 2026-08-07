@@ -39,6 +39,7 @@ from PyQt6.QtGui import (
 	QPainter,
 	QKeyEvent,
 	QMouseEvent,
+	QWheelEvent,
 	QFont,
 	QTextOption,
 )
@@ -56,7 +57,7 @@ from xe_lang.nodes import (
 	ProcedureDefinition,
 	StructDefinition,
 	ClassDefinition,
-	EnumDeclaration
+	EnumDeclaration,
 )
 from runtime import run, RuntimeContext
 from ide_themes import THEMES
@@ -937,6 +938,8 @@ class VMGraphicsWidget(QWidget):
 		self.image.fill(QColor("black"))
 		self.active_vm = None
 		self._forwarded_keys: dict[int, int] = {}
+		self._wheel_angle_remainder = 0
+		self._wheel_pixel_remainder = 0
 
 		self.setMouseTracking(True)
 		self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -951,7 +954,6 @@ class VMGraphicsWidget(QWidget):
 			0.01,
 			min(available_width / self.width_px, available_height / self.height_px),
 		)
-		self.scale = round(self.scale)
 		self.render_width = max(1, round(self.width_px * self.scale))
 		self.render_height = max(1, round(self.height_px * self.scale))
 		self.render_x = (available_width - self.render_width) // 2
@@ -962,6 +964,8 @@ class VMGraphicsWidget(QWidget):
 		if self.active_vm is not None and self.active_vm is not vm:
 			self.active_vm.devices.input.release_all()
 		self._forwarded_keys.clear()
+		self._wheel_angle_remainder = 0
+		self._wheel_pixel_remainder = 0
 		self.active_vm = vm
 
 	@pyqtSlot(object)
@@ -1116,6 +1120,32 @@ class VMGraphicsWidget(QWidget):
 			if button:
 				self.active_vm.devices.input.set_button(button, False)
 
+	@staticmethod
+	def _consume_wheel_units(total: int, unit: int) -> tuple[int, int]:
+		steps = total // unit if total >= 0 else -((-total) // unit)
+		return steps, total - steps * unit
+
+	def wheelEvent(self, event: QWheelEvent):
+		if not self.active_vm:
+			event.ignore()
+			return
+
+		self._update_pointer(event)
+		angle_delta = event.angleDelta().y()
+		if angle_delta:
+			steps, self._wheel_angle_remainder = self._consume_wheel_units(
+				self._wheel_angle_remainder + angle_delta,
+				120,
+			)
+		else:
+			steps, self._wheel_pixel_remainder = self._consume_wheel_units(
+				self._wheel_pixel_remainder + event.pixelDelta().y(),
+				40,
+			)
+		if steps:
+			self.active_vm.devices.input.add_scroll_delta(steps)
+		event.accept()
+
 	def keyPressEvent(self, event: QKeyEvent):
 		if self.active_vm and not event.isAutoRepeat():
 			key = self._key_code(event)
@@ -1143,6 +1173,8 @@ class VMGraphicsWidget(QWidget):
 		if self.active_vm:
 			self.active_vm.devices.input.release_all()
 		self._forwarded_keys.clear()
+		self._wheel_angle_remainder = 0
+		self._wheel_pixel_remainder = 0
 		super().focusOutEvent(event)
 
 
