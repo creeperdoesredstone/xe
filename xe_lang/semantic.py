@@ -2185,24 +2185,6 @@ class SemanticAnalyzer:
 		allocated_type = Type(node.type_name, 1)
 		node.type = allocated_type
 		return res.success(allocated_type)
-
-	def visit_FreePointer(self, node: FreePointer) -> Result:
-		res = Result()
-
-		target_type = res.register(self.visit(node.target))
-		if res.error:
-			return res
-
-		if target_type.pointer_layers == 0:
-			return res.fail(
-				SemanticError(
-					f"Cannot free non-pointer expression of type '{target_type}'.",
-					node.target.start_pos,
-					node.target.end_pos,
-				)
-			)
-
-		return res.success(None)
 	
 	def visit_MethodCall(self, node: MethodCall) -> Result:
 		res = Result()
