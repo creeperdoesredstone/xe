@@ -101,6 +101,7 @@ GRAPHICS_SPEC = LibrarySpec(
 		_builtin("draw_float_small", BuiltInID.GRAPHICS_DRAW_FLOAT_SMALL, ("Window", "int", "int", "float", "int"), None, SyscallID.APP_GRAPHICS_DRAW_FLOAT_SMALL, WINDOW_REF),
 		_builtin("button_flat", BuiltInID.GRAPHICS_BUTTON_FLAT, ("Window", "int", "int", "int", "int", "string", "int"), "bool", SyscallID.APP_GRAPHICS_BUTTON_FLAT, WINDOW_REF),
 		_builtin("draw_atom", BuiltInID.GRAPHICS_DRAW_ATOM, ("Window", "int", "int", "int", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_DRAW_ATOM, WINDOW_REF),
+		_builtin("draw_icon", BuiltInID.GRAPHICS_DRAW_ICON, ("Window", "int", "int", "int", "int", "string"), None, SyscallID.APP_GRAPHICS_DRAW_ICON, WINDOW_REF),
 		_builtin("modifiers", BuiltInID.GRAPHICS_MODIFIERS, (), "int", SyscallID.APP_GRAPHICS_MODIFIERS),
 		_builtin("right_mouse_down", BuiltInID.GRAPHICS_RIGHT_MOUSE_DOWN, (), "bool", SyscallID.APP_GRAPHICS_RIGHT_MOUSE_DOWN),
 		_builtin("right_mouse_pressed", BuiltInID.GRAPHICS_RIGHT_MOUSE_PRESSED, (), "bool", SyscallID.APP_GRAPHICS_RIGHT_MOUSE_PRESSED),

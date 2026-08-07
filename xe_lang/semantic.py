@@ -2490,7 +2490,19 @@ class SemanticAnalyzer:
 			if res.error:
 				return res
 
-			if arg_type != expected_type:
+			graphics_screen_target = (
+				node.library_name == "graphics"
+				and i == 0
+				and expected_type == Type("Window")
+				and arg_type == Type("Screen")
+				and member_sym.builtin_id not in {
+					BuiltInID.GRAPHICS_BUTTON,
+					BuiltInID.GRAPHICS_BUTTON_TONE,
+					BuiltInID.GRAPHICS_BUTTON_FLAT,
+					BuiltInID.GRAPHICS_SLIDER,
+				}
+			)
+			if arg_type != expected_type and not graphics_screen_target:
 				is_implicit_float_cast = (
 					arg_type.pointer_layers == 0
 					and expected_type.pointer_layers == 0

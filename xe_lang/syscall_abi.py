@@ -1,6 +1,10 @@
 from enum import IntEnum
 
 
+GRAPHICS_SCREEN_REFERENCE_TAG = 0x80000000
+GRAPHICS_REFERENCE_ADDRESS_MASK = 0x7FFFFFFF
+
+
 class SyscallID(IntEnum):
 	OUTPUT_CHARS = 1
 	READ_STR = 2
@@ -207,6 +211,7 @@ class SyscallID(IntEnum):
 	APP_OS_YEAR = 250
 	APP_OS_MONTH = 251
 	APP_OS_DAY = 252
+	APP_GRAPHICS_DRAW_ICON = 253
 
 
 class MouseEvent(IntEnum):

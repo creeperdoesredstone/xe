@@ -1,14 +1,36 @@
 # Xe graphics, OS, currency, and compiler standard libraries
 
-The public app API has four modules. `graphics` owns the plain `Window` type,
-drawing, widgets, and input. `os` owns the solid screen background, system settings,
+The public app API has four modules. `graphics` owns the frameless `Screen` target,
+the plain `Window` type, drawing, widgets, and input. `os` owns the solid screen
+background, system settings,
 process utilities, and filesystem access. `currency` provides bundled reference
 rates and history without runtime network access. `compiler` exposes the in-VM Xe
 compiler and visual-document model. There is no separate `window` module or shell UI.
 
-## Window and frame lifecycle
+## Screen, Window, and frame lifecycle
 
-`graphics::Window` is the only public window type. It exposes the framebuffer-pixel
+`graphics::Screen` draws directly into the complete Scratch stage. It has no title,
+position, state, border, lifecycle methods, dragging, resizing, minimizing, or
+maximizing. After `begin_draw`, its runtime-owned `width` and `height` fields contain
+the current framebuffer dimensions (`480x360` in the Scratch-compatible runtime).
+
+```xe
+var bg: graphics::Screen
+
+call graphics::begin_draw(bg)
+call graphics::clear(bg, graphics::COLOR_1)
+call graphics::fill_rect(bg, 8, 8, 96, 28, graphics::COLOR_5)
+call graphics::draw_text(bg, 14, 18, "Desktop", graphics::WHITE)
+call graphics::draw_icon(bg, 116, 12, 5, 5, ".AAA.A...AAAAAAA...AA.A.A")
+call graphics::update(bg)
+```
+
+Screen coordinates are absolute stage pixels with origin `(0, 0)` and scale `1`.
+`begin_draw(bg)` restores the OS-selected solid background and a full-stage clip;
+`update(bg)` publishes one immutable frame. It creates no `Window` object or hidden
+window-manager record and therefore cannot produce window chrome accidentally.
+
+`graphics::Window` exposes the framebuffer-pixel
 geometry fields `x`, `y`, `width`, and `height`, plus `title` and
 read-only-by-convention `state`. Its method surface remains exactly:
 
@@ -43,10 +65,10 @@ while (win.state != graphics::WINDOW_CLOSED) {
 }
 ```
 
-`begin_draw` updates window input/state, clears the solid background, draws the window chrome, and
-clips subsequent rendering to the content area. Drawing coordinates are relative
-to the top-left of that content area. `update` draws any move/resize outline last
-and publishes one immutable frame.
+For a `Window`, `begin_draw` updates window input/state, clears the solid background,
+draws the window chrome, and clips subsequent rendering to the content area. Drawing
+coordinates are relative to the top-left of that content area. `update` draws any
+move/resize outline last and publishes one immutable frame.
 
 `Window.ui_scale` selects an integer pixel density. New Xenon apps use `1`; legacy
 programs that leave it unset retain the crisp `2x2` default. Resizing reveals more or
@@ -97,11 +119,11 @@ the same integer pixel density before, during, and after the commit.
 
 ## `graphics`
 
-- Lifecycle: `begin_draw(win)`, `update(win)`
-- Screen information: `width()`, `height()`, `content_width(win)`,
-  `content_height(win)`, `pointer_x(win)`, `pointer_y(win)`
+- Lifecycle: `begin_draw(target)`, `update(target)` for a `Screen` or `Window`
+- Screen information: `width()`, `height()`, `content_width(target)`,
+  `content_height(target)`, `pointer_x(target)`, `pointer_y(target)`
 - Shapes: `clear`, `set_pixel`, `draw_circle`, `draw_line`, `draw_rect`, `fill_rect`,
-  and `draw_atom`
+  `draw_atom`, and `draw_icon`
 - Text: `draw_text`, `draw_char`, `draw_int`, `draw_float`, plus the compact
   `draw_text_small`, `draw_char_small`, `draw_int_small`, and `draw_float_small`
 - Controls: `button`, `button_tone`, `button_flat`, `slider`
@@ -122,10 +144,19 @@ The three unprefixed mouse functions report the primary/left button. The matchin
 `right_mouse_*` functions expose the secondary button without changing the raw
 mouse ABI, allowing contextual menus to remain deterministic in Xe applications.
 
-Every drawing/control function takes a `graphics::Window` as its first argument.
+Lifecycle, size/pointer, shape, text, atom, and icon functions accept either a
+`graphics::Screen` or `graphics::Window` as their first argument. Controls remain
+Window-only because they participate in window-local capture and overlay ordering.
 Colors are palette indices, so an OS palette change recolors output without
 changing application drawing code. Coordinates supplied to shapes, text, and
-controls use the same fixed logical-pixel density. `button_tone` has the same
+controls use the target's fixed logical-pixel density.
+
+`draw_icon(target, x, y, width, height, pixels)` consumes row-major pixel symbols:
+`0-9` and `A-F`/`a-f` select palette indices, `.` is transparent, and whitespace is
+ignored. Missing pixels and unsupported symbols remain transparent. This compact
+text representation is intended for small Xe-owned desktop and application icons.
+
+`button_tone` has the same
 interaction behavior as `button` plus a final palette-index argument for the
 normal fill color; hover and pressed colors remain derived by the window theme.
 `button_flat` accepts the same arguments as `button_tone` but omits the frame,
@@ -184,8 +215,11 @@ the matching light or dark group. The OS remains the persistence owner; apps
 should stage edits locally and use `apply_preferences` only when Apply is chosen.
 
 `background_id` selects a solid backdrop color. The OS clears the framebuffer to
-that palette-backed color before drawing windows; it does not synthesize desktop
-art, a dock, or taskbar sprites. The current built-in backdrop IDs are Black,
+that palette-backed color before drawing a Screen or Window; it does not synthesize
+desktop art, a dock, or taskbar sprites. A Screen program may draw those elements
+itself. Screen is a direct frame target rather than a retained compositor layer, so
+one program should finish a Screen frame before starting a separate Window frame.
+The current built-in backdrop IDs are Black,
 Navy, and Slate, and applications should use IDs returned by the OS rather than
 assuming that list will never grow.
 
@@ -291,7 +325,7 @@ assembly programs and compiled `graphics::`/`os::` calls cannot collide.
   deterministic `OS_RAND32`/`OS_RANDF`/`OS_RSEED`, and hour/minute queries). The
   former unprefixed enum names remain aliases so existing assembled projects keep
   their numeric ABI.
-- Raw graphics: `30-53`, `55`, and `56` (buffer operations, clipping, primitives,
+- Raw graphics: `30-56` (buffer operations, clipping, primitives,
   image/text/window/button drawing). Raw taskbar `52` and TaskAtom `53` remain
   available to assembly programs, but Calculator and Settings do not call them.
 - Raw input: `60-64` (mouse polling, previous event, keyboard polling, key state,
@@ -301,9 +335,16 @@ assembly programs and compiled `graphics::`/`os::` calls cannot collide.
 - High-level app extensions: graphics `100-129`, `142-145`, `208`, and `246-249`, OS
   settings/utilities `130-141` and `180-196`, `Window` methods `150-152`, files
   `160-164` and `210-217`, mutable string append operations `170-171`, currency
-  `200-207`, compiler services `220-245`, and calendar date components `250-252`.
+  `200-207`, compiler services `220-245`, calendar date components `250-252`, and
+  compact palette-icon drawing `253`.
 
-IDs absent from those ranges are reserved, including `13-19`, `54`, and `57-59`;
+Compiled Screen resource references set bit 31 and retain the static address in bits
+`0-30`. The runtime strips that tag before bounds checks. Static resources remain in
+the 16-bit XAssembly address range, so existing Window references and bytecode are
+unchanged and the representation is exact in the Scratch VM.
+
+IDs absent from those ranges are reserved, including `13-19`, `57-59`, and
+`254-255`;
 invoking one reports `Unknown system call` rather than silently doing the wrong
 operation.
 

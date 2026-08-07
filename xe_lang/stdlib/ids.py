@@ -148,3 +148,4 @@ class BuiltInID(Enum):
 	OS_DAY = auto()
 	OS_HOUR = auto()
 	OS_MINUTE = auto()
+	GRAPHICS_DRAW_ICON = auto()

@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from xe_lang.helper import Position, VMError
-from xe_lang.syscall_abi import ImageFormat, SyscallID
+from xe_lang.syscall_abi import (
+	GRAPHICS_REFERENCE_ADDRESS_MASK,
+	GRAPHICS_SCREEN_REFERENCE_TAG,
+	ImageFormat,
+	SyscallID,
+)
 
 from .currency import CurrencyDevice
 from .compiler import CompilerDevice
@@ -32,6 +37,11 @@ WINDOW_STATE = 5
 WINDOW_HANDLE = 6
 WINDOW_UI_SCALE = 7
 WINDOW_WORDS = 10
+
+SCREEN_FIELD_WIDTH = 0
+SCREEN_FIELD_HEIGHT = 1
+SCREEN_WORDS = 2
+SCREEN_TARGET_HANDLE = -1
 
 
 def _signed(value: int) -> int:
@@ -66,6 +76,7 @@ class DeviceRuntime:
 		self._raw_slider_capture: tuple[int, int, int] | None = None
 		self._frame_window_pointer: int | None = None
 		self._frame_window_handle = 0
+		self._frame_is_screen = False
 		self._handlers = {
 			SyscallID.OS_RAND32: self._raw_rand32,
 			SyscallID.OS_RANDF: self._raw_randf,
@@ -138,6 +149,7 @@ class DeviceRuntime:
 			SyscallID.APP_GRAPHICS_DRAW_FLOAT_SMALL: self._graphics_draw_float_small,
 			SyscallID.APP_GRAPHICS_BUTTON_FLAT: self._graphics_button_flat,
 			SyscallID.APP_GRAPHICS_DRAW_ATOM: self._graphics_draw_atom,
+			SyscallID.APP_GRAPHICS_DRAW_ICON: self._graphics_draw_icon,
 			SyscallID.APP_GRAPHICS_MODIFIERS: self._graphics_modifiers,
 			SyscallID.APP_GRAPHICS_RIGHT_MOUSE_DOWN: self._graphics_right_mouse_down,
 			SyscallID.APP_GRAPHICS_RIGHT_MOUSE_PRESSED: self._graphics_right_mouse_pressed,
@@ -272,6 +284,9 @@ class DeviceRuntime:
 	def _valid_window_pointer(self, vm: Any, pointer: int) -> bool:
 		return 0 <= pointer <= len(vm.data_memory) - WINDOW_WORDS
 
+	def _valid_screen_pointer(self, vm: Any, pointer: int) -> bool:
+		return 0 <= pointer <= len(vm.data_memory) - SCREEN_WORDS
+
 	def _ensure_window(self, vm: Any, pointer: int) -> int:
 		if not self._valid_window_pointer(vm, pointer):
 			return 0
@@ -317,6 +332,13 @@ class DeviceRuntime:
 		memory[pointer + WINDOW_STATE] = int(record.state)
 		memory[pointer + WINDOW_HANDLE] = handle
 
+	def _sync_screen(self, vm: Any, pointer: int) -> None:
+		if not self._valid_screen_pointer(vm, pointer):
+			return
+		memory = vm.data_memory
+		memory[pointer + SCREEN_FIELD_WIDTH] = self.graphics.width
+		memory[pointer + SCREEN_FIELD_HEIGHT] = self.graphics.height
+
 	def _window_args(
 		self,
 		vm: Any,
@@ -328,8 +350,16 @@ class DeviceRuntime:
 		args = self._args(vm, result, count)
 		if args is None:
 			return None
-		pointer = args[0]
-		if not refresh and pointer == self._frame_window_pointer:
+		raw_pointer = args[0]
+		is_screen = bool(raw_pointer & GRAPHICS_SCREEN_REFERENCE_TAG)
+		pointer = (
+			raw_pointer & GRAPHICS_REFERENCE_ADDRESS_MASK
+			if is_screen
+			else raw_pointer
+		)
+		if is_screen:
+			handle = SCREEN_TARGET_HANDLE if self._valid_screen_pointer(vm, pointer) else 0
+		elif not refresh and pointer == self._frame_window_pointer:
 			handle = self._frame_window_handle
 			if handle and not self.windows.record(handle):
 				handle = self._ensure_window(vm, pointer)
@@ -339,10 +369,16 @@ class DeviceRuntime:
 		if refresh:
 			self._frame_window_pointer = pointer
 			self._frame_window_handle = handle
+			self._frame_is_screen = is_screen
 		return pointer, handle, args[1:]
 
 	def _origin(self, handle: int) -> tuple[int, int]:
+		if handle == SCREEN_TARGET_HANDLE:
+			return 0, 0
 		return self.windows.draw_origin(handle)
+
+	def _target_scale(self, handle: int) -> int:
+		return 1 if handle == SCREEN_TARGET_HANDLE else self.windows.ui_scale(handle)
 
 	def _raw_rand32(self, vm: Any, result: Any) -> None:
 		vm.push(self._rng.getrandbits(32))
@@ -676,7 +712,10 @@ class DeviceRuntime:
 			vm.push(0)
 			return
 		handle = entry[1]
-		vm.push(self.windows.content_width(handle) // self.windows.ui_scale(handle))
+		if handle == SCREEN_TARGET_HANDLE:
+			vm.push(self.graphics.width)
+		else:
+			vm.push(self.windows.content_width(handle) // self.windows.ui_scale(handle))
 
 	def _graphics_content_height(self, vm: Any, result: Any) -> None:
 		entry = self._window_args(vm, result, 1)
@@ -684,7 +723,10 @@ class DeviceRuntime:
 			vm.push(0)
 			return
 		handle = entry[1]
-		vm.push(self.windows.content_height(handle) // self.windows.ui_scale(handle))
+		if handle == SCREEN_TARGET_HANDLE:
+			vm.push(self.graphics.height)
+		else:
+			vm.push(self.windows.content_height(handle) // self.windows.ui_scale(handle))
 
 	def _graphics_draw_background(self, vm: Any, result: Any) -> None:
 		self.os.draw_background(self.graphics)
@@ -698,6 +740,10 @@ class DeviceRuntime:
 		self.os.draw_background(self.graphics)
 		if not handle:
 			self.graphics.set_clip(0, 0, 0, 0)
+			return
+		if self._frame_is_screen:
+			self._sync_screen(vm, pointer)
+			self.graphics.set_clip(0, 0, self.graphics.width, self.graphics.height)
 			return
 		self.windows.begin_widget_frame(handle)
 		self.windows.update(handle)
@@ -721,11 +767,14 @@ class DeviceRuntime:
 		if not entry:
 			self._frame_window_pointer = None
 			self._frame_window_handle = 0
+			self._frame_is_screen = False
 			return
 		pointer, handle, _ = entry
 		try:
 			self.graphics.reset_clip()
-			if handle:
+			if handle == SCREEN_TARGET_HANDLE:
+				self._sync_screen(vm, pointer)
+			elif handle:
 				self.windows.finish_draw(handle)
 				self.windows.draw_drag_outline(handle)
 				self._sync_window(vm, pointer, handle)
@@ -734,6 +783,7 @@ class DeviceRuntime:
 		finally:
 			self._frame_window_pointer = None
 			self._frame_window_handle = 0
+			self._frame_is_screen = False
 
 	def _graphics_clear(self, vm: Any, result: Any) -> None:
 		entry = self._window_args(vm, result, 2)
@@ -746,7 +796,7 @@ class DeviceRuntime:
 			return
 		_, handle, values = entry
 		ox, oy = self._origin(handle)
-		scale = self.windows.ui_scale(handle)
+		scale = self._target_scale(handle)
 		values = [_signed(value) for value in values]
 		if draw == "pixel":
 			x, y, color = values
@@ -792,7 +842,7 @@ class DeviceRuntime:
 		_, handle, values = entry
 		x, y, value, color = values
 		ox, oy = self._origin(handle)
-		scale = self.windows.ui_scale(handle)
+		scale = self._target_scale(handle)
 		if kind == "text":
 			text = self._read_string(vm, value)
 		elif kind == "int":
@@ -823,7 +873,7 @@ class DeviceRuntime:
 		_, handle, values = entry
 		x, y, value, color = values
 		ox, oy = self._origin(handle)
-		scale = self.windows.ui_scale(handle)
+		scale = self._target_scale(handle)
 		if kind == "text":
 			text = self._read_string(vm, value)
 		elif kind == "int":
@@ -854,7 +904,7 @@ class DeviceRuntime:
 		_, handle, values = entry
 		x, y, value, color = values
 		ox, oy = self._origin(handle)
-		scale = self.windows.ui_scale(handle)
+		scale = self._target_scale(handle)
 		self.graphics.draw_text(
 			ox + _signed(x) * scale,
 			oy + _signed(y) * scale,
@@ -870,7 +920,7 @@ class DeviceRuntime:
 		_, handle, values = entry
 		x, y, value, color = values
 		ox, oy = self._origin(handle)
-		scale = self.windows.ui_scale(handle)
+		scale = self._target_scale(handle)
 		self.graphics.draw_text_small(
 			ox + _signed(x) * scale,
 			oy + _signed(y) * scale,
@@ -933,7 +983,7 @@ class DeviceRuntime:
 		_, handle, values = entry
 		cx, cy, radius, state, ring_style, phase = (_signed(value) for value in values)
 		radius = max(4, radius)
-		scale = self.windows.ui_scale(handle)
+		scale = self._target_scale(handle)
 		ox, oy = self._origin(handle)
 		center_x = ox + cx * scale
 		center_y = oy + cy * scale
@@ -996,6 +1046,47 @@ class DeviceRuntime:
 				electron_color = 8
 			self.graphics.fill_rect(x - scale, y - scale, 2 * scale, 2 * scale, electron_color)
 
+	def _graphics_draw_icon(self, vm: Any, result: Any) -> None:
+		entry = self._window_args(vm, result, 6)
+		if not entry or not entry[1]:
+			return
+		_, handle, values = entry
+		x, y, width, height, descriptor = values
+		x = _signed(x)
+		y = _signed(y)
+		width = _signed(width)
+		height = _signed(height)
+		if width <= 0 or height <= 0:
+			return
+		pixels: list[int | None] = []
+		for char in self._read_string(vm, descriptor):
+			if char in " \t\r\n":
+				continue
+			if char == ".":
+				pixels.append(None)
+			elif "0" <= char <= "9":
+				pixels.append(ord(char) - ord("0"))
+			elif "A" <= char <= "F":
+				pixels.append(ord(char) - ord("A") + 10)
+			elif "a" <= char <= "f":
+				pixels.append(ord(char) - ord("a") + 10)
+			else:
+				pixels.append(None)
+			if len(pixels) >= width * height:
+				break
+		ox, oy = self._origin(handle)
+		scale = self._target_scale(handle)
+		for index, color in enumerate(pixels):
+			if color is None:
+				continue
+			self.graphics.fill_rect(
+				ox + (x + index % width) * scale,
+				oy + (y + index // width) * scale,
+				scale,
+				scale,
+				color,
+			)
+
 	def _graphics_slider(self, vm: Any, result: Any) -> None:
 		entry = self._window_args(vm, result, 7)
 		if not entry or not entry[1]:
@@ -1017,7 +1108,10 @@ class DeviceRuntime:
 			vm.push(-1 & TRUE)
 			return
 		handle = entry[1]
-		vm.push(((self.input.frame().x - self.windows.content_x(handle)) // self.windows.ui_scale(handle)) & TRUE)
+		if handle == SCREEN_TARGET_HANDLE:
+			vm.push(self.input.frame().x & TRUE)
+		else:
+			vm.push(((self.input.frame().x - self.windows.content_x(handle)) // self.windows.ui_scale(handle)) & TRUE)
 
 	def _graphics_pointer_y(self, vm: Any, result: Any) -> None:
 		entry = self._window_args(vm, result, 1)
@@ -1025,7 +1119,10 @@ class DeviceRuntime:
 			vm.push(-1 & TRUE)
 			return
 		handle = entry[1]
-		vm.push(((self.input.frame().y - self.windows.content_y(handle)) // self.windows.ui_scale(handle)) & TRUE)
+		if handle == SCREEN_TARGET_HANDLE:
+			vm.push(self.input.frame().y & TRUE)
+		else:
+			vm.push(((self.input.frame().y - self.windows.content_y(handle)) // self.windows.ui_scale(handle)) & TRUE)
 
 	def _graphics_mouse_down(self, vm: Any, result: Any) -> None:
 		self._push_bool(vm, self.input.frame().left_down)
