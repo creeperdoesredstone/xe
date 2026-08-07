@@ -158,6 +158,7 @@ class DeviceRuntime:
 			SyscallID.APP_GRAPHICS_BUTTON_FLAT: self._graphics_button_flat,
 			SyscallID.APP_GRAPHICS_DRAW_ATOM: self._graphics_draw_atom,
 			SyscallID.APP_GRAPHICS_DRAW_ICON: self._graphics_draw_icon,
+			SyscallID.APP_GRAPHICS_DRAW_ICON_SCALED: self._graphics_draw_icon_scaled,
 			SyscallID.APP_GRAPHICS_CHAR_ADVANCE: self._graphics_char_advance,
 			SyscallID.APP_GRAPHICS_DRAW_CHAR_STYLED: self._graphics_draw_char_styled,
 			SyscallID.APP_GRAPHICS_MODIFIERS: self._graphics_modifiers,
@@ -1088,12 +1089,35 @@ class DeviceRuntime:
 			return
 		_, handle, values = entry
 		x, y, width, height, descriptor = values
+		self._draw_icon(vm, handle, x, y, width, height, descriptor, 1)
+
+	def _graphics_draw_icon_scaled(self, vm: Any, result: Any) -> None:
+		entry = self._window_args(vm, result, 7)
+		if not entry or not entry[1]:
+			return
+		_, handle, values = entry
+		x, y, width, height, descriptor, icon_scale = values
+		self._draw_icon(vm, handle, x, y, width, height, descriptor, icon_scale)
+
+	def _draw_icon(
+		self,
+		vm: Any,
+		handle: int,
+		x: int,
+		y: int,
+		width: int,
+		height: int,
+		descriptor: int,
+		icon_scale: int,
+	) -> None:
 		x = _signed(x)
 		y = _signed(y)
 		width = _signed(width)
 		height = _signed(height)
-		if width <= 0 or height <= 0:
+		icon_scale = _signed(icon_scale)
+		if width <= 0 or height <= 0 or icon_scale <= 0:
 			return
+		icon_scale = min(icon_scale, 16)
 		pixels: list[int | None] = []
 		for char in self._read_string(vm, descriptor):
 			if char in " \t\r\n":
@@ -1111,15 +1135,16 @@ class DeviceRuntime:
 			if len(pixels) >= width * height:
 				break
 		ox, oy = self._origin(handle)
-		scale = self._target_scale(handle)
+		target_scale = self._target_scale(handle)
+		pixel_size = icon_scale * target_scale
 		for index, color in enumerate(pixels):
 			if color is None:
 				continue
 			self.graphics.fill_rect(
-				ox + (x + index % width) * scale,
-				oy + (y + index // width) * scale,
-				scale,
-				scale,
+				ox + (x + (index % width) * icon_scale) * target_scale,
+				oy + (y + (index // width) * icon_scale) * target_scale,
+				pixel_size,
+				pixel_size,
 				color,
 			)
 

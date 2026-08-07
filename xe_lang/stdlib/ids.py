@@ -149,6 +149,7 @@ class BuiltInID(Enum):
 	OS_HOUR = auto()
 	OS_MINUTE = auto()
 	GRAPHICS_DRAW_ICON = auto()
+	GRAPHICS_DRAW_ICON_SCALED = auto()
 	GRAPHICS_CHAR_ADVANCE = auto()
 	GRAPHICS_DRAW_CHAR_STYLED = auto()
 	COMPILER_RUN = auto()

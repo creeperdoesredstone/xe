@@ -22,6 +22,7 @@ call graphics::clear(bg, graphics::COLOR_1)
 call graphics::fill_rect(bg, 8, 8, 96, 28, graphics::COLOR_5)
 call graphics::draw_text(bg, 14, 18, "Desktop", graphics::WHITE)
 call graphics::draw_icon(bg, 116, 12, 5, 5, ".AAA.A...AAAAAAA...AA.A.A")
+call graphics::draw_icon_scaled(bg, 128, 12, 5, 5, ".AAA.A...AAAAAAA...AA.A.A", 2)
 call graphics::update(bg)
 ```
 
@@ -126,7 +127,7 @@ the same integer pixel density before, during, and after the commit.
 - Screen information: `width()`, `height()`, `content_width(target)`,
   `content_height(target)`, `pointer_x(target)`, `pointer_y(target)`
 - Shapes: `clear`, `set_pixel`, `draw_circle`, `draw_line`, `draw_rect`, `fill_rect`,
-  `draw_atom`, and `draw_icon`
+  `draw_atom`, `draw_icon`, and `draw_icon_scaled`
 - Text: `draw_text`, `draw_char`, `draw_int`, `draw_float`, plus the compact
   `draw_text_small`, `draw_char_small`, `draw_int_small`, and `draw_float_small`;
   `char_advance` and `draw_char_styled` provide proportional layout with composable
@@ -169,6 +170,15 @@ controls use the target's fixed logical-pixel density.
 `0-9` and `A-F`/`a-f` select palette indices, `.` is transparent, and whitespace is
 ignored. Missing pixels and unsupported symbols remain transparent. This compact
 text representation is intended for small Xe-owned desktop and application icons.
+
+`draw_icon_scaled(target, x, y, width, height, pixels, scale)` draws the same sprite
+without changing or repeating its pixel string. Each source pixel becomes a square
+of `scale` logical pixels; for example, a `7x7` icon at scale `3` occupies `21x21`
+logical pixels. Valid positive scales are capped at `16`; zero or a negative value
+draws nothing. Window UI scaling composes with the icon scale, while Screen remains
+at stage-pixel density. `os::icon_size` is an OS preference (`0`, `1`, or `2`), not
+an implicit rendering transform; pass `os::icon_size + 1` as the explicit scale when
+desktop icons should follow that preference.
 
 `button_tone` has the same
 interaction behavior as `button` plus a final palette-index argument for the
@@ -362,7 +372,7 @@ assembly programs and compiled `graphics::`/`os::` calls cannot collide.
 - Backend request: `80` `REQUEST`, through the runtime's injectable synchronous request
   handler. With no handler, it deterministically writes an empty response.
 - High-level app extensions: graphics `100-129` (including `124`
-  `APP_GRAPHICS_SCROLL_DELTA`), `142-145`, `208-209`, `246-249`, and `254`, OS
+  `APP_GRAPHICS_SCROLL_DELTA`), `142-146`, `208-209`, `246-249`, and `254`, OS
   settings/utilities `130-141` and `180-196`, `Window` methods `150-152`, files
   `160-164` and `210-217`, mutable string append operations `170-171`, currency
   `200-207`, compiler services `220-245` and `255`, calendar date components
