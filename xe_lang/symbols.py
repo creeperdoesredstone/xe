@@ -345,6 +345,16 @@ def init_libraries(scope: Scope):
 					),
 				},
 			)
+	graphics_library.members["Screen"] = ClassSymbol(
+				"Screen",
+				Type("Screen"),
+				fields={
+					"width": VariableSymbol("width", Type("int"), address=0),
+					"height": VariableSymbol("height", Type("int"), address=1),
+				},
+				size=2,
+				methods={},
+			)
 	os_library = declared_libraries["os"]
 	os_library.members["File"] = ClassSymbol(
 		"File",

@@ -1,7 +1,11 @@
 Documentation for this programming language can be found [here](https://creeperdoesredstone.github.io/xe-docs/)
 
-Graphics, window, and OS standard-library APIs are documented in
+Graphics, frameless Screen, Window, and OS standard-library APIs are documented in
 [STDLIB.md](STDLIB.md).
+
+Use `graphics::Screen` with the same target-first drawing calls to render rectangles,
+text, atoms, and compact palette icons directly to the complete `480x360` stage
+without creating a window, title bar, or border.
 
 Launch the Xenon IDE with `python ide.py`. Pass an Xe file path as the first
 argument to open it directly, for example `python ide.py apps/calculator.xe`.

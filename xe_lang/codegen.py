@@ -9,7 +9,7 @@ from xe_lang.stdlib import (
 	PROPERTY_SETTER_SYSCALLS,
 	BuiltInID,
 )
-from xe_lang.syscall_abi import SyscallID
+from xe_lang.syscall_abi import GRAPHICS_SCREEN_REFERENCE_TAG, SyscallID
 from xe_lang.executable import static_layout_trailer
 
 from pathlib import Path
@@ -2038,8 +2038,14 @@ def emit_LibraryCall(node: LibraryCall) -> Result:
 	reference_parameters = getattr(node, "reference_parameters", ())
 	for index, (arg, expected_type) in enumerate(zip(node.arguments, node.arg_types)):
 		if index in reference_parameters:
+			address = arg.address
+			if (
+				arg.type.base == "Screen"
+				and arg.type.pointer_layers == 0
+			):
+				address |= GRAPHICS_SCREEN_REFERENCE_TAG
 			arg_instructions = [
-				(arg.start_pos, arg.end_pos, "PUSH", arg.address)
+				(arg.start_pos, arg.end_pos, "PUSH", address)
 			]
 		else:
 			arg_instructions = res.register(emit_argument(arg))
