@@ -1653,7 +1653,6 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	var name_chars: int
 	var name_width: int
 	var label_full_chars: int
-	var label_full_width: int
 	var label_center_x: int
 	var label_center_y: int
 	var name_x: int
@@ -1669,11 +1668,22 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	var label_dx: int
 	var label_dy: int
 	var label_length: float
-	var label_offset_x: int
-	var label_offset_y: int
+	var label_unit_x: float
+	var label_unit_y: float
+	var label_abs_unit_x: float
+	var label_abs_unit_y: float
+	var label_half_width: float
+	var label_half_height: float
+	var label_clearance: float
+	var label_candidate_distance: float
+	var label_cross: float
+	var label_radicand: float
+	var label_center_distance: float
+	var usable_width: int
 	count = cached_entry_count
 	call prepare_orbit_projection(tilt, view_roll)
-	viewport_center_x = x + area_width / 2
+	usable_width = area_width - sidebar_width
+	viewport_center_x = x + (area_width + sidebar_width) / 2
 	viewport_center_y = y + area_height / 2
 	center_x = viewport_center_x
 	center_y = viewport_center_y
@@ -1687,7 +1697,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	label_entry = selected_entry
 	zoom_controls_hovered = false
 	interaction_allowed = !context_open && !rename_open && !delete_confirm && !viewer_open && transition_progress == 0
-	if (area_width < 100 || area_height < 70) {
+	if (usable_width < 108 || area_height < 94) {
 		drag_entry = -1
 		drag_template = 0
 		rotating = false
@@ -1737,7 +1747,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 					focus_population = shell_population_cache[focus_shell]
 					focus_position = entry_position_cache[transition_entry]
 					outer_radius = (area_height - 34) / 2
-					if (outer_radius > (area_width - sidebar_width - 28) / 2) { outer_radius = (area_width - sidebar_width - 28) / 2 }
+					if (outer_radius > (usable_width - 48) / 2) { outer_radius = (usable_width - 48) / 2 }
 					if (outer_radius < 30) { outer_radius = 30 }
 					shell_gap = 0
 					if (shell_count > 1) { shell_gap = (outer_radius - 30) / (shell_count - 1) }
@@ -1768,7 +1778,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	call draw_placeholder_nucleus(center_x, center_y, center_radius)
 	visual_force_opaque = false
 	outer_radius = (area_height - 34) / 2
-	if (outer_radius > (area_width - sidebar_width - 28) / 2) { outer_radius = (area_width - sidebar_width - 28) / 2 }
+	if (outer_radius > (usable_width - 48) / 2) { outer_radius = (usable_width - 48) / 2 }
 	if (outer_radius < 30) { outer_radius = 30 }
 	shell_gap = 0
 	if (shell_count > 1) { shell_gap = (outer_radius - 30) / (shell_count - 1) }
@@ -1863,7 +1873,6 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			label_full_chars = xestring::strlen(entry_name_cache[index])
 			if (label_full_chars > (area_width - sidebar_width - 8) / 4) { label_full_chars = (area_width - sidebar_width - 8) / 4 }
 			if (label_full_chars < 1) { label_full_chars = 1 }
-			label_full_width = label_full_chars * 4
 			name_chars = 4
 			if (name_chars > label_full_chars) { name_chars = label_full_chars }
 			name_color = visual_shell
@@ -1884,16 +1893,36 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 				label_dy = -1
 				label_length = 1.0
 			}
-			label_offset_x = (int)((float)label_dx * (float)(node_radius + 4 + label_full_width / 2) / label_length)
-			label_offset_y = (int)((float)label_dy * (float)(node_radius + 7) / label_length)
-			label_center_x = atom_x + label_offset_x
-			label_center_y = atom_y + label_offset_y
-			if (label_center_x - label_full_width / 2 < x + sidebar_width + 2) { label_center_x = x + sidebar_width + 2 + label_full_width / 2 }
-			if (label_center_x + label_full_width / 2 > x + area_width - 2) { label_center_x = x + area_width - 2 - label_full_width / 2 }
+			label_unit_x = (float)label_dx / label_length
+			label_unit_y = (float)label_dy / label_length
+			label_abs_unit_x = label_unit_x
+			label_abs_unit_y = label_unit_y
+			if (label_abs_unit_x < 0.0) { label_abs_unit_x = -label_abs_unit_x }
+			if (label_abs_unit_y < 0.0) { label_abs_unit_y = -label_abs_unit_y }
+			label_half_width = (float)name_width / 2.0
+			label_half_height = 2.5
+			label_clearance = (float)(node_radius + 3)
+			label_center_distance = 0.0
+			if (label_abs_unit_x > 0.001) {
+				label_candidate_distance = (label_clearance + label_half_width) / label_abs_unit_x
+				if (label_abs_unit_y * label_candidate_distance <= label_half_height) { label_center_distance = label_candidate_distance }
+			}
+			if (label_center_distance < 0.001 && label_abs_unit_y > 0.001) {
+				label_candidate_distance = (label_clearance + label_half_height) / label_abs_unit_y
+				if (label_abs_unit_x * label_candidate_distance <= label_half_width) { label_center_distance = label_candidate_distance }
+			}
+			if (label_center_distance < 0.001) {
+				label_cross = label_abs_unit_y * label_half_width - label_abs_unit_x * label_half_height
+				label_radicand = label_clearance * label_clearance - label_cross * label_cross
+				if (label_radicand < 0.0) { label_radicand = 0.0 }
+				label_center_distance = label_abs_unit_x * label_half_width + label_abs_unit_y * label_half_height + math::sqrt(label_radicand)
+			}
+			if (label_unit_x >= 0.0) { label_center_x = atom_x + (int)(label_unit_x * label_center_distance + 0.5) }
+			else { label_center_x = atom_x + (int)(label_unit_x * label_center_distance - 0.5) }
+			if (label_unit_y >= 0.0) { label_center_y = atom_y + (int)(label_unit_y * label_center_distance + 0.5) }
+			else { label_center_y = atom_y + (int)(label_unit_y * label_center_distance - 0.5) }
 			name_x = label_center_x - name_width / 2
 			name_y = label_center_y - 2
-			if (name_y < y + 11) { name_y = y + 11 }
-			if (name_y > y + area_height - 8) { name_y = y + area_height - 8 }
 			call draw_explorer_text_clipped(name_x, name_y, entry_name_cache[index], name_chars, name_color)
 		}
 		index += 1
