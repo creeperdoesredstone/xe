@@ -528,7 +528,7 @@ proc print_calculator_error(error_code: int, error_position: int) {
 	elseif (error_code == ErrorCode.EXPECTED_PR_OR_COMMA) {
 		out << "expected '(', ')', or ','"
 	}
-	elseif (error_code == ErrorCode.ZERO_DIV_MOD) {
+	elseif (error_code == ErrorCode.ZERO_DIV_OR_MOD) {
 		out << "division or modulo by zero"
 	}
 	elseif (error_code == ErrorCode.DOMAIN_ERROR) {

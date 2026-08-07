@@ -233,8 +233,8 @@ class GraphicsDevice:
 		self.width = width
 		self.height = height
 		self.text_scale = max(1, min(width // 240, height // 180))
-		self.back_buffer = [[0 for _ in range(width)] for _ in range(height)]
-		self.front_buffer = [[0 for _ in range(width)] for _ in range(height)]
+		self.back_buffer = [bytearray(width) for _ in range(height)]
+		self.front_buffer = [bytearray(width) for _ in range(height)]
 		self.clip_rect = (0, 0, width, height)
 		self.brightness_affected = True
 		self.frame_handler = frame_handler
@@ -256,11 +256,12 @@ class GraphicsDevice:
 	def reset_clip(self) -> None:
 		self.clip_rect = (0, 0, self.width, self.height)
 
-	def _clear_buffer(self, buffer: list[list[int]], color: int) -> None:
+	def _clear_buffer(self, buffer: list[bytearray], color: int) -> None:
 		color %= 16
 		x0, y0, x1, y1 = self.clip_rect
+		row = bytes((color,)) * (x1 - x0)
 		for y in range(y0, y1):
-			buffer[y][x0:x1] = [color] * (x1 - x0)
+			buffer[y][x0:x1] = row
 
 	def clear(self, color: int) -> None:
 		self._clear_buffer(self.back_buffer, color)
@@ -287,7 +288,7 @@ class GraphicsDevice:
 		y1 = min(cy1, y + height)
 		if x0 >= x1 or y0 >= y1:
 			return
-		row = [color % 16] * (x1 - x0)
+		row = bytes((color % 16,)) * (x1 - x0)
 		for py in range(y0, y1):
 			self.back_buffer[py][x0:x1] = row
 
@@ -323,7 +324,7 @@ class GraphicsDevice:
 				start = x0 + (remainder - x0) % 4
 				if start < x1:
 					count = (x1 - 1 - start) // 4 + 1
-					row[start:x1:4] = [color] * count
+					row[start:x1:4] = bytes((color,)) * count
 
 	def draw_rect(self, x: int, y: int, width: int, height: int, color: int) -> None:
 		if width <= 0 or height <= 0:
@@ -334,13 +335,34 @@ class GraphicsDevice:
 		self.draw_line(x + width - 1, y, x + width - 1, y + height - 1, color)
 
 	def draw_line(self, x0: int, y0: int, x1: int, y1: int, color: int) -> None:
+		cx0, cy0, cx1, cy1 = self.clip_rect
+		color %= 16
+		if y0 == y1:
+			if not cy0 <= y0 < cy1:
+				return
+			left = max(cx0, min(x0, x1))
+			right = min(cx1, max(x0, x1) + 1)
+			if left < right:
+				self.back_buffer[y0][left:right] = bytes((color,)) * (right - left)
+			return
+		if x0 == x1:
+			if not cx0 <= x0 < cx1:
+				return
+			top = max(cy0, min(y0, y1))
+			bottom = min(cy1, max(y0, y1) + 1)
+			for y in range(top, bottom):
+				self.back_buffer[y][x0] = color
+			return
+
+		buffer = self.back_buffer
 		dx = abs(x1 - x0)
 		sx = 1 if x0 < x1 else -1
 		dy = -abs(y1 - y0)
 		sy = 1 if y0 < y1 else -1
 		error = dx + dy
 		while True:
-			self.set_pixel(x0, y0, color)
+			if cx0 <= x0 < cx1 and cy0 <= y0 < cy1:
+				buffer[y0][x0] = color
 			if x0 == x1 and y0 == y1:
 				break
 			e2 = error * 2
@@ -363,6 +385,15 @@ class GraphicsDevice:
 		scale: int,
 	) -> None:
 		scale = max(1, int(scale))
+		if scale == 1:
+			self.draw_line(
+				origin_x + x0,
+				origin_y + y0,
+				origin_x + x1,
+				origin_y + y1,
+				color,
+			)
+			return
 		dx = abs(x1 - x0)
 		sx = 1 if x0 < x1 else -1
 		dy = -abs(y1 - y0)
@@ -389,6 +420,9 @@ class GraphicsDevice:
 	def draw_circle(self, cx: int, cy: int, radius: int, color: int) -> None:
 		if radius < 0:
 			return
+		cx0, cy0, cx1, cy1 = self.clip_rect
+		buffer = self.back_buffer
+		color %= 16
 		x = radius
 		y = 0
 		error = 1 - radius
@@ -399,7 +433,8 @@ class GraphicsDevice:
 				(cx - x, cy - y), (cx - y, cy - x),
 				(cx + y, cy - x), (cx + x, cy - y),
 			):
-				self.set_pixel(px, py, color)
+				if cx0 <= px < cx1 and cy0 <= py < cy1:
+					buffer[py][px] = color
 			y += 1
 			if error < 0:
 				error += 2 * y + 1
@@ -420,6 +455,9 @@ class GraphicsDevice:
 		if radius < 0:
 			return
 		scale = max(1, int(scale))
+		if scale == 1:
+			self.draw_circle(origin_x + cx, origin_y + cy, radius, color)
+			return
 		x = radius
 		y = 0
 		error = 1 - radius
@@ -491,6 +529,9 @@ class GraphicsDevice:
 		if radius < 0:
 			return
 		scale = max(1, int(scale))
+		if scale == 1:
+			self.fill_circle(origin_x + cx, origin_y + cy, radius, color)
+			return
 		radius_sq = radius * radius
 		for y in range(cy - radius, cy + radius + 1):
 			delta = radius_sq - (y - cy) * (y - cy)
@@ -560,6 +601,19 @@ class GraphicsDevice:
 		pixel_scale: int,
 	) -> None:
 		scale = max(1, int(pixel_scale))
+		if scale == 1:
+			x0, y0, x1, y1 = self.clip_rect
+			buffer = self.back_buffer
+			color %= 16
+			for row, bits in enumerate(glyph):
+				py = y + row
+				if not y0 <= py < y1:
+					continue
+				for column in range(glyph_width):
+					px = x + column
+					if x0 <= px < x1 and bits & (1 << (glyph_width - 1 - column)):
+						buffer[py][px] = color
+			return
 		for row, bits in enumerate(glyph):
 			for column in range(glyph_width):
 				if bits & (1 << (glyph_width - 1 - column)):
@@ -680,7 +734,7 @@ class GraphicsDevice:
 
 	def _snapshot(self, palette: Sequence[str]) -> FrameSnapshot:
 		self.sequence += 1
-		indices = bytes(pixel for row in self.front_buffer for pixel in row)
+		indices = b"".join(self.front_buffer)
 		return FrameSnapshot(
 			self.width,
 			self.height,

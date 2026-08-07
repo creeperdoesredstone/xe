@@ -64,6 +64,8 @@ class DeviceRuntime:
 		self.files = FileSystemDevice(filesystem_root)
 		self._rng = random.Random()
 		self._raw_slider_capture: tuple[int, int, int] | None = None
+		self._frame_window_pointer: int | None = None
+		self._frame_window_handle = 0
 		self._handlers = {
 			SyscallID.OS_RAND32: self._raw_rand32,
 			SyscallID.OS_RANDF: self._raw_randf,
@@ -236,12 +238,11 @@ class DeviceRuntime:
 		return True
 
 	def _args(self, vm: Any, result: Any, count: int) -> list[int] | None:
-		values = []
-		for _ in range(count):
-			values.append(result.register(vm.pop()))
-			if result.error:
-				return None
-		values.reverse()
+		if not vm._require_stack(result, count):
+			return None
+		start = vm.sp - count
+		values = vm.stack[start:vm.sp]
+		vm.sp = start
 		return values
 
 	def _push_bool(self, vm: Any, value: bool) -> None:
@@ -315,12 +316,28 @@ class DeviceRuntime:
 		memory[pointer + WINDOW_STATE] = int(record.state)
 		memory[pointer + WINDOW_HANDLE] = handle
 
-	def _window_args(self, vm: Any, result: Any, count: int) -> tuple[int, int, list[int]] | None:
+	def _window_args(
+		self,
+		vm: Any,
+		result: Any,
+		count: int,
+		*,
+		refresh: bool = False,
+	) -> tuple[int, int, list[int]] | None:
 		args = self._args(vm, result, count)
 		if args is None:
 			return None
 		pointer = args[0]
-		handle = self._ensure_window(vm, pointer)
+		if not refresh and pointer == self._frame_window_pointer:
+			handle = self._frame_window_handle
+			if handle and not self.windows.record(handle):
+				handle = self._ensure_window(vm, pointer)
+				self._frame_window_handle = handle
+		else:
+			handle = self._ensure_window(vm, pointer)
+		if refresh:
+			self._frame_window_pointer = pointer
+			self._frame_window_handle = handle
 		return pointer, handle, args[1:]
 
 	def _origin(self, handle: int) -> tuple[int, int]:
@@ -669,7 +686,7 @@ class DeviceRuntime:
 		vm.push(self.windows.content_height(handle) // self.windows.ui_scale(handle))
 
 	def _graphics_begin_draw(self, vm: Any, result: Any) -> None:
-		entry = self._window_args(vm, result, 1)
+		entry = self._window_args(vm, result, 1, refresh=True)
 		if not entry:
 			return
 		pointer, handle, _ = entry
@@ -698,15 +715,21 @@ class DeviceRuntime:
 	def _graphics_update(self, vm: Any, result: Any) -> None:
 		entry = self._window_args(vm, result, 1)
 		if not entry:
+			self._frame_window_pointer = None
+			self._frame_window_handle = 0
 			return
 		pointer, handle, _ = entry
-		self.graphics.reset_clip()
-		if handle:
-			self.windows.finish_draw(handle)
-			self.windows.draw_drag_outline(handle)
-			self._sync_window(vm, pointer, handle)
-		self.graphics.present(self.os.palette)
-		self.input.finish_frame()
+		try:
+			self.graphics.reset_clip()
+			if handle:
+				self.windows.finish_draw(handle)
+				self.windows.draw_drag_outline(handle)
+				self._sync_window(vm, pointer, handle)
+			self.graphics.present(self.os.palette)
+			self.input.finish_frame()
+		finally:
+			self._frame_window_pointer = None
+			self._frame_window_handle = 0
 
 	def _graphics_clear(self, vm: Any, result: Any) -> None:
 		entry = self._window_args(vm, result, 2)
@@ -1094,6 +1117,9 @@ class DeviceRuntime:
 		pointer = args[0]
 		if not self._valid_window_pointer(vm, pointer):
 			return
+		if pointer == self._frame_window_pointer:
+			self._frame_window_pointer = None
+			self._frame_window_handle = 0
 		handle = vm.data_memory[pointer + WINDOW_HANDLE]
 		if handle:
 			self.windows.destroy(handle)

@@ -13,6 +13,12 @@ array shell_accumulator: int[8]
 array shell_speed: int[8]
 array entry_render_x: int[64]
 array entry_render_y: int[64]
+array entry_name_cache: string[64]
+array entry_directory_cache: int[64]
+array entry_position_cache: int[64]
+array shell_population_cache: int[8]
+var cached_entry_count: int
+var cached_parent_path: string
 var paused_shell: int
 var animation_shell: int
 var nucleus_phase: int
@@ -71,6 +77,8 @@ var key: int
 var atom_center_x: int
 var atom_center_y: int
 var drop_folder_entry: int
+var drop_path_active: bool
+var drop_path_target: string
 var shell_button_hovered: bool
 var visual_fade: int
 var visual_force_opaque: bool
@@ -84,6 +92,11 @@ var visual_outline: int
 var visual_accent: int
 var visual_shell: int
 var visual_highlight: int
+var projected_x: int
+var projected_y: int
+var projection_tilt_cos: float
+var projection_roll_cos: float
+var projection_roll_sin: float
 
 fn transition_ease(progress: int) int {
 	if (progress < 0) { progress = 0 }
@@ -92,39 +105,45 @@ fn transition_ease(progress: int) int {
 }
 
 fn placeholder_pixel_visible(x: int, y: int) bool {
-	var pattern: int
-	if (visual_force_opaque || visual_fade >= 100) { return true }
-	if (visual_fade <= 0) { return false }
-	pattern = (x * 13 + y * 7) % 100
-	return pattern < visual_fade
+	# Fade complete shapes in a few palette-safe temporal steps. Spatial masks
+	# produced moving rows/scanlines while the camera zoomed.
+	return visual_force_opaque || visual_fade >= 20
+}
+
+fn placeholder_faded_color(color: int) int {
+	if (visual_force_opaque || visual_fade >= 75) { return color }
+	if (visual_fade < 20) { return graphics::COLOR_0 }
+	if (visual_fade < 45) { return visual_surface }
+	if (color == visual_highlight) { return visual_outline }
+	if (color == visual_accent || color == visual_outline) { return visual_shell }
+	return color
 }
 
 proc draw_placeholder_pixel(x: int, y: int, color: int) {
 	if (placeholder_pixel_visible(x, y)) {
-		call graphics::set_pixel(explorer_window, x, y, color)
+		call graphics::set_pixel(explorer_window, x, y, placeholder_faded_color(color))
 	}
 }
 
 proc draw_placeholder_circle(x: int, y: int, radius: int, color: int) {
-	if (visual_force_opaque || visual_fade >= 35 || placeholder_pixel_visible(x + radius, y)) {
-		call graphics::draw_circle(explorer_window, x, y, radius, color)
+	if (placeholder_pixel_visible(x + radius, y)) {
+		call graphics::draw_circle(explorer_window, x, y, radius, placeholder_faded_color(color))
 	}
 }
 
-fn orbit_project_x(radius: int, angle: float, shell_tilt: int, roll: int) int {
-	var plane_x: float
-	var plane_y: float
-	plane_x = math::cos(angle) * (float)radius
-	plane_y = math::sin(angle) * (float)radius * math::cos((float)shell_tilt)
-	return (int)(plane_x * math::cos((float)roll) - plane_y * math::sin((float)roll))
+proc prepare_orbit_projection(shell_tilt: int, roll: int) {
+	projection_tilt_cos = math::cos((float)shell_tilt)
+	projection_roll_cos = math::cos((float)roll)
+	projection_roll_sin = math::sin((float)roll)
 }
 
-fn orbit_project_y(radius: int, angle: float, shell_tilt: int, roll: int) int {
+proc orbit_project(radius: int, angle: float) {
 	var plane_x: float
 	var plane_y: float
 	plane_x = math::cos(angle) * (float)radius
-	plane_y = math::sin(angle) * (float)radius * math::cos((float)shell_tilt)
-	return (int)(plane_x * math::sin((float)roll) + plane_y * math::cos((float)roll))
+	plane_y = math::sin(angle) * (float)radius * projection_tilt_cos
+	projected_x = (int)(plane_x * projection_roll_cos - plane_y * projection_roll_sin)
+	projected_y = (int)(plane_x * projection_roll_sin + plane_y * projection_roll_cos)
 }
 
 proc refresh_explorer_style() {
@@ -141,15 +160,11 @@ proc refresh_explorer_style() {
 }
 
 proc draw_placeholder_orb(x: int, y: int, radius: int) {
-	var offset: int
-	var half_width: int
-	offset = -radius + 1
-	while (offset < radius) {
-		half_width = (int)(math::sqrt((float)(radius * radius - offset * offset))) - 1
-		if (half_width >= 0 && (visual_force_opaque || visual_fade >= 100 || placeholder_pixel_visible(x, y + offset))) {
-			call graphics::draw_line(explorer_window, x - half_width, y + offset, x + half_width, y + offset, visual_surface)
-		}
-		offset += 1
+	var inner_half: int
+	inner_half = radius * 7 / 10
+	if (inner_half < 1) { inner_half = 1 }
+	if (placeholder_pixel_visible(x, y)) {
+		call graphics::fill_rect(explorer_window, x - inner_half, y - inner_half, inner_half * 2 + 1, inner_half * 2 + 1, placeholder_faded_color(visual_surface))
 	}
 	call draw_placeholder_circle(x, y, radius, visual_outline)
 	call draw_placeholder_pixel(x - radius / 2, y - radius / 2, visual_highlight)
@@ -158,12 +173,16 @@ proc draw_placeholder_orb(x: int, y: int, radius: int) {
 proc draw_placeholder_nucleus(x: int, y: int, radius: int) {
 	var nucleus_angle: float
 	var orbit_radius: int
+	var orbit_x: int
+	var orbit_y: int
 	call draw_placeholder_orb(x, y, radius)
 	call draw_placeholder_circle(x, y, radius - 2, visual_accent)
 	nucleus_angle = (float)(nucleus_phase * 360 / 1200)
 	orbit_radius = radius + 3
-	call draw_placeholder_pixel(x + (int)(math::cos(nucleus_angle) * (float)orbit_radius), y + (int)(math::sin(nucleus_angle) * (float)orbit_radius), visual_accent)
-	call draw_placeholder_pixel(x - (int)(math::cos(nucleus_angle) * (float)orbit_radius), y - (int)(math::sin(nucleus_angle) * (float)orbit_radius), visual_shell)
+	orbit_x = (int)(math::cos(nucleus_angle) * (float)orbit_radius)
+	orbit_y = (int)(math::sin(nucleus_angle) * (float)orbit_radius)
+	call draw_placeholder_pixel(x + orbit_x, y + orbit_y, visual_accent)
+	call draw_placeholder_pixel(x - orbit_x, y - orbit_y, visual_shell)
 }
 
 proc draw_placeholder_folder(x: int, y: int, radius: int) {
@@ -175,24 +194,40 @@ proc draw_placeholder_folder(x: int, y: int, radius: int) {
 
 proc draw_placeholder_file(x: int, y: int, radius: int) {
 	if (visual_force_opaque || placeholder_pixel_visible(x, y)) {
-		call graphics::fill_rect(explorer_window, x - radius, y - radius - 1, radius * 2 + 1, radius * 2 + 3, visual_surface)
-		call graphics::draw_rect(explorer_window, x - radius, y - radius - 1, radius * 2 + 1, radius * 2 + 3, visual_outline)
+		call graphics::fill_rect(explorer_window, x - radius, y - radius - 1, radius * 2 + 1, radius * 2 + 3, placeholder_faded_color(visual_surface))
+		call graphics::draw_rect(explorer_window, x - radius, y - radius - 1, radius * 2 + 1, radius * 2 + 3, placeholder_faded_color(visual_outline))
 		call graphics::set_pixel(explorer_window, x + radius, y - radius - 1, graphics::COLOR_0)
-		call graphics::set_pixel(explorer_window, x + radius - 1, y - radius - 1, visual_accent)
-		call graphics::set_pixel(explorer_window, x + radius, y - radius, visual_accent)
+		call graphics::set_pixel(explorer_window, x + radius - 1, y - radius - 1, placeholder_faded_color(visual_accent))
+		call graphics::set_pixel(explorer_window, x + radius, y - radius, placeholder_faded_color(visual_accent))
 	}
 }
 
 proc draw_placeholder_shell(center_x: int, center_y: int, radius: int, shell_tilt: int, roll: int) {
-	var angle: int
+	var point: int
 	var shell_x: int
 	var shell_y: int
-	angle = 0
-	while (angle < 360) {
-		shell_x = center_x + orbit_project_x(radius, (float)angle, shell_tilt, roll)
-		shell_y = center_y + orbit_project_y(radius, (float)angle, shell_tilt, roll)
+	var cosine: float
+	var sine: float
+	var next_cosine: float
+	var step_cosine: float
+	var step_sine: float
+	var plane_x: float
+	var plane_y: float
+	cosine = 1.0
+	sine = 0.0
+	step_cosine = math::cos(12.0)
+	step_sine = math::sin(12.0)
+	point = 0
+	while (point < 30) {
+		plane_x = cosine * (float)radius
+		plane_y = sine * (float)radius * projection_tilt_cos
+		shell_x = center_x + (int)(plane_x * projection_roll_cos - plane_y * projection_roll_sin)
+		shell_y = center_y + (int)(plane_x * projection_roll_sin + plane_y * projection_roll_cos)
 		call draw_placeholder_pixel(shell_x, shell_y, visual_shell)
-		angle += 12
+		next_cosine = cosine * step_cosine - sine * step_sine
+		sine = sine * step_cosine + cosine * step_sine
+		cosine = next_cosine
+		point += 1
 	}
 }
 
@@ -293,6 +328,7 @@ fn explorer_parent_path(path: string) string {
 	var result: string
 	var index: int
 	result = ""
+	call explorer_clear(result)
 	index = xestring::strlen(path) - 1
 	while (index >= 0 && (int)(path[index]) != 47) { index -= 1 }
 	if (index < 0) {
@@ -315,6 +351,7 @@ fn explorer_path_prefix(path: string, length: int) string {
 	var result: string
 	var index: int
 	result = ""
+	call explorer_clear(result)
 	index = 0
 	while (index < length && index < xestring::strlen(path)) {
 		call xestring::append_char(result, path[index])
@@ -330,6 +367,7 @@ fn explorer_descendant_name(path: string, ancestor: string) string {
 	var result: string
 	var index: int
 	result = ""
+	call explorer_clear(result)
 	if (explorer_strings_equal(ancestor, ".")) { index = 0 }
 	else { index = xestring::strlen(ancestor) + 1 }
 	while (index < xestring::strlen(path) && (int)(path[index]) != 47) {
@@ -342,8 +380,8 @@ fn explorer_descendant_name(path: string, ancestor: string) string {
 fn find_entry_named(name: string) int {
 	var index: int
 	index = 0
-	while (index < os::entry_count(current_path) && index < 64) {
-		if (explorer_strings_equal(os::entry_name(current_path, index), name)) { return index }
+	while (index < cached_entry_count) {
+		if (explorer_strings_equal(entry_name_cache[index], name)) { return index }
 		index += 1
 	}
 	return -1
@@ -434,6 +472,25 @@ fn shell_population(shell: int, entry_count: int) int {
 	return count
 }
 
+proc rebuild_shell_layout() {
+	var shell: int
+	var index: int
+	shell = 0
+	while (shell < 8) {
+		shell_population_cache[shell] = 0
+		shell += 1
+	}
+	index = 0
+	while (index < cached_entry_count) {
+		shell = entry_shell[index]
+		if (shell < 0) { shell = 0; entry_shell[index] = 0 }
+		if (shell >= shell_count) { shell = shell_count - 1; entry_shell[index] = shell }
+		entry_position_cache[index] = shell_population_cache[shell]
+		shell_population_cache[shell] += 1
+		index += 1
+	}
+}
+
 proc compact_energy_shells(entry_count: int) {
 	var shell: int
 	var index: int
@@ -455,14 +512,26 @@ proc reset_energy_shells() {
 	var count: int
 	var index: int
 	count = os::entry_count(current_path)
+	if (count > 64) { count = 64 }
+	cached_entry_count = count
+	if (explorer_strings_equal(current_path, ".")) {
+		call explorer_set(cached_parent_path, ".")
+	}
+	else {
+		call explorer_set(cached_parent_path, explorer_parent_path(current_path))
+	}
 	index = 0
-	while (index < count && index < 64) {
+	while (index < count) {
+		entry_name_cache[index] = os::entry_name(current_path, index)
+		if (os::entry_is_directory(current_path, index)) { entry_directory_cache[index] = 1 }
+		else { entry_directory_cache[index] = 0 }
 		entry_shell[index] = index / shell_capacity
 		index += 1
 	}
 	shell_count = (count + shell_capacity - 1) / shell_capacity
 	if (shell_count < 1) { shell_count = 1 }
 	if (shell_count > 8) { shell_count = 8 }
+	call rebuild_shell_layout()
 }
 
 proc move_entry_into_folder(source_index: int, folder_index: int) {
@@ -474,20 +543,44 @@ proc move_entry_into_folder(source_index: int, folder_index: int) {
 	if (source_index < 0 || folder_index < 0 || source_index == folder_index) {
 		return
 	}
-	if (source_index >= os::entry_count(current_path) || folder_index >= os::entry_count(current_path)) {
+	if (source_index >= cached_entry_count || folder_index >= cached_entry_count) {
 		return
 	}
-	if (!os::entry_is_directory(current_path, folder_index)) {
+	if (entry_directory_cache[folder_index] == 0) {
 		return
 	}
-	source_name = os::entry_name(current_path, source_index)
-	folder_name = os::entry_name(current_path, folder_index)
+	source_name = entry_name_cache[source_index]
+	folder_name = entry_name_cache[folder_index]
 	source_path = explorer_join_path(current_path, source_name)
 	folder_path = explorer_join_path(current_path, folder_name)
-	destination_name = explorer_unique_child_name(folder_path, source_name, os::entry_is_directory(current_path, source_index))
+	destination_name = explorer_unique_child_name(folder_path, source_name, entry_directory_cache[source_index] != 0)
 	operation_ok = os::rename(source_path, explorer_join_path(folder_path, destination_name))
 	if (operation_ok) {
 		call explorer_set(status_text, xestring::concat("Moved into ", folder_name))
+		call reset_energy_shells()
+		selected_entry = -1
+	}
+	else {
+		call explorer_set(status_text, "Move failed")
+	}
+}
+
+proc move_entry_to_path(source_index: int, destination_path: string) {
+	var source_name: string
+	var source_path: string
+	var destination_name: string
+	if (source_index < 0 || source_index >= cached_entry_count) {
+		return
+	}
+	if (explorer_strings_equal(current_path, destination_path)) {
+		return
+	}
+	source_name = entry_name_cache[source_index]
+	source_path = explorer_join_path(current_path, source_name)
+	destination_name = explorer_unique_child_name(destination_path, source_name, entry_directory_cache[source_index] != 0)
+	operation_ok = os::rename(source_path, explorer_join_path(destination_path, destination_name))
+	if (operation_ok) {
+		call explorer_set(status_text, xestring::concat("Moved to ", destination_path))
 		call reset_energy_shells()
 		selected_entry = -1
 	}
@@ -505,8 +598,8 @@ proc begin_folder_transition(index: int, direction: int) {
 	transition_start_pan_x = view_pan_x
 	call explorer_clear(transition_destination)
 	call explorer_clear(transition_target_name)
-	if (direction > 0 && index >= 0 && index < os::entry_count(current_path)) {
-		call xestring::append(transition_target_name, os::entry_name(current_path, index))
+	if (direction > 0 && index >= 0 && index < cached_entry_count) {
+		call xestring::append(transition_target_name, entry_name_cache[index])
 		destination = explorer_join_path(current_path, transition_target_name)
 		call xestring::append(transition_destination, destination)
 	}
@@ -567,14 +660,14 @@ proc commit_folder_transition() {
 
 proc open_file_viewer(index: int) {
 	var path: string
-	if (index < 0 || index >= os::entry_count(current_path)) {
+	if (index < 0 || index >= cached_entry_count) {
 		return
 	}
-	if (os::entry_is_directory(current_path, index)) {
+	if (entry_directory_cache[index] != 0) {
 		return
 	}
-	path = explorer_join_path(current_path, os::entry_name(current_path, index))
-	call explorer_set(viewer_name, os::entry_name(current_path, index))
+	path = explorer_join_path(current_path, entry_name_cache[index])
+	call explorer_set(viewer_name, entry_name_cache[index])
 	viewer_file = os::open_read(path)
 	call explorer_set(viewer_content, os::read(viewer_file))
 	call os::close(path)
@@ -585,11 +678,11 @@ proc open_file_viewer(index: int) {
 }
 
 proc begin_rename(index: int) {
-	if (index < 0 || index >= os::entry_count(current_path)) {
+	if (index < 0 || index >= cached_entry_count) {
 		return
 	}
 	context_entry = index
-	call explorer_set(rename_text, os::entry_name(current_path, index))
+	call explorer_set(rename_text, entry_name_cache[index])
 	rename_anchor_x = entry_render_x[index]
 	rename_anchor_y = entry_render_y[index]
 	rename_select_all = true
@@ -601,12 +694,12 @@ proc commit_rename() {
 	var old_name: string
 	var old_path: string
 	var new_path: string
-	if (context_entry < 0 || context_entry >= os::entry_count(current_path)) {
+	if (context_entry < 0 || context_entry >= cached_entry_count) {
 		rename_open = false
 		rename_select_all = false
 		return
 	}
-	old_name = os::entry_name(current_path, context_entry)
+	old_name = entry_name_cache[context_entry]
 	old_path = explorer_join_path(current_path, old_name)
 	new_path = explorer_join_path(current_path, rename_text)
 	if (!explorer_name_is_valid(rename_text)) {
@@ -631,11 +724,11 @@ proc commit_rename() {
 
 proc confirm_context_delete() {
 	var target_path: string
-	if (context_entry < 0 || context_entry >= os::entry_count(current_path)) {
+	if (context_entry < 0 || context_entry >= cached_entry_count) {
 		delete_confirm = false
 		return
 	}
-	target_path = explorer_join_path(current_path, os::entry_name(current_path, context_entry))
+	target_path = explorer_join_path(current_path, entry_name_cache[context_entry])
 	operation_ok = os::delete(target_path)
 	if (operation_ok) {
 		call explorer_set(status_text, "Moved to Trash")
@@ -655,9 +748,27 @@ proc draw_breadcrumbs(x: int, y: int, area_width: int) {
 	var destination: string
 	var cursor_x: int
 	var path_length: int
+	var segment_width: int
+	var pointer_x: int
+	var pointer_y: int
+	var drop_color: int
+	var dragging_path: bool
 	segment = ""
 	cursor_x = x
-	if (!explorer_modal_open()) {
+	pointer_x = graphics::pointer_x(explorer_window)
+	pointer_y = graphics::pointer_y(explorer_window)
+	dragging_path = drag_entry >= 0 && drag_moved
+	if (dragging_path) {
+		drop_color = visual_surface
+		if (!explorer_strings_equal(current_path, ".") && pointer_x >= cursor_x && pointer_x < cursor_x + 14 && pointer_y >= y && pointer_y < y + 9) {
+			drop_color = visual_accent
+			drop_path_active = true
+			call explorer_set(drop_path_target, ".")
+		}
+		call graphics::fill_rect(explorer_window, cursor_x, y, 14, 9, drop_color)
+		call graphics::draw_text(explorer_window, cursor_x + 4, y + 1, "/", visual_outline)
+	}
+	elseif (!explorer_modal_open()) {
 		if (graphics::button_flat(explorer_window, cursor_x, y, 14, 9, "/", graphics::COLOR_8)) {
 			if (!explorer_strings_equal(current_path, ".")) {
 				call begin_path_transition(".")
@@ -681,8 +792,20 @@ proc draw_breadcrumbs(x: int, y: int, area_width: int) {
 					call xestring::append_char(segment, current_path[start])
 					start += 1
 				}
-				if (!explorer_modal_open()) {
-					if (graphics::button_flat(explorer_window, cursor_x, y, xestring::strlen(segment) * 6 + 8, 9, segment, graphics::COLOR_8)) {
+				segment_width = xestring::strlen(segment) * 6 + 8
+				if (dragging_path) {
+					drop_color = visual_surface
+					if (index < path_length && pointer_x >= cursor_x && pointer_x < cursor_x + segment_width && pointer_y >= y && pointer_y < y + 9) {
+						destination = explorer_path_prefix(current_path, index)
+						drop_color = visual_accent
+						drop_path_active = true
+						call explorer_set(drop_path_target, destination)
+					}
+					call graphics::fill_rect(explorer_window, cursor_x, y, segment_width, 9, drop_color)
+					call graphics::draw_text(explorer_window, cursor_x + 4, y + 1, segment, visual_outline)
+				}
+				elseif (!explorer_modal_open()) {
+					if (graphics::button_flat(explorer_window, cursor_x, y, segment_width, 9, segment, graphics::COLOR_8)) {
 						if (index < path_length) {
 							destination = explorer_path_prefix(current_path, index)
 							call begin_path_transition(destination)
@@ -691,10 +814,10 @@ proc draw_breadcrumbs(x: int, y: int, area_width: int) {
 					}
 				}
 				else {
-					call graphics::fill_rect(explorer_window, cursor_x, y, xestring::strlen(segment) * 6 + 8, 9, visual_surface)
+					call graphics::fill_rect(explorer_window, cursor_x, y, segment_width, 9, visual_surface)
 					call graphics::draw_text(explorer_window, cursor_x + 4, y + 1, segment, visual_outline)
 				}
-				cursor_x += xestring::strlen(segment) * 6 + 10
+				cursor_x += segment_width + 2
 				start = index + 1
 			}
 			index += 1
@@ -848,6 +971,9 @@ proc draw_inline_rename() {
 	var visible_chars: int
 	var selected_width: int
 	var caret_x: int
+	var pointer_x: int
+	var pointer_y: int
+	var inside: bool
 	field_width = 148
 	if (field_width > width - 8) { field_width = width - 8 }
 	if (field_width < 40) { field_width = 40 }
@@ -857,6 +983,15 @@ proc draw_inline_rename() {
 	if (field_x + field_width > width - 3) { field_x = width - field_width - 3 }
 	if (field_y + 22 > height - 3) { field_y = rename_anchor_y - 27 }
 	if (field_y < 3) { field_y = 3 }
+	pointer_x = graphics::pointer_x(explorer_window)
+	pointer_y = graphics::pointer_y(explorer_window)
+	inside = pointer_x >= field_x && pointer_x < field_x + field_width && pointer_y >= field_y && pointer_y < field_y + 20
+	if (graphics::mouse_pressed() && !inside) {
+		rename_open = false
+		rename_select_all = false
+		call explorer_set(status_text, "Rename cancelled")
+		return
+	}
 	visible_chars = (field_width - 6) / 4
 	call graphics::fill_rect(explorer_window, field_x, field_y, field_width, 10, visual_surface)
 	call graphics::draw_rect(explorer_window, field_x, field_y, field_width, 10, visual_accent)
@@ -1007,7 +1142,9 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	var created_entry: int
 	var add_radius: int
 	var add_size: int
-	count = os::entry_count(current_path)
+	count = cached_entry_count
+	call rebuild_shell_layout()
+	call prepare_orbit_projection(tilt, view_roll)
 	viewport_center_x = x + area_width / 2
 	viewport_center_y = y + area_height / 2
 	center_x = viewport_center_x + view_pan_x
@@ -1068,13 +1205,8 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 				if (transition_entry >= 0 && transition_entry < count) {
 					focus_shell = entry_shell[transition_entry]
 					if (focus_shell >= shell_count) { focus_shell = shell_count - 1 }
-					focus_population = shell_population(focus_shell, count)
-					focus_position = 0
-					index = 0
-					while (index < transition_entry) {
-						if (entry_shell[index] == focus_shell) { focus_position += 1 }
-						index += 1
-					}
+					focus_population = shell_population_cache[focus_shell]
+					focus_position = entry_position_cache[transition_entry]
 					outer_radius = (area_height - 34) / 2
 					if (outer_radius > (area_width - sidebar_width - 28) / 2) { outer_radius = (area_width - sidebar_width - 28) / 2 }
 					if (outer_radius < 30) { outer_radius = 30 }
@@ -1082,8 +1214,9 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 					if (shell_count > 1) { shell_gap = (outer_radius - 30) / (shell_count - 1) }
 					focus_radius = 30 + focus_shell * shell_gap
 					focus_angle = (float)(rotation + shell_phase[focus_shell] + focus_position * 360 / focus_population + focus_shell * 17)
-					transition_focus_x = orbit_project_x(focus_radius, focus_angle, tilt, view_roll)
-					transition_focus_y = orbit_project_y(focus_radius, focus_angle, tilt, view_roll)
+					call orbit_project(focus_radius, focus_angle)
+					transition_focus_x = projected_x
+					transition_focus_y = projected_y
 				}
 				center_x = viewport_center_x - transition_focus_x * transition_scale * (100 - eased_progress) / 10000
 				center_y = viewport_center_y - transition_focus_y * transition_scale * (100 - eased_progress) / 10000
@@ -1114,21 +1247,16 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		shell += 1
 	}
 	index = 0
-	while (index < count && index < 64) {
+	while (index < count) {
 		shell = entry_shell[index]
 		if (shell >= shell_count) { shell = shell_count - 1; entry_shell[index] = shell }
-		population = shell_population(shell, count)
-		position = 0
-		var scan: int
-		scan = 0
-		while (scan < index) {
-			if (entry_shell[scan] == shell) { position += 1 }
-			scan += 1
-		}
+		population = shell_population_cache[shell]
+		position = entry_position_cache[index]
 		angle = (float)(rotation + shell_phase[shell] + position * 360 / population + shell * 17)
 		radius = (30 + shell * shell_gap) * transition_scale / 100
-		atom_x = center_x + orbit_project_x(radius, angle, tilt, view_roll)
-		atom_y = center_y + orbit_project_y(radius, angle, tilt, view_roll)
+		call orbit_project(radius, angle)
+		atom_x = center_x + projected_x
+		atom_y = center_y + projected_y
 		if (transition_progress > 0 && transition_direction > 0 && !transition_committed && transition_entry == index) {
 			atom_x = viewport_center_x + transition_start_pan_x * (100 - eased_progress) / 100 + transition_focus_x * transition_scale * (100 - eased_progress) / 10000
 			atom_y = viewport_center_y + transition_focus_y * transition_scale * (100 - eased_progress) / 10000
@@ -1149,7 +1277,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		elseif (transition_progress > 0 && node_radius > 12) { node_radius = 12 }
 		if (drag_entry != index && transition_scale >= 24) {
 			visual_force_opaque = transition_progress > 0 && ((!transition_committed && transition_direction > 0 && transition_entry == index) || (transition_committed && transition_direction < 0 && transition_entry == index))
-			if (os::entry_is_directory(current_path, index)) {
+			if (entry_directory_cache[index] != 0) {
 				call draw_placeholder_folder(atom_x, atom_y, node_radius + 1)
 			}
 			else {
@@ -1167,7 +1295,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		if (distance_squared < hit_radius * hit_radius && pointer_x > x + sidebar_width && (drag_entry != index || !drag_moved)) {
 			hovered_entry = index
 			label_entry = index
-			if (drag_entry >= 0 && drag_moved && drag_entry != index && os::entry_is_directory(current_path, index)) {
+			if (drag_entry >= 0 && drag_moved && drag_entry != index && entry_directory_cache[index] != 0) {
 				drop_folder_entry = index
 				call graphics::draw_circle(explorer_window, atom_x, atom_y, node_radius + 6, graphics::COLOR_14)
 			}
@@ -1185,7 +1313,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	}
 	visual_fade = 100
 	if (label_entry >= 0 && label_entry < count) {
-		call draw_explorer_text_clipped(x + 4, y + area_height - 10, os::entry_name(current_path, label_entry), (area_width - 8) / 4, visual_highlight)
+		call draw_explorer_text_clipped(x + 4, y + area_height - 10, entry_name_cache[label_entry], (area_width - 8) / 4, visual_highlight)
 	}
 	dx = pointer_x - center_x
 	dy = pointer_y - center_y
@@ -1224,7 +1352,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		dx = pointer_x - drag_start_x
 		dy = pointer_y - drag_start_y
 		if (dx * dx + dy * dy > 9) { drag_moved = true }
-		if (os::entry_is_directory(current_path, drag_entry)) {
+		if (entry_directory_cache[drag_entry] != 0) {
 			call draw_placeholder_folder(pointer_x, pointer_y, 5)
 		}
 		else {
@@ -1232,7 +1360,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		}
 	}
 	if (drag_entry >= 0 && graphics::mouse_released()) {
-		if (!drag_moved && os::entry_is_directory(current_path, drag_entry)) {
+		if (!drag_moved && entry_directory_cache[drag_entry] != 0) {
 			transition_focus_x = entry_render_x[drag_entry] - atom_center_x
 			transition_focus_y = entry_render_y[drag_entry] - atom_center_y
 			call begin_folder_transition(drag_entry, 1)
@@ -1250,19 +1378,22 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			}
 		}
 		elseif (pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 38 && pointer_y < y + 48 && sidebar_progress >= 70) {
-			operation_ok = os::delete(explorer_join_path(current_path, os::entry_name(current_path, drag_entry)))
+			operation_ok = os::delete(explorer_join_path(current_path, entry_name_cache[drag_entry]))
 			call explorer_set(status_text, "Moved to Trash")
 			if (operation_ok) {
 				call reset_energy_shells()
 				selected_entry = -1
 			}
 		}
+		elseif (drag_moved && drop_path_active) {
+			call move_entry_to_path(drag_entry, drop_path_target)
+		}
 		elseif (drag_moved && drop_folder_entry >= 0) {
 			call move_entry_into_folder(drag_entry, drop_folder_entry)
 		}
 		elseif (drag_moved) {
 			target_shell = drop_target_shell
-			if (target_shell >= 0 && shell_population(target_shell, count) < shell_capacity) {
+			if (target_shell >= 0 && shell_population_cache[target_shell] < shell_capacity) {
 				entry_shell[drag_entry] = target_shell
 				call compact_energy_shells(count)
 			}
@@ -1280,7 +1411,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	}
 	if (drag_template > 0 && graphics::mouse_released()) {
 		target_shell = drop_target_shell
-		if (target_shell >= 0 && shell_population(target_shell, count) < shell_capacity) {
+		if (target_shell >= 0 && shell_population_cache[target_shell] < shell_capacity) {
 			candidate_name = explorer_unique_template_name(drag_template == 2)
 			desired_shell_count = shell_count
 			if (drag_template == 1) { operation_ok = os::make_file(explorer_join_path(current_path, candidate_name)) }
@@ -1300,10 +1431,11 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		drag_template = 0
 	}
 	shell_button_hovered = false
-	if (shell_count < 8 && shell_population(shell_count - 1, count) >= shell_capacity && transition_progress == 0) {
+	if (shell_count < 8 && shell_population_cache[shell_count - 1] >= shell_capacity && transition_progress == 0) {
 		add_radius = 30 + (shell_count - 1) * shell_gap + 13
-		shell_button_x = center_x + orbit_project_x(add_radius, 35.0, tilt, view_roll)
-		shell_button_y = center_y + orbit_project_y(add_radius, 35.0, tilt, view_roll)
+		call orbit_project(add_radius, 35.0)
+		shell_button_x = center_x + projected_x
+		shell_button_y = center_y + projected_y
 		dx = pointer_x - shell_button_x
 		dy = pointer_y - shell_button_y
 		shell_button_hovered = dx * dx + dy * dy <= 49
@@ -1329,6 +1461,8 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 
 current_path = "."
 status_text = "root"
+cached_entry_count = 0
+cached_parent_path = ""
 sidebar_open = false
 sidebar_progress = 0
 shell_count = 1
@@ -1379,6 +1513,8 @@ viewer_scroll = 0
 call refresh_explorer_style()
 call reset_energy_shells()
 shell_button_hovered = false
+drop_path_active = false
+drop_path_target = ""
 visual_fade = 100
 visual_force_opaque = false
 view_roll = -12
@@ -1407,7 +1543,7 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 	if (sidebar_progress < 0) { sidebar_progress = 0 }
 	sidebar_width = 14 + 70 * sidebar_progress / 100
 	paused_shell = -1
-	if (hovered_entry >= 0 && hovered_entry < os::entry_count(current_path)) {
+	if (hovered_entry >= 0 && hovered_entry < cached_entry_count) {
 		paused_shell = entry_shell[hovered_entry]
 	}
 	if (transition_progress == 0) {
@@ -1456,7 +1592,19 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 			call draw_file_atom(2, 3, width - 4, height - 6)
 		}
 		else {
-			if (!explorer_modal_open() && !explorer_strings_equal(current_path, ".")) {
+			drop_path_active = false
+			if (drag_entry >= 0 && drag_moved && !explorer_strings_equal(current_path, ".")) {
+				if (graphics::pointer_x(explorer_window) >= 3 && graphics::pointer_x(explorer_window) < 35 && graphics::pointer_y(explorer_window) >= 2 && graphics::pointer_y(explorer_window) < 11) {
+					call graphics::fill_rect(explorer_window, 3, 2, 32, 9, visual_accent)
+					drop_path_active = true
+					call explorer_set(drop_path_target, cached_parent_path)
+				}
+				else {
+					call graphics::fill_rect(explorer_window, 3, 2, 32, 9, visual_surface)
+				}
+				call graphics::draw_text(explorer_window, 7, 3, "Back", visual_outline)
+			}
+			elseif (!explorer_modal_open() && !explorer_strings_equal(current_path, ".")) {
 				if (graphics::button_flat(explorer_window, 3, 2, 32, 9, "Back", visual_surface)) {
 					call begin_path_transition(explorer_parent_path(current_path))
 				}

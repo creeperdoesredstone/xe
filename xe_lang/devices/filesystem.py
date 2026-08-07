@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import stat
 from threading import RLock
 import time
 from typing import TextIO
@@ -26,6 +27,7 @@ VIRTUAL_DRIVE_DIRECTORY = "XenonOS/VirtualDrive"
 VIRTUAL_DRIVE_MARKER = ".xenon-virtual-drive"
 TRASH_DIRECTORY = ".xenon-trash"
 INTERNAL_NAMES = frozenset((VIRTUAL_DRIVE_MARKER, TRASH_DIRECTORY))
+ENTRY_CACHE_LIMIT = 128
 
 
 def default_virtual_drive_root() -> Path:
@@ -48,6 +50,7 @@ class FileSystemDevice:
 		self._records: dict[int, FileRecord] = {}
 		self._next_handle = 1
 		self._lock = RLock()
+		self._entry_cache: dict[Path, tuple[int, tuple[FileEntry, ...]]] = {}
 
 	def _resolve(self, name: str) -> Path | None:
 		candidate = Path(name)
@@ -69,6 +72,8 @@ class FileSystemDevice:
 		try:
 			if mode == "w":
 				path.parent.mkdir(parents=True, exist_ok=True)
+				with self._lock:
+					self._entry_cache.clear()
 			stream = path.open(mode, encoding="utf-8", newline="")
 		except (OSError, UnicodeError):
 			return 0
@@ -120,9 +125,17 @@ class FileSystemDevice:
 
 	def entries(self, name: str = ".") -> tuple[FileEntry, ...]:
 		path = self._resolve(name)
-		if path is None or not path.is_dir():
+		if path is None:
 			return ()
 		try:
+			status = path.stat()
+			if not stat.S_ISDIR(status.st_mode):
+				return ()
+			stamp = status.st_mtime_ns
+			with self._lock:
+				cached = self._entry_cache.get(path)
+				if cached is not None and cached[0] == stamp:
+					return cached[1]
 			items = [
 				FileEntry(child.name, child.is_dir())
 				for child in path.iterdir()
@@ -131,7 +144,15 @@ class FileSystemDevice:
 			]
 		except OSError:
 			return ()
-		return tuple(sorted(items, key=lambda item: (not item.is_directory, item.name.casefold(), item.name)))
+		entries = tuple(sorted(items, key=lambda item: (not item.is_directory, item.name.casefold(), item.name)))
+		with self._lock:
+			if (
+				path not in self._entry_cache
+				and len(self._entry_cache) >= ENTRY_CACHE_LIMIT
+			):
+				self._entry_cache.pop(next(iter(self._entry_cache)))
+			self._entry_cache[path] = (stamp, entries)
+		return entries
 
 	def entry_count(self, name: str = ".") -> int:
 		return len(self.entries(name))
@@ -155,6 +176,8 @@ class FileSystemDevice:
 		try:
 			path.parent.mkdir(parents=True, exist_ok=True)
 			path.touch(exist_ok=False)
+			with self._lock:
+				self._entry_cache.clear()
 			return True
 		except OSError:
 			return False
@@ -165,6 +188,8 @@ class FileSystemDevice:
 			return False
 		try:
 			path.mkdir(parents=True, exist_ok=False)
+			with self._lock:
+				self._entry_cache.clear()
 			return True
 		except OSError:
 			return False
@@ -177,6 +202,8 @@ class FileSystemDevice:
 		try:
 			destination.parent.mkdir(parents=True, exist_ok=True)
 			path.rename(destination)
+			with self._lock:
+				self._entry_cache.clear()
 			return True
 		except OSError:
 			return False
@@ -195,6 +222,8 @@ class FileSystemDevice:
 				stamp += 1
 				destination = self._trash / f"{stamp}-{path.name}"
 			path.replace(destination)
+			with self._lock:
+				self._entry_cache.clear()
 			return True
 		except OSError:
 			return False

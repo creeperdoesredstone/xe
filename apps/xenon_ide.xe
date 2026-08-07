@@ -20,6 +20,9 @@ var explorer_width_preferred: int
 var explorer_resizing: bool
 var plus_menu_open: bool
 var file_menu_open: bool
+var ribbon_file_menu_open: bool
+var file_menu_guard: int
+var ribbon_file_menu_guard: int
 var file_menu_path: string
 var rename_active: bool
 var rename_path: string
@@ -33,6 +36,17 @@ var rename_selection_end: int
 var rename_field_x: int
 var rename_field_y: int
 var rename_field_width: int
+var rename_first_char: int
+var rename_pointer_guard: int
+var tree_drag_armed: bool
+var tree_dragging: bool
+var tree_drag_path: string
+var tree_drag_name: string
+var tree_drag_is_folder: bool
+var tree_drag_start_x: int
+var tree_drag_start_y: int
+var tree_drop_path: string
+var tree_drop_valid: bool
 var delete_confirm: bool
 var terminal_open: bool
 var ide_font_large: bool
@@ -79,6 +93,7 @@ var ui_input_blocked: bool
 var explorer_popup_active: bool
 var explorer_toggle_lock: bool
 var edit_pointer_inside: bool
+var ribbon_file_pointer_inside: bool
 var main_pointer_x: int
 var main_pointer_y: int
 array view_path: string[16]
@@ -169,6 +184,8 @@ proc ide_begin_rename(path: string) {
 	rename_field_x = -1
 	rename_field_y = -1
 	rename_field_width = 0
+	rename_first_char = 0
+	rename_pointer_guard = 2
 	rename_active = true
 	file_menu_open = false
 }
@@ -200,6 +217,43 @@ proc ide_insert_rename_character(value: char) {
 	call ide_clear(rename_insert)
 	call xestring::append_char(rename_insert, value)
 	call ide_replace_rename_selection(rename_insert)
+}
+
+proc ide_copy_rename_selection() {
+	var index: int
+	if (!ide_rename_has_selection()) {
+		return
+	}
+	call ide_clear(clipboard_text)
+	index = ide_rename_selection_begin()
+	while (index < ide_rename_selection_finish()) {
+		call xestring::append_char(clipboard_text, rename_text[index])
+		index += 1
+	}
+}
+
+proc ide_cut_rename_selection() {
+	if (!ide_rename_has_selection()) {
+		return
+	}
+	call ide_copy_rename_selection()
+	call ide_replace_rename_selection("")
+}
+
+proc ide_paste_rename_selection() {
+	var index: int
+	var value: int
+	index = 0
+	while (index < xestring::strlen(clipboard_text)) {
+		value = (int)(clipboard_text[index])
+		if (value == 47 || value == 92) {
+			return
+		}
+		index += 1
+	}
+	if (xestring::strlen(rename_text) - (ide_rename_selection_finish() - ide_rename_selection_begin()) + xestring::strlen(clipboard_text) <= 64) {
+		call ide_replace_rename_selection(clipboard_text)
+	}
 }
 
 fn ide_path_is_same_or_child(path: string, parent: string) bool {
@@ -857,6 +911,10 @@ proc draw_ide_inline_rename(x: int, y: int, field_width: int) {
 	if (rename_cursor >= visible_chars) { first_char = rename_cursor - visible_chars + 1 }
 	selection_begin = ide_rename_selection_begin()
 	selection_finish = ide_rename_selection_finish()
+	if (selection_begin == 0 && selection_finish == xestring::strlen(rename_text)) {
+		first_char = 0
+	}
+	rename_first_char = first_char
 	call graphics::fill_rect(ide_window, x, y, field_width, 7, graphics::COLOR_1)
 	call graphics::draw_rect(ide_window, x, y, field_width, 7, graphics::COLOR_13)
 	index = first_char
@@ -1066,6 +1124,133 @@ fn ide_join_path(parent: string, child: string) string {
 	return xestring::concat(xestring::concat(parent, "/"), child)
 }
 
+fn ide_parent_path(path: string) string {
+	var result: string
+	var separator: int
+	var index: int
+	result = ""
+	call ide_clear(result)
+	separator = xestring::strlen(path) - 1
+	while (separator >= 0 && (int)(path[separator]) != 47 && (int)(path[separator]) != 92) { separator -= 1 }
+	if (separator < 0) {
+		call xestring::append(result, ".")
+		return result
+	}
+	index = 0
+	while (index < separator) {
+		call xestring::append_char(result, path[index])
+		index += 1
+	}
+	if (xestring::strlen(result) == 0) {
+		call xestring::append(result, ".")
+	}
+	return result
+}
+
+fn ide_base_name(path: string) string {
+	var result: string
+	var index: int
+	result = ""
+	call ide_clear(result)
+	index = xestring::strlen(path) - 1
+	while (index >= 0 && (int)(path[index]) != 47 && (int)(path[index]) != 92) { index -= 1 }
+	index += 1
+	while (index < xestring::strlen(path)) {
+		call xestring::append_char(result, path[index])
+		index += 1
+	}
+	return result
+}
+
+proc ide_append_positive_int(target: string, value: int) {
+	if (value >= 10) {
+		call ide_append_positive_int(target, value / 10)
+	}
+	call xestring::append_char(target, (char)(48 + value % 10))
+}
+
+fn ide_unique_child_name(parent: string, original: string, is_directory: bool) string {
+	var candidate: string
+	var stem: string
+	var extension: string
+	var suffix: int
+	var index: int
+	var dot: int
+	candidate = ""
+	stem = ""
+	extension = ""
+	call ide_clear(candidate)
+	call ide_clear(stem)
+	call ide_clear(extension)
+	dot = -1
+	if (!is_directory) {
+		index = 0
+		while (index < xestring::strlen(original)) {
+			if ((int)(original[index]) == 46) { dot = index }
+			index += 1
+		}
+		if (dot == 0) { dot = -1 }
+	}
+	index = 0
+	while (index < xestring::strlen(original)) {
+		if (dot >= 0 && index >= dot) {
+			call xestring::append_char(extension, original[index])
+		}
+		else {
+			call xestring::append_char(stem, original[index])
+		}
+		index += 1
+	}
+	call ide_set(candidate, original)
+	suffix = 0
+	while (os::path_exists(ide_join_path(parent, candidate))) {
+		suffix += 1
+		call ide_clear(candidate)
+		call xestring::append(candidate, stem)
+		call xestring::append(candidate, " (")
+		call ide_append_positive_int(candidate, suffix)
+		call xestring::append(candidate, ")")
+		call xestring::append(candidate, extension)
+	}
+	return candidate
+}
+
+fn ide_unique_template_name(is_directory: bool) string {
+	var base: string
+	base = "new_folder"
+	if (!is_directory) { base = "new_file.xe" }
+	return ide_unique_child_name(".", base, is_directory)
+}
+
+proc ide_arm_tree_drag(path: string, is_directory: bool, pointer_x: int, pointer_y: int) {
+	call ide_set(tree_drag_path, path)
+	call ide_set(tree_drag_name, ide_base_name(path))
+	tree_drag_is_folder = is_directory
+	tree_drag_start_x = pointer_x
+	tree_drag_start_y = pointer_y
+	tree_drag_armed = true
+	tree_dragging = false
+	call ide_clear(tree_drop_path)
+	tree_drop_valid = false
+}
+
+fn ide_drag_distance(pointer_x: int, pointer_y: int) int {
+	var horizontal: int
+	var vertical: int
+	horizontal = pointer_x - tree_drag_start_x
+	vertical = pointer_y - tree_drag_start_y
+	if (horizontal < 0) { horizontal = -horizontal }
+	if (vertical < 0) { vertical = -vertical }
+	return horizontal + vertical
+}
+
+fn ide_tree_drop_allowed(parent: string) bool {
+	if (!tree_dragging || !tree_drag_armed) { return false }
+	if (ide_strings_equal(parent, ide_parent_path(tree_drag_path))) { return false }
+	if (tree_drag_is_folder && ide_path_is_same_or_child(parent, tree_drag_path)) { return false }
+	return true
+}
+
 proc ide_reset_explorer_expansion() {
 	var index: int
 	index = 0
@@ -1113,6 +1298,24 @@ proc ide_update_paths_after_rename(old_path: string, new_path: string) {
 	}
 }
 
+proc ide_move_tree_entry(parent: string) {
+	var destination_name: string
+	var destination_path: string
+	if (!ide_tree_drop_allowed(parent)) {
+		return
+	}
+	destination_name = ide_unique_child_name(parent, tree_drag_name, tree_drag_is_folder)
+	destination_path = ide_join_path(parent, destination_name)
+	if (os::rename(tree_drag_path, destination_path)) {
+		call ide_update_paths_after_rename(tree_drag_path, destination_path)
+		call ide_reset_explorer_expansion()
+		call ide_report(xestring::concat("Moved to ", parent), false)
+	}
+	else {
+		call ide_report("Move failed", true)
+	}
+}
+
 proc ide_commit_rename() {
 	var separator: int
 	var index: int
@@ -1153,6 +1356,25 @@ proc ide_commit_rename() {
 }
 
 proc ide_handle_rename_key(value: int) {
+	var control_down: bool
+	control_down = (graphics::modifiers() & graphics::MOD_CTRL) != 0
+	if (control_down) {
+		if (value == 1 || value == 65 || value == 97) {
+			rename_selection_start = 0
+			rename_selection_end = xestring::strlen(rename_text)
+			rename_cursor = rename_selection_end
+		}
+		elseif (value == 3 || value == 67 || value == 99) {
+			call ide_copy_rename_selection()
+		}
+		elseif (value == 24 || value == 88 || value == 120) {
+			call ide_cut_rename_selection()
+		}
+		elseif (value == 22 || value == 86 || value == 118) {
+			call ide_paste_rename_selection()
+		}
+		return
+	}
 	if (value == graphics::KEY_ESCAPE) {
 		rename_active = false
 		return
@@ -1236,9 +1458,15 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 	var root_name: string
 	var child_name: string
 	var child_path: string
+	var root_is_folder: bool
+	var child_is_folder: bool
 	var row_clicked: bool
 	var arrow_clicked: bool
 	var folder_direction: int
+	var row_tone: int
+	var menu_block_clicked: bool
+	var drag_ghost_x: int
+	var drag_ghost_y: int
 	count = os::entry_count(".")
 	if (count > 64) { count = 64 }
 	total = ide_explorer_row_count()
@@ -1255,13 +1483,34 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 	menu_x = x + panel_width - menu_width - 2
 	if (menu_x < x + 2) { menu_x = x + 2 }
 	popup_open = plus_menu_open || file_menu_open || rename_active
-	popup_pointer_inside = popup_open && pointer_x >= menu_x && pointer_x < menu_x + menu_width && pointer_y >= y + 9 && pointer_y < y + 36
+	popup_pointer_inside = (plus_menu_open || file_menu_open) && pointer_x >= menu_x && pointer_x < menu_x + menu_width && pointer_y >= y + 9 && pointer_y < y + 36
+	if (rename_active) {
+		popup_pointer_inside = rename_field_x >= 0 && pointer_x >= rename_field_x && pointer_x < rename_field_x + rename_field_width && pointer_y >= rename_field_y && pointer_y < rename_field_y + 7
+	}
 	rows_interactive = interactive && !popup_open
-	if (popup_open && graphics::mouse_pressed() && !popup_pointer_inside) {
+	if ((plus_menu_open || file_menu_open) && file_menu_guard == 0 && graphics::mouse_pressed() && !popup_pointer_inside) {
 		plus_menu_open = false
 		file_menu_open = false
 		rows_interactive = false
 	}
+	if (rename_active && rename_pointer_guard == 0 && graphics::mouse_pressed()) {
+		if (popup_pointer_inside) {
+			rename_cursor = rename_first_char + (pointer_x - rename_field_x - 2 + 2) / 4
+			if (rename_cursor < 0) { rename_cursor = 0 }
+			if (rename_cursor > xestring::strlen(rename_text)) { rename_cursor = xestring::strlen(rename_text) }
+			call ide_clear_rename_selection()
+		}
+		else {
+			rename_active = false
+			call ide_report("Rename canceled", false)
+		}
+		rows_interactive = false
+	}
+	if (tree_drag_armed && graphics::mouse_down() && !tree_dragging && ide_drag_distance(pointer_x, pointer_y) >= 4) {
+		tree_dragging = true
+	}
+	call ide_clear(tree_drop_path)
+	tree_drop_valid = false
 	if (rows_interactive) {
 		row_clicked = graphics::button_flat(ide_window, x + 2, y + 1, panel_width - 32, 7, " ", graphics::COLOR_1)
 		if (row_clicked) {
@@ -1271,10 +1520,16 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 	else {
 		call graphics::fill_rect(ide_window, x + 2, y + 1, panel_width - 32, 7, graphics::COLOR_1)
 	}
+	if (ide_tree_drop_allowed(".") && pointer_x >= x + 2 && pointer_x < x + panel_width - 30 && pointer_y >= y + 1 && pointer_y < y + 8) {
+		call ide_set(tree_drop_path, ".")
+		tree_drop_valid = true
+		call graphics::fill_rect(ide_window, x + 2, y + 1, panel_width - 32, 7, graphics::COLOR_5)
+	}
 	call draw_ide_text_clipped(x + 3, y + 3, "root /", (panel_width - 36) / 4, graphics::COLOR_7)
 	if (interactive && !popup_open) {
 		if (graphics::button_flat(ide_window, x + panel_width - 28, y + 1, 12, 7, "+", graphics::COLOR_8)) {
 			plus_menu_open = true
+			file_menu_guard = 2
 			file_menu_open = false
 		}
 		if (ide_chevron_button(x + panel_width - 14, y + 1, 12, 7, 1, graphics::COLOR_8)) { explorer_open = false }
@@ -1289,10 +1544,17 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 	root_index = 0
 	while (root_index < count && visible_row < rows) {
 		root_name = os::entry_name(".", root_index)
+		root_is_folder = os::entry_is_directory(".", root_index)
 		if (flat_row >= explorer_scroll) {
 			row_y = y + 11 + visible_row * 8
 			row_clicked = false
-			if (os::entry_is_directory(".", root_index)) {
+			if (root_is_folder) {
+				row_tone = graphics::COLOR_1
+				if (ide_tree_drop_allowed(root_name) && pointer_x >= x + 12 && pointer_x < x + panel_width - 14 && pointer_y >= row_y && pointer_y < row_y + 7) {
+					row_tone = graphics::COLOR_5
+					call ide_set(tree_drop_path, root_name)
+					tree_drop_valid = true
+				}
 				folder_direction = 0
 				if (explorer_expanded[root_index] != 0) { folder_direction = 2 }
 				arrow_clicked = false
@@ -1304,9 +1566,9 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 				elseif (!rows_interactive) {
 					call draw_ide_chevron(x + 2, row_y, 10, 7, folder_direction)
 				}
-				if (rows_interactive) { row_clicked = graphics::button_flat(ide_window, x + 12, row_y, panel_width - 28, 7, " ", graphics::COLOR_1) }
+				if (rows_interactive) { row_clicked = graphics::button_flat(ide_window, x + 12, row_y, panel_width - 28, 7, " ", row_tone) }
 				else {
-					call graphics::fill_rect(ide_window, x + 12, row_y, panel_width - 28, 7, graphics::COLOR_1)
+					call graphics::fill_rect(ide_window, x + 12, row_y, panel_width - 28, 7, row_tone)
 				}
 				if (rename_active && ide_strings_equal(rename_path, root_name)) {
 					call draw_ide_inline_rename(x + 13, row_y, panel_width - 17)
@@ -1328,8 +1590,14 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 					call draw_ide_text_clipped(x + 10, row_y + 1, root_name, (panel_width - 16) / 4, graphics::COLOR_7)
 				}
 			}
-			if (row_clicked) {
-				if (os::entry_is_directory(".", root_index)) {
+			if (rows_interactive && graphics::mouse_pressed() && pointer_x >= x + 12 && pointer_x < x + panel_width - 14 && pointer_y >= row_y && pointer_y < row_y + 7) {
+				call ide_arm_tree_drag(root_name, root_is_folder, pointer_x, pointer_y)
+			}
+			elseif (rows_interactive && graphics::mouse_pressed() && !root_is_folder && pointer_x >= x + 2 && pointer_x < x + panel_width - 14 && pointer_y >= row_y && pointer_y < row_y + 7) {
+				call ide_arm_tree_drag(root_name, false, pointer_x, pointer_y)
+			}
+			if (row_clicked && !tree_dragging) {
+				if (root_is_folder) {
 					call ide_open_folder(root_name)
 				}
 				else {
@@ -1339,6 +1607,7 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 			if (pointer_x >= x + 2 && pointer_x < x + panel_width - 2 && pointer_y >= row_y && pointer_y < row_y + 7 && rows_interactive) {
 				if (graphics::button_flat(ide_window, x + panel_width - 14, row_y, 12, 7, "...", graphics::COLOR_8)) {
 					file_menu_open = true
+					file_menu_guard = 2
 					plus_menu_open = false
 					call ide_set(file_menu_path, root_name)
 				}
@@ -1346,19 +1615,26 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 			visible_row += 1
 		}
 		flat_row += 1
-		if (explorer_expanded[root_index] != 0 && os::entry_is_directory(".", root_index)) {
+		if (explorer_expanded[root_index] != 0 && root_is_folder) {
 			child_index = 0
 			while (child_index < os::entry_count(root_name) && visible_row < rows) {
 				child_name = os::entry_name(root_name, child_index)
 				child_path = ide_join_path(root_name, child_name)
+				child_is_folder = os::entry_is_directory(root_name, child_index)
 				if (flat_row >= explorer_scroll) {
 					row_y = y + 11 + visible_row * 8
 					row_clicked = false
-					if (rows_interactive) { row_clicked = graphics::button_flat(ide_window, x + 10, row_y, panel_width - 24, 7, " ", graphics::COLOR_1) }
-					else {
-						call graphics::fill_rect(ide_window, x + 10, row_y, panel_width - 24, 7, graphics::COLOR_1)
+					row_tone = graphics::COLOR_1
+					if (child_is_folder && ide_tree_drop_allowed(child_path) && pointer_x >= x + 10 && pointer_x < x + panel_width - 14 && pointer_y >= row_y && pointer_y < row_y + 7) {
+						row_tone = graphics::COLOR_5
+						call ide_set(tree_drop_path, child_path)
+						tree_drop_valid = true
 					}
-					if (os::entry_is_directory(root_name, child_index)) {
+					if (rows_interactive) { row_clicked = graphics::button_flat(ide_window, x + 10, row_y, panel_width - 24, 7, " ", row_tone) }
+					else {
+						call graphics::fill_rect(ide_window, x + 10, row_y, panel_width - 24, 7, row_tone)
+					}
+					if (child_is_folder) {
 						call draw_ide_chevron(x + 11, row_y, 8, 7, 0)
 					}
 					else {
@@ -1370,8 +1646,11 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 					else {
 						call draw_ide_text_clipped(x + 20, row_y + 1, child_name, (panel_width - 26) / 4, graphics::COLOR_7)
 					}
-					if (row_clicked) {
-						if (os::entry_is_directory(root_name, child_index)) {
+					if (rows_interactive && graphics::mouse_pressed() && pointer_x >= x + 10 && pointer_x < x + panel_width - 14 && pointer_y >= row_y && pointer_y < row_y + 7) {
+						call ide_arm_tree_drag(child_path, child_is_folder, pointer_x, pointer_y)
+					}
+					if (row_clicked && !tree_dragging) {
+						if (child_is_folder) {
 							call ide_open_folder(child_path)
 						}
 						else {
@@ -1381,6 +1660,7 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 					if (pointer_x >= x + 10 && pointer_x < x + panel_width - 2 && pointer_y >= row_y && pointer_y < row_y + 7 && rows_interactive) {
 						if (graphics::button_flat(ide_window, x + panel_width - 14, row_y, 12, 7, "...", graphics::COLOR_8)) {
 							file_menu_open = true
+							file_menu_guard = 2
 							plus_menu_open = false
 							call ide_set(file_menu_path, child_path)
 						}
@@ -1408,8 +1688,8 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 		call draw_ide_chevron(x + panel_width - 14, y + panel_height - 8, 12, 7, 2)
 	}
 	if (plus_menu_open && interactive) {
-		call graphics::fill_rect(ide_window, menu_x, y + 9, menu_width, 27, graphics::COLOR_8)
-		if (graphics::button_flat(ide_window, menu_x + 1, y + 10, menu_width - 2, 7, "New file", graphics::COLOR_8)) {
+		menu_block_clicked = graphics::button_flat(ide_window, menu_x, y + 9, menu_width, 27, "", graphics::COLOR_8)
+		if (file_menu_guard == 0 && graphics::button_flat(ide_window, menu_x + 1, y + 10, menu_width - 2, 7, "New file", graphics::COLOR_8)) {
 			if (os::make_file("new_file.xe")) {
 				call ide_reset_explorer_expansion()
 				call ide_report("Created new_file.xe", false)
@@ -1419,7 +1699,7 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 			}
 			plus_menu_open = false
 		}
-		if (graphics::button_flat(ide_window, menu_x + 1, y + 18, menu_width - 2, 7, "New folder", graphics::COLOR_8)) {
+		if (file_menu_guard == 0 && graphics::button_flat(ide_window, menu_x + 1, y + 18, menu_width - 2, 7, "New folder", graphics::COLOR_8)) {
 			if (os::make_directory("new_folder")) {
 				call ide_reset_explorer_expansion()
 				call ide_report("Created new_folder", false)
@@ -1429,18 +1709,47 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 			}
 			plus_menu_open = false
 		}
-		if (graphics::button_flat(ide_window, menu_x + 1, y + 26, menu_width - 2, 7, "Close", graphics::COLOR_1)) { plus_menu_open = false }
+		if (file_menu_guard == 0 && graphics::button_flat(ide_window, menu_x + 1, y + 26, menu_width - 2, 7, "Close", graphics::COLOR_1)) { plus_menu_open = false }
+		if (file_menu_guard > 0) {
+			call draw_ide_passive_button(menu_x + 1, y + 10, menu_width - 2, 7, "New file", graphics::COLOR_8)
+			call draw_ide_passive_button(menu_x + 1, y + 18, menu_width - 2, 7, "New folder", graphics::COLOR_8)
+			call draw_ide_passive_button(menu_x + 1, y + 26, menu_width - 2, 7, "Close", graphics::COLOR_1)
+		}
 	}
 	if (file_menu_open && interactive) {
-		call graphics::fill_rect(ide_window, menu_x, y + 9, menu_width, 27, graphics::COLOR_8)
-		if (graphics::button_flat(ide_window, menu_x + 1, y + 10, menu_width - 2, 7, "Rename", graphics::COLOR_8)) {
+		menu_block_clicked = graphics::button_flat(ide_window, menu_x, y + 9, menu_width, 27, "", graphics::COLOR_8)
+		if (file_menu_guard == 0 && graphics::button_flat(ide_window, menu_x + 1, y + 10, menu_width - 2, 7, "Rename", graphics::COLOR_8)) {
 			call ide_begin_rename(file_menu_path)
 		}
-		if (graphics::button_flat(ide_window, menu_x + 1, y + 18, menu_width - 2, 7, "Delete", graphics::COLOR_4)) {
+		if (file_menu_guard == 0 && graphics::button_flat(ide_window, menu_x + 1, y + 18, menu_width - 2, 7, "Delete", graphics::COLOR_4)) {
 			delete_confirm = true
 			file_menu_open = false
 		}
-		if (graphics::button_flat(ide_window, menu_x + 1, y + 26, menu_width - 2, 7, "Close", graphics::COLOR_1)) { file_menu_open = false }
+		if (file_menu_guard == 0 && graphics::button_flat(ide_window, menu_x + 1, y + 26, menu_width - 2, 7, "Close", graphics::COLOR_1)) { file_menu_open = false }
+		if (file_menu_guard > 0) {
+			call draw_ide_passive_button(menu_x + 1, y + 10, menu_width - 2, 7, "Rename", graphics::COLOR_8)
+			call draw_ide_passive_button(menu_x + 1, y + 18, menu_width - 2, 7, "Delete", graphics::COLOR_4)
+			call draw_ide_passive_button(menu_x + 1, y + 26, menu_width - 2, 7, "Close", graphics::COLOR_1)
+		}
+	}
+	if (tree_dragging) {
+		drag_ghost_x = pointer_x + 4
+		drag_ghost_y = pointer_y + 4
+		if (drag_ghost_x > x + panel_width - 7) { drag_ghost_x = pointer_x - 9 }
+		if (drag_ghost_y > y + panel_height - 7) { drag_ghost_y = pointer_y - 9 }
+		call graphics::draw_rect(ide_window, drag_ghost_x, drag_ghost_y, 5, 5, graphics::COLOR_13)
+		call graphics::set_pixel(ide_window, drag_ghost_x + 2, drag_ghost_y + 2, graphics::COLOR_10)
+	}
+	if (tree_drag_armed && graphics::mouse_released()) {
+		if (tree_dragging && tree_drop_valid) {
+			call ide_move_tree_entry(tree_drop_path)
+		}
+		tree_drag_armed = false
+		tree_dragging = false
+		tree_drop_valid = false
+		call ide_clear(tree_drag_path)
+		call ide_clear(tree_drag_name)
+		call ide_clear(tree_drop_path)
 	}
 }
 
@@ -1952,6 +2261,56 @@ proc draw_edit_menu() {
 	call graphics::draw_text_small(ide_window, 35, 54, "Ctrl A/C/X/V", graphics::COLOR_7)
 }
 
+proc draw_ribbon_file_menu(window_width: int) {
+	var menu_width: int
+	var menu_block_clicked: bool
+	var new_name: string
+	menu_width = 80
+	if (menu_width > window_width - 4) { menu_width = window_width - 4 }
+	if (menu_width < 24) { menu_width = 24 }
+	menu_block_clicked = graphics::button_flat(ide_window, 2, 10, menu_width, 35, "", graphics::COLOR_8)
+	if (ribbon_file_menu_guard == 0 && graphics::button_flat(ide_window, 3, 11, menu_width - 2, 7, "New file", graphics::COLOR_8)) {
+		new_name = ide_unique_template_name(false)
+		if (os::make_file(new_name)) {
+			call ide_reset_explorer_expansion()
+			call ide_open_file(new_name)
+		}
+		else {
+			call ide_report("Create file failed", true)
+		}
+		ribbon_file_menu_open = false
+	}
+	if (ribbon_file_menu_guard == 0 && graphics::button_flat(ide_window, 3, 19, menu_width - 2, 7, "New folder", graphics::COLOR_8)) {
+		new_name = ide_unique_template_name(true)
+		if (os::make_directory(new_name)) {
+			call ide_reset_explorer_expansion()
+			call ide_report(xestring::concat("Created ", new_name), false)
+		}
+		else {
+			call ide_report("Create folder failed", true)
+		}
+		ribbon_file_menu_open = false
+	}
+	if (ribbon_file_menu_guard == 0 && graphics::button_flat(ide_window, 3, 27, menu_width - 2, 7, "Save", graphics::COLOR_8)) {
+		if (view_is_folder[active_view] == 0) {
+			call ide_save()
+		}
+		else {
+			call ide_report("Open a file to save", true)
+		}
+		ribbon_file_menu_open = false
+	}
+	if (ribbon_file_menu_guard == 0 && graphics::button_flat(ide_window, 3, 35, menu_width - 2, 7, "Close", graphics::COLOR_1)) {
+		ribbon_file_menu_open = false
+	}
+	if (ribbon_file_menu_guard > 0) {
+		call draw_ide_passive_button(3, 11, menu_width - 2, 7, "New file", graphics::COLOR_8)
+		call draw_ide_passive_button(3, 19, menu_width - 2, 7, "New folder", graphics::COLOR_8)
+		call draw_ide_passive_button(3, 27, menu_width - 2, 7, "Save", graphics::COLOR_8)
+		call draw_ide_passive_button(3, 35, menu_width - 2, 7, "Close", graphics::COLOR_1)
+	}
+}
+
 source = "proc double(value: int) {\n\tout << value * 2\n}\nproc react() {\n\tcall double(21)\n}\nproc separate() {\n\tout << 7\n}\ncall react()"
 source_path = "workspace.xe"
 status_text = "Ready"
@@ -1963,6 +2322,9 @@ explorer_width_preferred = 82
 explorer_resizing = false
 plus_menu_open = false
 file_menu_open = false
+ribbon_file_menu_open = false
+file_menu_guard = 0
+ribbon_file_menu_guard = 0
 file_menu_path = ""
 rename_active = false
 rename_path = ""
@@ -1976,6 +2338,17 @@ rename_selection_end = 0
 rename_field_x = -1
 rename_field_y = -1
 rename_field_width = 0
+rename_first_char = 0
+rename_pointer_guard = 0
+tree_drag_armed = false
+tree_dragging = false
+tree_drag_path = ""
+tree_drag_name = ""
+tree_drag_is_folder = false
+tree_drag_start_x = 0
+tree_drag_start_y = 0
+tree_drop_path = ""
+tree_drop_valid = false
 delete_confirm = false
 terminal_open = false
 ide_font_large = true
@@ -2014,6 +2387,7 @@ view_orbit_phase[0] = 0
 view_orbit_speed[0] = 24
 view_orbit_target[0] = 24
 ide_camera_bank = -10
+ribbon_file_pointer_inside = false
 compile_ok = compiler::check(source)
 visual_atom_count = compiler::load_visual(source)
 visual_atom_count = compiler::load_document(0, source_path, source)
@@ -2039,6 +2413,9 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		status_is_error = false
 		status_expires = 0
 	}
+	if (file_menu_guard > 0) { file_menu_guard -= 1 }
+	if (ribbon_file_menu_guard > 0) { ribbon_file_menu_guard -= 1 }
+	if (rename_pointer_guard > 0) { rename_pointer_guard -= 1 }
 	animation_step = delta_ms * 100 / 220
 	if (animation_step < 1) { animation_step = 1 }
 	if (animation_step > 24) { animation_step = 24 }
@@ -2075,14 +2452,25 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		main_pointer_x = graphics::pointer_x(ide_window)
 		main_pointer_y = graphics::pointer_y(ide_window)
 		edit_pointer_inside = main_pointer_x >= 32 && main_pointer_x < 108 && main_pointer_y >= 10 && main_pointer_y < 61
-		ui_input_blocked = rename_active || delete_confirm || (edit_menu_open && (edit_pointer_inside || graphics::mouse_pressed()))
-		explorer_popup_active = plus_menu_open || file_menu_open || rename_active
+		ribbon_file_pointer_inside = main_pointer_x >= 2 && main_pointer_x < 82 && main_pointer_x < width - 2 && main_pointer_y >= 2 && main_pointer_y < 45
+		if (ribbon_file_menu_open && ribbon_file_menu_guard == 0 && graphics::mouse_pressed() && !ribbon_file_pointer_inside) {
+			ribbon_file_menu_open = false
+			ribbon_file_menu_guard = 1
+		}
+		ui_input_blocked = rename_active || delete_confirm || ribbon_file_menu_open || ribbon_file_menu_guard > 0 || (edit_menu_open && (edit_pointer_inside || graphics::mouse_pressed()))
+		explorer_popup_active = plus_menu_open || file_menu_open || rename_active || ribbon_file_menu_open
 		if (edit_menu_open && graphics::mouse_pressed() && !edit_pointer_inside) {
 			edit_menu_open = false
 		}
 		call graphics::fill_rect(ide_window, 0, 0, width, height, graphics::COLOR_0)
 		if (!ui_input_blocked && !plus_menu_open && !file_menu_open) {
-			if (graphics::button_flat(ide_window, 2, 2, 28, 7, "File", graphics::COLOR_8)) { plus_menu_open = !plus_menu_open; edit_menu_open = false }
+			if (graphics::button_flat(ide_window, 2, 2, 28, 7, "File", graphics::COLOR_8)) {
+				ribbon_file_menu_open = true
+				ribbon_file_menu_guard = 2
+				edit_menu_open = false
+				plus_menu_open = false
+				file_menu_open = false
+			}
 			if (graphics::button_flat(ide_window, 32, 2, 28, 7, "Edit", graphics::COLOR_8)) { edit_menu_open = !edit_menu_open; plus_menu_open = false; file_menu_open = false }
 			if (graphics::button_flat(ide_window, 62, 2, 28, 7, "View", graphics::COLOR_8)) { explorer_open = !explorer_open; edit_menu_open = false }
 			if (graphics::button_flat(ide_window, 92, 2, 28, 7, "Run", graphics::COLOR_8)) {
@@ -2345,6 +2733,9 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		if (edit_menu_open && !delete_confirm) {
 			call draw_edit_menu()
 		}
+		if (ribbon_file_menu_open && !delete_confirm) {
+			call draw_ribbon_file_menu(width)
+		}
 
 		if (delete_confirm) {
 			call graphics::fill_rect(ide_window, width / 2 - 62, height / 2 - 18, 124, 36, graphics::COLOR_8)
@@ -2368,12 +2759,13 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 			if (rename_active) {
 				call ide_handle_rename_key(key)
 			}
-			elseif (edit_menu_open || delete_confirm || plus_menu_open || file_menu_open) {
+			elseif (edit_menu_open || delete_confirm || plus_menu_open || file_menu_open || ribbon_file_menu_open) {
 				if (key == graphics::KEY_ESCAPE) {
 					edit_menu_open = false
 					delete_confirm = false
 					plus_menu_open = false
 					file_menu_open = false
+					ribbon_file_menu_open = false
 				}
 			}
 			else {

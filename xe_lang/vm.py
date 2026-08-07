@@ -319,7 +319,10 @@ class VM:
 	def render_front_buffer(self, snapshot: FrameSnapshot | None = None):
 		snapshot = snapshot or self._last_snapshot
 		if snapshot is None:
-			indices = bytes(pixel for row in self.front_buffer for pixel in row)
+			try:
+				indices = b"".join(self.front_buffer)
+			except TypeError:
+				indices = bytes(pixel for row in self.front_buffer for pixel in row)
 			snapshot = FrameSnapshot(
 				self.width,
 				self.height,
@@ -449,6 +452,7 @@ class VM:
 
 	def run(self) -> Result:
 		res = Result()
+		execution_result = Result()
 		self.start_time = time.monotonic()
 		self.stack = [0] * STACK_SIZE
 		self.call_stack.clear()
@@ -475,7 +479,7 @@ class VM:
 			while self.ip < len(self.instructions):
 				if instruction_count & 0xFF == 0 and self.cancel_event.is_set():
 					break
-				exec_res = self.execute(self.instructions[self.ip])
+				exec_res = self.execute(self.instructions[self.ip], execution_result)
 				instruction_count += 1
 				# print(self.stack[: self.sp][:32])
 				# print(self.data_memory[8192 : 8192 + 16])
@@ -508,10 +512,23 @@ class VM:
 			self.devices.files.close_all()
 
 	def push(self, value) -> None:
-		if self.sp >= len(self.stack):
+		if self.sp >= STACK_SIZE:
 			raise RuntimeError("VM stack overflow")
 		self.stack[self.sp] = value
 		self.sp += 1
+
+	def _pop_value(self, result: Result) -> int:
+		if self.sp <= 0:
+			result.fail(self._error("Stack underflow"))
+			return 0
+		self.sp -= 1
+		return self.stack[self.sp]
+
+	def _require_stack(self, result: Result, count: int) -> bool:
+		if count < 0 or self.sp < count:
+			result.fail(self._error("Stack underflow"))
+			return False
+		return True
 
 	def pop(self) -> Result:
 		res = Result()
@@ -645,8 +662,10 @@ class VM:
 				self.free_list.pop(i + 1)
 		return True
 
-	def execute(self, instruction: int) -> Result:
-		res = Result()
+	def execute(self, instruction: int, result: Result | None = None) -> Result:
+		res = result or Result()
+		res.value = None
+		res.error = None
 		pos = self._binary_position
 
 		ins_type = instruction >> 32
@@ -658,65 +677,61 @@ class VM:
 		if ins_type == 0:  # PUSH
 			self.push(ins_arg32)
 
-		if ins_type == 1:  # Other Stack Instructions
+		elif ins_type == 1:  # Other Stack Instructions
 			match ins_mod:
 				case 0:  # LOAD
 					self.push(self.data_memory[ins_arg])
 				case 1:  # STORE
-					value = res.register(self.pop())
+					value = self._pop_value(res)
 					if res.error:
 						return res
 
 					self.data_memory[ins_arg] = value
 				case 2:  # POP
 					for _ in range(ins_arg):
-						res.register(self.pop())
+						self._pop_value(res)
 						if res.error:
 							return res
 				case 3:  # DUP
-					res.register(self.check_stack(ins_arg + 1))
-					if res.error:
+					if not self._require_stack(res, ins_arg + 1):
 						return res
 
 					self.push(self.stack[self.sp - ins_arg - 1])
 				case 4:  # SWAP
-					res.register(self.check_stack(2))
-					if res.error:
+					if not self._require_stack(res, 2):
 						return res
 
-					b = res.register(self.pop())
-					a = res.register(self.pop())
+					b = self._pop_value(res)
+					a = self._pop_value(res)
 
 					self.push(b)
 					self.push(a)
 				case 5:  # OVER
-					res.register(self.check_stack(2))
-					if res.error:
+					if not self._require_stack(res, 2):
 						return res
 
 					self.push(self.stack[self.sp - 2])
 				case 6:  # ROT
-					res.register(self.check_stack(3))
-					if res.error:
+					if not self._require_stack(res, 3):
 						return res
 
-					c = res.register(self.pop())
-					b = res.register(self.pop())
-					a = res.register(self.pop())
+					c = self._pop_value(res)
+					b = self._pop_value(res)
+					a = self._pop_value(res)
 
 					self.push(c)
 					self.push(a)
 					self.push(b)
 				case 7:  # LOADIND
-					addr = res.register(self.pop())
+					addr = self._pop_value(res)
 					if res.error:
 						return res
 					if not 0 <= addr < len(self.data_memory):
 						return res.fail(self._error("Data memory out of bounds"))
 					self.push(self.data_memory[addr])
 				case 8:  # STOREIND
-					value = res.register(self.pop())
-					addr = res.register(self.pop())
+					value = self._pop_value(res)
+					addr = self._pop_value(res)
 
 					if res.error:
 						return res
@@ -753,7 +768,7 @@ class VM:
 					offset = ins_arg
 					if ins_arg > 0x7FFF:
 						offset -= 0x10000
-					value = res.register(self.pop())
+					value = self._pop_value(res)
 					if res.error:
 						return res
 					stack_index = self.fp - offset
@@ -763,9 +778,8 @@ class VM:
 				case 16:  # LEAVE
 					self.sp = self.fp + 2
 
-		if ins_type == 2:  # Conversion
-			res.register(self.check_stack(1))
-			if res.error:
+		elif ins_type == 2:  # Conversion
+			if not self._require_stack(res, 1):
 				return res
 			value = self.stack[self.sp - 1]
 			if ins_mod != 1 and value > 0x7fffffff:
@@ -785,13 +799,13 @@ class VM:
 			elif ins_mod == 2 and ins_arg == 1:  # B2F
 				self.stack[self.sp - 1] = float_to_u32(float(value))
 
-		if ins_type == 3:  # Math
+		elif ins_type == 3:  # Math
 			is_float_op = ins_mod % 2 == 1
 			val = 0
 
 			if ins_mod < 2:
-				b = res.register(self.pop())
-				a = res.register(self.pop())
+				b = self._pop_value(res)
+				a = self._pop_value(res)
 				if res.error:
 					return res
 
@@ -843,7 +857,7 @@ class VM:
 						if not is_float_op:
 							val = a & b
 						else:
-							t = res.register(self.pop())
+							t = self._pop_value(res)
 							if res.error:
 								return res
 							t = u32_to_float(t)
@@ -882,7 +896,7 @@ class VM:
 							self.push(b)
 							val = self.cr
 			else:
-				a = res.register(self.pop())
+				a = self._pop_value(res)
 				if res.error:
 					return res
 
@@ -938,19 +952,17 @@ class VM:
 					return res.fail(self._error("floating-point overflow"))
 			self.push(val & TRUE)
 
-		if ins_type == 4:  # Branching
+		elif ins_type == 4:  # Branching
 			addr = ins_arg
 			value = 0
 			if ins_mod in (1, 2, 5, 6, 9, 10):
-				res.register(self.check_stack(1))
-				if res.error:
+				if not self._require_stack(res, 1):
 					return res
-				value = res.register(self.pop())
+				value = self._pop_value(res)
 			elif ins_mod in (3, 7):
-				res.register(self.check_stack(1))
-				if res.error:
+				if not self._require_stack(res, 1):
 					return res
-				addr = res.register(self.pop())
+				addr = self._pop_value(res)
 
 			match ins_mod:
 				case 0:  # JUMP
@@ -995,7 +1007,7 @@ class VM:
 						self.ip = self.call_stack[-1]
 						self.call_stack.pop()
 
-		if ins_type == 5:  # System instructions
+		elif ins_type == 5:  # System instructions
 			match ins_mod:
 				case 0:
 					return res.success(False)
@@ -1004,14 +1016,14 @@ class VM:
 				case 2:
 					self.push(self.im)
 				case 3:
-					self.im = res.register(self.pop())
+					self.im = self._pop_value(res)
 					if res.error:
 						return res
 				# no interrupt handling yet
 				case 7:  # SYS
 					match ins_arg:
 						case SyscallID.OUTPUT_CHARS:
-							addr = res.register(self.pop())
+							addr = self._pop_value(res)
 							if res.error:
 								return res
 							try:
@@ -1030,7 +1042,7 @@ class VM:
 								return res
 							self.push(descriptor)
 						case SyscallID.CHARS_TO_INT:
-							addr = res.register(self.pop())
+							addr = self._pop_value(res)
 							if res.error:
 								return res
 							try:
@@ -1038,7 +1050,7 @@ class VM:
 							except (ValueError, OverflowError) as error:
 								return res.fail(self._error(f"Cannot convert characters to int: {error}"))
 						case SyscallID.CHARS_TO_FLOAT:
-							addr = res.register(self.pop())
+							addr = self._pop_value(res)
 							if res.error:
 								return res
 							try:
@@ -1046,8 +1058,8 @@ class VM:
 							except (ValueError, OverflowError) as error:
 								return res.fail(self._error(f"Cannot convert characters to float: {error}"))
 						case SyscallID.INT_TO_CHARS:
-							value = res.register(self.pop())
-							addr = res.register(self.pop())
+							value = self._pop_value(res)
+							addr = self._pop_value(res)
 							if res.error:
 								return res
 
@@ -1059,9 +1071,9 @@ class VM:
 							except ValueError as error:
 								return res.fail(self._error(str(error)))
 						case SyscallID.FLOAT_TO_CHARS:
-							value = res.register(self.pop())
+							value = self._pop_value(res)
 							value = u32_to_float(value)
-							addr = res.register(self.pop())
+							addr = self._pop_value(res)
 							if res.error:
 								return res
 
@@ -1070,8 +1082,8 @@ class VM:
 							except ValueError as error:
 								return res.fail(self._error(str(error)))
 						case SyscallID.BOOL_TO_CHARS:
-							value = bool(res.register(self.pop()))
-							addr = res.register(self.pop())
+							value = bool(self._pop_value(res))
+							addr = self._pop_value(res)
 							if res.error:
 								return res
 
@@ -1080,8 +1092,8 @@ class VM:
 							except ValueError as error:
 								return res.fail(self._error(str(error)))
 						case SyscallID.INT_TO_HEX:
-							value = res.register(self.pop())
-							addr = res.register(self.pop())
+							value = self._pop_value(res)
+							addr = self._pop_value(res)
 							if res.error:
 								return res
 
@@ -1090,14 +1102,14 @@ class VM:
 							except ValueError as error:
 								return res.fail(self._error(str(error)))
 						case SyscallID.PUT_CHAR:
-							value = res.register(self.pop())
+							value = self._pop_value(res)
 							if res.error:
 								return res
 
 							self._output(chr(value & 0xFF))
 						case SyscallID.STRING_CONCAT:
-							str2_addr = res.register(self.pop())
-							str1_addr = res.register(self.pop())
+							str2_addr = self._pop_value(res)
+							str1_addr = self._pop_value(res)
 							if res.error:
 								return res
 							try:
@@ -1109,8 +1121,8 @@ class VM:
 								return res
 							self.push(descriptor)
 						case SyscallID.STRING_COMPARE:
-							str2_addr = res.register(self.pop())
-							str1_addr = res.register(self.pop())
+							str2_addr = self._pop_value(res)
+							str1_addr = self._pop_value(res)
 							if res.error:
 								return res
 							try:
@@ -1120,7 +1132,7 @@ class VM:
 								return res.fail(self._error(str(error)))
 							self.push(TRUE if str1 == str2 else FALSE)
 						case SyscallID.STRING_UPDATE_LENGTH:
-							descriptor = res.register(self.pop())
+							descriptor = self._pop_value(res)
 							if res.error:
 								return res
 							if not 0 <= descriptor <= len(self.data_memory) - 3:
@@ -1138,34 +1150,34 @@ class VM:
 						case SyscallID.OS_GET_TICKS:
 							self.push(int((time.monotonic() - self.start_time) * 1000) & TRUE)
 						case SyscallID.OS_MALLOC:
-							words = res.register(self.pop())
+							words = self._pop_value(res)
 							if res.error:
 								return res
 
 							return self.malloc(words)
 						case SyscallID.OS_FREE:
-							ptr = res.register(self.pop())
+							ptr = self._pop_value(res)
 							if res.error:
 								return res
 							self.free(ptr, res)
 							if res.error:
 								return res
 						case SyscallID.OS_EXIT:
-							code = res.register(self.pop())
+							code = self._pop_value(res)
 							if res.error:
 								return res
 							self.exit_code = code - 0x100000000 if code > 0x7FFFFFFF else code
 							return res.success(False)
 						case SyscallID.OS_SLEEP:
-							duration = res.register(self.pop())
+							duration = self._pop_value(res)
 							if res.error:
 								return res
 							if duration > 0x7FFFFFFF:
 								duration -= 0x100000000
 							self.cancel_event.wait(max(0, duration) / 1000.0)
 						case SyscallID.REQUEST:
-							destination = res.register(self.pop())
-							backend_id = res.register(self.pop())
+							destination = self._pop_value(res)
+							backend_id = self._pop_value(res)
 							if res.error:
 								return res
 							try:
@@ -1187,11 +1199,11 @@ class VM:
 							if res.error:
 								return res
 
-		if ins_type == 8:  # Other
+		elif ins_type == 8:  # Other
 			match ins_mod:
 				case 0:  # LOOKUP
-					src = res.register(self.pop()) - self.text_size
-					dst = res.register(self.pop())
+					src = self._pop_value(res) - self.text_size
+					dst = self._pop_value(res)
 
 					if res.error:
 						return res
@@ -1214,8 +1226,8 @@ class VM:
 
 					self.data_memory[dst:dst + ins_arg] = self.program_memory[src:src + ins_arg]
 				case 1:  # WRITE
-					src = res.register(self.pop())
-					dst = res.register(self.pop())
+					src = self._pop_value(res)
+					dst = self._pop_value(res)
 
 					if res.error:
 						return res
