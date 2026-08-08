@@ -1911,7 +1911,7 @@ proc draw_mode_switch(x: int, width: int, height: int, mode: int*, menu_open: bo
 	elseif (*mode == 2) { mode_label = "Programmer" }
 	elseif (*mode == 3) { mode_label = "Graphing" }
 	elseif (*mode == 4) { mode_label = "Currency" }
-	elseif (*mode == 5) { mode_label = "Unit convert" }
+	elseif (*mode == 5) { mode_label = "Unit conversion" }
 	else { mode_label = "History" }
 	if (button_width < 58) {
 		if (*mode == 0) { mode_label = "STD" }
@@ -2149,40 +2149,40 @@ if (graphical_mode) {
 				}
 			}
 			call draw_expression_editor(panel_x, editor_y, panel_width, expression, error_code, error_position)
-				call draw_calculator_status(panel_x + 4, status_y, expression, result, error_code, error_position, dirty)
+			call draw_calculator_status(panel_x + 4, status_y, expression, result, error_code, error_position, dirty)
 
-				if (content_width < 90 || content_height < 52) {
-					# The display remains keyboard-operable at the absolute window minimum.
+			if (content_width < 90 || content_height < 52) {
+				# The display remains keyboard-operable at the absolute window minimum.
+			}
+			elseif (content_width < 150 || content_height < 88) {
+				keypad_x = panel_x + 3
+				if (calculator_mode == CalculatorMode.STANDARD || calculator_mode == CalculatorMode.SCIENTIFIC) {
+					call draw_compact_keypad(keypad_x, 27, panel_width - 6, content_height, expression, &dirty, &error_code, &result, &error_position, degrees_mode)
 				}
-				elseif (content_width < 150 || content_height < 88) {
-					keypad_x = panel_x + 3
-					if (calculator_mode == CalculatorMode.STANDARD || calculator_mode == CalculatorMode.SCIENTIFIC) {
-						call draw_compact_keypad(keypad_x, 27, panel_width - 6, content_height, expression, &dirty, &error_code, &result, &error_position, degrees_mode)
-					}
-					elseif (calculator_mode == CalculatorMode.PROGRAMMER) {
-						call draw_compact_programmer_view(keypad_x, 29, panel_width - 6, result, &programmer_base)
-					}
-					elseif (calculator_mode == CalculatorMode.GRAPHING) {
-						call draw_compact_graph_view(keypad_x, 28, panel_width - 6, content_height - 29, &graph_function)
-					}
-					elseif (calculator_mode == CalculatorMode.CURRENCY) {
-						call draw_currency_view(keypad_x, 28, panel_width - 6, content_height - 29, result, &currency_from, &currency_to, &currency_range)
-					}
-					elseif (calculator_mode == CalculatorMode.UNIT_CONVERSION) {
-						call draw_unit_view(keypad_x, 28, panel_width - 6, result, &unit_pair, &unit_swapped)
-					}
-					else {
-						call draw_history_compact(keypad_x, 29)
-					}
+				elseif (calculator_mode == CalculatorMode.PROGRAMMER) {
+					call draw_compact_programmer_view(keypad_x, 29, panel_width - 6, result, &programmer_base)
+				}
+				elseif (calculator_mode == CalculatorMode.GRAPHING) {
+					call draw_compact_graph_view(keypad_x, 28, panel_width - 6, content_height - 29, &graph_function)
+				}
+				elseif (calculator_mode == CalculatorMode.CURRENCY) {
+					call draw_currency_view(keypad_x, 28, panel_width - 6, content_height - 29, result, &currency_from, &currency_to, &currency_range)
+				}
+				elseif (calculator_mode == CalculatorMode.UNIT_CONVERSION) {
+					call draw_unit_view(keypad_x, 28, panel_width - 6, result, &unit_pair, &unit_swapped)
 				}
 				else {
-					keypad_x = panel_x + 4
-					if (calculator_mode == CalculatorMode.STANDARD) {
-						call draw_standard_keypad(keypad_x, 42, panel_width - 8, content_height - 46, expression, &dirty, &error_code, &result, &error_position, degrees_mode)
-					}
-					elseif (calculator_mode == CalculatorMode.SCIENTIFIC) {
-						button_width = (panel_width - 8) / 5
-						keypad_x = panel_x + (panel_width - (button_width * 5 + 8)) / 2
+					call draw_history_compact(keypad_x, 29)
+				}
+			}
+			else {
+				keypad_x = panel_x + 4
+				if (calculator_mode == CalculatorMode.STANDARD) {
+					call draw_standard_keypad(keypad_x, 42, panel_width - 8, content_height - 46, expression, &dirty, &error_code, &result, &error_position, degrees_mode)
+				}
+				elseif (calculator_mode == CalculatorMode.SCIENTIFIC) {
+					button_width = (panel_width - 8) / 5
+					keypad_x = panel_x + (panel_width - (button_width * 5 + 8)) / 2
 				shift_color = graphics::COLOR_4
 				if (shift_mode) {
 					shift_color = graphics::COLOR_13
@@ -2259,26 +2259,25 @@ if (graphical_mode) {
 					dirty = false
 					shift_mode = false
 				}
-
-						call draw_editor_key(keypad_x, 128, button_width * 2 + 2, "0", graphics::COLOR_5, 48, expression, &dirty, &error_code)
-						call draw_editor_key(keypad_x + (button_width + 2) * 2, 128, button_width * 2 + 2, ".", graphics::COLOR_5, 46, expression, &dirty, &error_code)
-					}
-					elseif (calculator_mode == CalculatorMode.PROGRAMMER) {
-						call draw_programmer_view(keypad_x, panel_width - 8, result, &programmer_base)
-					}
-					elseif (calculator_mode == CalculatorMode.GRAPHING) {
-						call draw_graph_view(keypad_x, panel_width - 8, &graph_function)
-					}
-					elseif (calculator_mode == CalculatorMode.CURRENCY) {
-						call draw_currency_view(keypad_x, 42, panel_width - 8, content_height - 46, result, &currency_from, &currency_to, &currency_range)
-					}
-					elseif (calculator_mode == CalculatorMode.UNIT_CONVERSION) {
-						call draw_unit_view(keypad_x, 42, panel_width - 8, result, &unit_pair, &unit_swapped)
-					}
-					else {
-						call draw_history_view(keypad_x, panel_width - 8)
-					}
+					call draw_editor_key(keypad_x, 128, button_width * 2 + 2, "0", graphics::COLOR_5, 48, expression, &dirty, &error_code)
+					call draw_editor_key(keypad_x + (button_width + 2) * 2, 128, button_width * 2 + 2, ".", graphics::COLOR_5, 46, expression, &dirty, &error_code)
 				}
+				elseif (calculator_mode == CalculatorMode.PROGRAMMER) {
+					call draw_programmer_view(keypad_x, panel_width - 8, result, &programmer_base)
+				}
+				elseif (calculator_mode == CalculatorMode.GRAPHING) {
+					call draw_graph_view(keypad_x, panel_width - 8, &graph_function)
+				}
+				elseif (calculator_mode == CalculatorMode.CURRENCY) {
+					call draw_currency_view(keypad_x, 42, panel_width - 8, content_height - 46, result, &currency_from, &currency_to, &currency_range)
+				}
+				elseif (calculator_mode == CalculatorMode.UNIT_CONVERSION) {
+					call draw_unit_view(keypad_x, 42, panel_width - 8, result, &unit_pair, &unit_swapped)
+				}
+				else {
+					call draw_history_view(keypad_x, panel_width - 8)
+				}
+			}
 			call draw_mode_switch(panel_x + 2, panel_width - 4, content_height, &calculator_mode, &mode_menu_open, &mode_menu_progress, &mode_menu_page)
 		}
 
