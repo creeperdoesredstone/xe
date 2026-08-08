@@ -1889,8 +1889,11 @@ proc draw_context_menu() {
 	var menu_height: int
 	var inside: bool
 	var delete_y: int
+	var single_file: bool
+	
+	single_file = selected_entry_count() == 1
 	menu_width = 68
-	menu_height = 29
+	menu_height = 20 + (int)single_file * 9
 	if (menu_width > width - 4) { menu_width = width - 4 }
 	if (context_x + menu_width > width - 2) { context_x = width - menu_width - 2 }
 	if (context_y + menu_height > height - 2) { context_y = height - menu_height - 2 }
@@ -1907,7 +1910,7 @@ proc draw_context_menu() {
 		context_open = false
 		return
 	}
-	if (selected_entry_count() == 1) {
+	if (single_file) {
 		if (graphics::button_flat(explorer_window, context_x + 2, context_y + 10, menu_width - 4, 8, "Rename", visual_surface)) {
 			call begin_rename(context_entry)
 			return
@@ -1917,7 +1920,7 @@ proc draw_context_menu() {
 		call graphics::fill_rect(explorer_window, context_x + 2, context_y + 10, menu_width - 4, 8, visual_surface)
 		call draw_explorer_text_centered(context_x + 2, context_y + 11, menu_width - 4, "Rename", graphics::FONT_NORMAL, visual_shell)
 	}
-	if (graphics::button_flat(explorer_window, context_x + 2, context_y + 19, menu_width - 4, 8, "Delete", graphics::COLOR_4)) {
+	if (graphics::button_flat(explorer_window, context_x + 2, context_y + 10 + (int)single_file * 9, menu_width - 4, 8, "Delete", graphics::COLOR_4)) {
 		if ((graphics::modifiers() & graphics::MOD_SHIFT) != 0) {
 			call confirm_context_delete()
 		}

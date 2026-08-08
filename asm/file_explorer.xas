@@ -10906,9 +10906,21 @@ PUSH 0
 PUSH 0
 PUSH 0
 PUSH 0
+PUSH 0
+PUSH 0
+PUSHFP
+CALL selected_entry_count
+PUSH 1
+IEQ
+STORESP -5
 PUSH 68
 STORESP -1
-PUSH 29
+PUSH 20
+LOADSP -5
+NEGI
+PUSH 9
+MULI
+ADDI
 STORESP -2
 LOADSP -1
 LOAD 85
@@ -11047,11 +11059,7 @@ JUMP cleanup(draw_context_menu)
 JUMP endif(248)
 :else(248)
 :endif(248)
-PUSH 0
-PUSHFP
-CALL selected_entry_count
-PUSH 1
-IEQ
+LOADSP -5
 BRZ else(249)
 PUSH 0
 LOAD 92
@@ -11110,7 +11118,12 @@ LOAD 92
 PUSH 2
 ADDI
 LOAD 93
-PUSH 19
+PUSH 10
+ADDI
+LOADSP -5
+NEGI
+PUSH 9
+MULI
 ADDI
 LOADSP -1
 PUSH 4
@@ -11139,7 +11152,7 @@ JUMP endif(251)
 :else(251)
 :endif(251)
 :cleanup(draw_context_menu)
-POP 4
+POP 5
 POPFP
 POP 1
 RET
