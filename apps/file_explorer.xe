@@ -19,6 +19,7 @@ array entry_node_radius: int[64]
 array entry_slot_start_x: int[64]
 array entry_slot_start_y: int[64]
 array entry_slot_progress: int[64]
+array entry_slot_elapsed: int[64]
 array entry_name_cache: string[64]
 array entry_directory_cache: int[64]
 array entry_child_count_cache: int[64]
@@ -150,6 +151,14 @@ fn slot_ease(progress: int) int {
 	return (int)(t * t * t * (t * (t * 6.0 - 15.0) + 10.0) * 100.0)
 }
 
+fn insertion_slot_duration(population: int) int {
+	var duration: int
+	if (population <= 1) { return 220 }
+	duration = 400 - (population - 2) * 30
+	if (duration < 220) { duration = 220 }
+	return duration
+}
+
 fn placeholder_pixel_visible(x: int, y: int) bool {
 	# Fade complete shapes in a few palette-safe temporal steps. Spatial masks
 	# produced moving rows/scanlines while the camera zoomed.
@@ -191,7 +200,7 @@ proc orbit_project(radius: int, angle: float) {
 	plane_y = math::sin(angle) * (float)radius * projection_tilt_cos
 	projected_x = (int)(plane_x * projection_roll_cos - plane_y * projection_roll_sin)
 	projected_y = (int)(plane_x * projection_roll_sin + plane_y * projection_roll_cos)
-	projected_depth = (int)(math::sin(angle) * (float)radius * projection_tilt_sin * 100.0)
+	projected_depth = (int)(-math::sin(angle) * (float)radius * projection_tilt_sin * 100.0)
 }
 
 proc refresh_explorer_style() {
@@ -967,6 +976,7 @@ proc begin_slot_animation_all() {
 		entry_slot_start_x[index] = entry_render_x[index]
 		entry_slot_start_y[index] = entry_render_y[index]
 		entry_slot_progress[index] = 0
+		entry_slot_elapsed[index] = 0
 		index += 1
 	}
 }
@@ -992,6 +1002,7 @@ proc begin_slot_animation_for_shell(target_shell: int) {
 			entry_slot_start_x[index] = entry_render_x[index]
 			entry_slot_start_y[index] = entry_render_y[index]
 			entry_slot_progress[index] = 0
+			entry_slot_elapsed[index] = 0
 		}
 		index += 1
 	}
@@ -1036,6 +1047,7 @@ proc reset_energy_shells() {
 		}
 		entry_shell[index] = index / shell_capacity
 		entry_slot_progress[index] = 100
+		entry_slot_elapsed[index] = 220
 		index += 1
 	}
 	shell_count = (count + shell_capacity - 1) / shell_capacity
@@ -2045,6 +2057,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	var selection_move_count: int
 	var usable_width: int
 	var slot_eased_progress: int
+	var slot_duration: int
 	var slot_divisor: int
 	var drop_angle: float
 	var target_was_empty: bool
@@ -2199,8 +2212,14 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			atom_y = viewport_center_y + transition_focus_y * transition_scale * eased_progress / 10000
 		}
 		if (transition_progress == 0 && entry_slot_progress[index] < 100) {
-			entry_slot_progress[index] += animation_step
-			if (entry_slot_progress[index] > 100) { entry_slot_progress[index] = 100 }
+			slot_duration = 220
+			if (shell_incremental_layout[shell] != 0) { slot_duration = insertion_slot_duration(position + 1) }
+			entry_slot_elapsed[index] += delta_ms
+			if (entry_slot_elapsed[index] >= slot_duration) {
+				entry_slot_elapsed[index] = slot_duration
+				entry_slot_progress[index] = 100
+			}
+			else { entry_slot_progress[index] = entry_slot_elapsed[index] * 100 / slot_duration }
 			slot_eased_progress = slot_ease(entry_slot_progress[index])
 			atom_x = entry_slot_start_x[index] + (atom_x - entry_slot_start_x[index]) * slot_eased_progress / 100
 			atom_y = entry_slot_start_y[index] + (atom_y - entry_slot_start_y[index]) * slot_eased_progress / 100
@@ -2378,6 +2397,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 					entry_slot_start_x[drag_entry] = pointer_x
 					entry_slot_start_y[drag_entry] = pointer_y
 					entry_slot_progress[drag_entry] = 0
+					entry_slot_elapsed[drag_entry] = 0
 					call align_shell_entry_to_angle(actual_target_shell, drag_entry, drop_angle)
 				}
 			}
@@ -2406,7 +2426,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			else { operation_ok = os::make_directory(explorer_join_path(current_path, candidate_name)) }
 			if (operation_ok) {
 				call explorer_set(status_text, xestring::concat("Added ", candidate_name))
-				call begin_slot_animation_for_shell(target_shell)
+				if (shell_incremental_layout[target_shell] == 0) { call begin_slot_animation_for_shell(target_shell) }
 				if (target_was_empty) { shell_incremental_layout[target_shell] = 1 }
 				created_entry = cached_entry_count
 				entry_name_cache[created_entry] = candidate_name
@@ -2417,6 +2437,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 				entry_slot_start_x[created_entry] = pointer_x
 				entry_slot_start_y[created_entry] = pointer_y
 				entry_slot_progress[created_entry] = 0
+				entry_slot_elapsed[created_entry] = 0
 				cached_entry_count += 1
 				call rebuild_shell_layout()
 				if (target_was_empty) { call align_shell_entry_to_angle(target_shell, created_entry, drop_angle) }
