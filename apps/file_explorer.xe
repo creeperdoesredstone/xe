@@ -18,6 +18,7 @@ array entry_render_depth: int[64]
 array entry_node_radius: int[64]
 array entry_slot_start_x: int[64]
 array entry_slot_start_y: int[64]
+array entry_slot_start_depth: int[64]
 array entry_slot_progress: int[64]
 array entry_slot_elapsed: int[64]
 array entry_slot_duration: int[64]
@@ -134,6 +135,7 @@ var hover_pause_allowed: bool
 var visual_fade: int
 var visual_force_opaque: bool
 var view_roll: int
+var shell_add_follows_rotation: bool
 var deletion_ghost_count: int
 var deletion_ghost_duration: int
 
@@ -152,6 +154,8 @@ var projection_tilt_cos: float
 var projection_tilt_sin: float
 var projection_roll_cos: float
 var projection_roll_sin: float
+var projection_rotation_cos: float
+var projection_rotation_sin: float
 
 fn transition_ease(progress: int) int {
 	if (progress < 0) { progress = 0 }
@@ -202,21 +206,35 @@ proc draw_placeholder_circle(x: int, y: int, radius: int, color: int) {
 	}
 }
 
-proc prepare_orbit_projection(shell_tilt: int, roll: int) {
+proc prepare_orbit_projection(shell_tilt: int, roll: int, orientation: int) {
 	projection_tilt_cos = math::cos((float)shell_tilt)
 	projection_tilt_sin = math::sin((float)shell_tilt)
 	projection_roll_cos = math::cos((float)roll)
 	projection_roll_sin = math::sin((float)roll)
+	projection_rotation_cos = math::cos((float)orientation)
+	projection_rotation_sin = math::sin((float)orientation)
+}
+
+proc orbit_project_components(radius: int, cosine: float, sine: float) {
+	var plane_x: float
+	var plane_y: float
+	plane_x = cosine * (float)radius
+	plane_y = sine * (float)radius * projection_tilt_cos
+	projected_x = (int)(plane_x * projection_roll_cos - plane_y * projection_roll_sin)
+	projected_y = (int)(plane_x * projection_roll_sin + plane_y * projection_roll_cos)
+	projected_depth = (int)(-sine * (float)radius * projection_tilt_sin * 100.0)
 }
 
 proc orbit_project(radius: int, angle: float) {
-	var plane_x: float
-	var plane_y: float
-	plane_x = math::cos(angle) * (float)radius
-	plane_y = math::sin(angle) * (float)radius * projection_tilt_cos
-	projected_x = (int)(plane_x * projection_roll_cos - plane_y * projection_roll_sin)
-	projected_y = (int)(plane_x * projection_roll_sin + plane_y * projection_roll_cos)
-	projected_depth = (int)(-math::sin(angle) * (float)radius * projection_tilt_sin * 100.0)
+	call orbit_project_components(radius, math::cos(angle), math::sin(angle))
+}
+
+proc orbit_project_rotation_offset(radius: int, offset_cosine: float, offset_sine: float) {
+	var cosine: float
+	var sine: float
+	cosine = projection_rotation_cos * offset_cosine - projection_rotation_sin * offset_sine
+	sine = projection_rotation_sin * offset_cosine + projection_rotation_cos * offset_sine
+	call orbit_project_components(radius, cosine, sine)
 }
 
 proc refresh_explorer_style() {
@@ -260,10 +278,13 @@ proc draw_placeholder_filled_circle(x: int, y: int, radius: int, color: int) {
 }
 
 proc draw_placeholder_nucleus(x: int, y: int, radius: int) {
-	call draw_placeholder_filled_circle(x, y, radius - 2, visual_surface)
+	var highlight_radius: int
+	call draw_placeholder_filled_circle(x, y, radius, visual_surface)
 	call draw_placeholder_circle(x, y, radius, visual_outline)
 	call draw_placeholder_circle(x, y, radius - 2, visual_accent)
-	call draw_placeholder_pixel(x - radius / 2, y - radius / 2, visual_highlight)
+	highlight_radius = radius / 2
+	call orbit_project_rotation_offset(highlight_radius, -0.7071068, -0.7071068)
+	call draw_placeholder_pixel(x + projected_x, y + projected_y, visual_highlight)
 }
 
 proc draw_placeholder_folder(x: int, y: int, radius: int, child_count: int, orbit_phase: int) {
@@ -324,8 +345,8 @@ proc draw_placeholder_shell(center_x: int, center_y: int, radius: int, shell_til
 	var step_sine: float
 	var plane_x: float
 	var plane_y: float
-	cosine = 1.0
-	sine = 0.0
+	cosine = projection_rotation_cos
+	sine = projection_rotation_sin
 	step_cosine = math::cos(18.0)
 	step_sine = math::sin(18.0)
 	point = 0
@@ -1008,6 +1029,7 @@ proc begin_slot_animation_all() {
 	while (index < cached_entry_count) {
 		entry_slot_start_x[index] = entry_render_x[index]
 		entry_slot_start_y[index] = entry_render_y[index]
+		entry_slot_start_depth[index] = entry_render_depth[index]
 		entry_slot_progress[index] = 0
 		entry_slot_elapsed[index] = 0
 		entry_slot_duration[index] = 220
@@ -1035,6 +1057,7 @@ proc begin_slot_animation_for_shell(target_shell: int, duration: int) {
 		if (entry_shell[index] == target_shell) {
 			entry_slot_start_x[index] = entry_render_x[index]
 			entry_slot_start_y[index] = entry_render_y[index]
+			entry_slot_start_depth[index] = entry_render_depth[index]
 			entry_slot_progress[index] = 0
 			entry_slot_elapsed[index] = 0
 			entry_slot_duration[index] = duration
@@ -1084,6 +1107,7 @@ proc reset_energy_shells() {
 		entry_slot_progress[index] = 100
 		entry_slot_elapsed[index] = 220
 		entry_slot_duration[index] = 220
+		entry_slot_start_depth[index] = 0
 		entry_delete_mark[index] = 0
 		index += 1
 	}
@@ -1359,6 +1383,29 @@ proc move_dragged_entries_to_path(destination_path: string) {
 	else { call explorer_set(status_text, "Move failed") }
 }
 
+proc refresh_compacted_entry_metadata() {
+	var actual_count: int
+	var index: int
+	var entry_path: string
+	actual_count = os::entry_count(current_path)
+	if (actual_count != cached_entry_count) { return }
+	index = 0
+	while (index < cached_entry_count) {
+		entry_name_cache[index] = os::entry_name(current_path, index)
+		if (os::entry_is_directory(current_path, index)) {
+			entry_directory_cache[index] = 1
+			entry_path = explorer_join_path(current_path, entry_name_cache[index])
+			entry_child_count_cache[index] = os::entry_count(entry_path)
+			if (entry_child_count_cache[index] < 0) { entry_child_count_cache[index] = 0 }
+		}
+		else {
+			entry_directory_cache[index] = 0
+			entry_child_count_cache[index] = 0
+		}
+		index += 1
+	}
+}
+
 proc prepare_context_delete() {
 	var index: int
 	var shell: int
@@ -1417,6 +1464,7 @@ proc compact_deleted_entries() {
 			entry_node_radius[write_index] = entry_node_radius[read_index]
 			entry_slot_start_x[write_index] = entry_render_x[read_index]
 			entry_slot_start_y[write_index] = entry_render_y[read_index]
+			entry_slot_start_depth[write_index] = entry_render_depth[read_index]
 			entry_slot_progress[write_index] = 0
 			entry_slot_elapsed[write_index] = 0
 			entry_slot_duration[write_index] = 220
@@ -1457,9 +1505,14 @@ proc compact_deleted_entries() {
 		entry_slot_duration[read_index] = insertion_slot_duration(shell_population_cache[shell])
 		read_index += 1
 	}
+	call refresh_compacted_entry_metadata()
 	call clear_entry_selection()
 	selected_entry = -1
 	selection_anchor = -1
+	last_click_entry = -1
+	hovered_entry = -1
+	drop_folder_entry = -1
+	drag_entry = -1
 }
 
 proc confirm_context_delete() {
@@ -1468,6 +1521,7 @@ proc confirm_context_delete() {
 	var failed_count: int
 	var use_selection: bool
 	var target_path: string
+	call refresh_compacted_entry_metadata()
 	if (context_entry < 0 || context_entry >= cached_entry_count) {
 		delete_confirm = false
 		return
@@ -2266,8 +2320,10 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	var drop_angle: float
 	var target_was_empty: bool
 	var actual_target_shell: int
+	var target_depth: int
+	var drop_depth: int
 	count = cached_entry_count
-	call prepare_orbit_projection(tilt, view_roll)
+	call prepare_orbit_projection(tilt, view_roll, rotation)
 	usable_width = area_width - sidebar_width
 	viewport_center_x = x + (area_width + sidebar_width) / 2
 	viewport_center_y = y + area_height / 2
@@ -2380,7 +2436,8 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	shell_button_hovered = false
 	if (shell_count < 8 && transition_progress == 0) {
 		add_radius = (30 + (shell_count - 1) * shell_gap) * render_scale / 100 + 13
-		call orbit_project(add_radius, 35.0)
+		if (shell_add_follows_rotation) { call orbit_project_rotation_offset(add_radius, 0.8191520, 0.5735764) }
+		else { call orbit_project(add_radius, 35.0) }
 		shell_button_x = center_x + projected_x
 		shell_button_y = center_y + projected_y
 		dx = pointer_x - shell_button_x
@@ -2403,7 +2460,8 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		angle = (float)(rotation + shell_phase[shell] + position * 360 / slot_divisor + shell * 17)
 		radius = (30 + shell * shell_gap) * render_scale / 100
 		call orbit_project(radius, angle)
-		entry_render_depth[index] = projected_depth
+		target_depth = projected_depth
+		entry_render_depth[index] = target_depth
 		if (transition_progress > 0 && transition_entry == index) { entry_render_depth[index] = 1 }
 		atom_x = center_x + projected_x
 		atom_y = center_y + projected_y
@@ -2427,6 +2485,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			slot_eased_progress = slot_ease(entry_slot_progress[index])
 			atom_x = entry_slot_start_x[index] + (atom_x - entry_slot_start_x[index]) * slot_eased_progress / 100
 			atom_y = entry_slot_start_y[index] + (atom_y - entry_slot_start_y[index]) * slot_eased_progress / 100
+			entry_render_depth[index] = entry_slot_start_depth[index] + (target_depth - entry_slot_start_depth[index]) * slot_eased_progress / 100
 		}
 		entry_render_x[index] = atom_x
 		entry_render_y[index] = atom_y
@@ -2602,6 +2661,8 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 					actual_target_shell = entry_shell[drag_entry]
 					entry_slot_start_x[drag_entry] = pointer_x
 					entry_slot_start_y[drag_entry] = pointer_y
+					call orbit_project((30 + actual_target_shell * shell_gap) * render_scale / 100, drop_angle)
+					entry_slot_start_depth[drag_entry] = projected_depth
 					entry_slot_progress[drag_entry] = 0
 					entry_slot_elapsed[drag_entry] = 0
 					call align_shell_entry_to_angle(actual_target_shell, drag_entry, drop_angle)
@@ -2643,6 +2704,9 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 				entry_shell[created_entry] = target_shell
 				entry_slot_start_x[created_entry] = pointer_x
 				entry_slot_start_y[created_entry] = pointer_y
+				call orbit_project((30 + target_shell * shell_gap) * render_scale / 100, drop_angle)
+				drop_depth = projected_depth
+				entry_slot_start_depth[created_entry] = drop_depth
 				entry_slot_progress[created_entry] = 0
 				entry_slot_elapsed[created_entry] = 0
 				entry_slot_duration[created_entry] = slot_duration
@@ -2788,6 +2852,8 @@ drop_path_target = ""
 visual_fade = 100
 visual_force_opaque = false
 view_roll = -12
+# Set false to keep the shell-add + fixed while horizontal dragging rotates the atom.
+shell_add_follows_rotation = true
 deletion_ghost_count = 0
 deletion_ghost_duration = 180
 
@@ -2948,6 +3014,8 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 		}
 		if (rotating && graphics::mouse_down()) {
 			rotation += (graphics::pointer_x(explorer_window) - last_pointer_x) * 2
+			rotation %= 360
+			if (rotation < 0) { rotation += 360 }
 			tilt += graphics::pointer_y(explorer_window) - last_pointer_y
 			if (tilt > 70) { tilt = 70 }
 			if (tilt < -70) { tilt = -70 }
