@@ -20,12 +20,26 @@ array entry_slot_start_x: int[64]
 array entry_slot_start_y: int[64]
 array entry_slot_progress: int[64]
 array entry_slot_elapsed: int[64]
+array entry_slot_duration: int[64]
 array entry_name_cache: string[64]
 array entry_directory_cache: int[64]
 array entry_child_count_cache: int[64]
 array entry_position_cache: int[64]
 array shell_population_cache: int[8]
 array entry_selected: int[64]
+array entry_delete_mark: int[64]
+array entry_preserved_angle: int[64]
+array deletion_ghost_x: int[64]
+array deletion_ghost_y: int[64]
+array deletion_ghost_depth: int[64]
+array deletion_ghost_radius: int[64]
+array deletion_ghost_directory: int[64]
+array deletion_ghost_child_count: int[64]
+array deletion_ghost_phase: int[64]
+array deletion_ghost_accumulator: int[64]
+array deletion_ghost_speed: int[64]
+array deletion_ghost_age: int[64]
+array deletion_shell_anchor: int[8]
 var cached_entry_count: int
 var cached_parent_path: string
 var paused_shell: int
@@ -120,6 +134,8 @@ var hover_pause_allowed: bool
 var visual_fade: int
 var visual_force_opaque: bool
 var view_roll: int
+var deletion_ghost_count: int
+var deletion_ghost_duration: int
 
 # Placeholder visual tokens. Future asset work only needs to replace the five
 # draw_placeholder_* procedures below; filesystem and interaction code stays
@@ -227,9 +243,27 @@ proc draw_placeholder_orb(x: int, y: int, radius: int) {
 	call draw_placeholder_pixel(x - radius / 2, y - radius / 2, visual_highlight)
 }
 
+proc draw_placeholder_filled_circle(x: int, y: int, radius: int, color: int) {
+	var row: int
+	var half_width: int
+	var radicand: int
+	row = -radius
+	while (row <= radius) {
+		radicand = radius * radius - row * row
+		if (radicand < 0) { radicand = 0 }
+		half_width = (int)math::sqrt((float)radicand)
+		if (placeholder_pixel_visible(x, y + row)) {
+			call graphics::draw_line(explorer_window, x - half_width, y + row, x + half_width, y + row, placeholder_faded_color(color))
+		}
+		row += 1
+	}
+}
+
 proc draw_placeholder_nucleus(x: int, y: int, radius: int) {
-	call draw_placeholder_orb(x, y, radius)
+	call draw_placeholder_filled_circle(x, y, radius - 2, visual_surface)
+	call draw_placeholder_circle(x, y, radius, visual_outline)
 	call draw_placeholder_circle(x, y, radius - 2, visual_accent)
+	call draw_placeholder_pixel(x - radius / 2, y - radius / 2, visual_highlight)
 }
 
 proc draw_placeholder_folder(x: int, y: int, radius: int, child_count: int, orbit_phase: int) {
@@ -914,7 +948,6 @@ fn shell_population(shell: int, entry_count: int) int {
 }
 
 fn shell_slot_divisor(shell: int, population: int) int {
-	if (shell_incremental_layout[shell] != 0) { return shell_capacity }
 	if (population < 1) { return 1 }
 	return population
 }
@@ -977,6 +1010,7 @@ proc begin_slot_animation_all() {
 		entry_slot_start_y[index] = entry_render_y[index]
 		entry_slot_progress[index] = 0
 		entry_slot_elapsed[index] = 0
+		entry_slot_duration[index] = 220
 		index += 1
 	}
 }
@@ -994,7 +1028,7 @@ proc align_shell_entry_to_angle(target_shell: int, target_entry: int, target_ang
 	shell_speed[target_shell] = 0
 }
 
-proc begin_slot_animation_for_shell(target_shell: int) {
+proc begin_slot_animation_for_shell(target_shell: int, duration: int) {
 	var index: int
 	index = 0
 	while (index < cached_entry_count) {
@@ -1003,6 +1037,7 @@ proc begin_slot_animation_for_shell(target_shell: int) {
 			entry_slot_start_y[index] = entry_render_y[index]
 			entry_slot_progress[index] = 0
 			entry_slot_elapsed[index] = 0
+			entry_slot_duration[index] = duration
 		}
 		index += 1
 	}
@@ -1048,6 +1083,8 @@ proc reset_energy_shells() {
 		entry_shell[index] = index / shell_capacity
 		entry_slot_progress[index] = 100
 		entry_slot_elapsed[index] = 220
+		entry_slot_duration[index] = 220
+		entry_delete_mark[index] = 0
 		index += 1
 	}
 	shell_count = (count + shell_capacity - 1) / shell_capacity
@@ -1322,6 +1359,109 @@ proc move_dragged_entries_to_path(destination_path: string) {
 	else { call explorer_set(status_text, "Move failed") }
 }
 
+proc prepare_context_delete() {
+	var index: int
+	var shell: int
+	var population: int
+	index = 0
+	while (index < cached_entry_count) {
+		shell = entry_shell[index]
+		population = shell_population_cache[shell]
+		if (population < 1) { population = 1 }
+		entry_preserved_angle[index] = shell_phase[shell] + entry_position_cache[index] * 360 / population + shell * 17
+		while (entry_preserved_angle[index] < 0) { entry_preserved_angle[index] += 360 }
+		while (entry_preserved_angle[index] >= 360) { entry_preserved_angle[index] -= 360 }
+		entry_delete_mark[index] = 0
+		index += 1
+	}
+}
+
+proc capture_deletion_ghost(index: int) {
+	var ghost: int
+	var shell: int
+	if (deletion_ghost_count >= 64) { return }
+	ghost = deletion_ghost_count
+	shell = entry_shell[index]
+	deletion_ghost_x[ghost] = entry_render_x[index]
+	deletion_ghost_y[ghost] = entry_render_y[index]
+	deletion_ghost_depth[ghost] = entry_render_depth[index]
+	deletion_ghost_radius[ghost] = entry_node_radius[index]
+	deletion_ghost_directory[ghost] = entry_directory_cache[index]
+	deletion_ghost_child_count[ghost] = entry_child_count_cache[index]
+	deletion_ghost_phase[ghost] = rotation + shell_phase[shell] + index * 31
+	deletion_ghost_accumulator[ghost] = 0
+	deletion_ghost_speed[ghost] = shell_speed[shell]
+	deletion_ghost_age[ghost] = 0
+	deletion_ghost_count += 1
+}
+
+proc compact_deleted_entries() {
+	var read_index: int
+	var write_index: int
+	var shell: int
+	var anchor: int
+	var population: int
+	var phase: int
+	read_index = 0
+	write_index = 0
+	while (read_index < cached_entry_count) {
+		if (entry_delete_mark[read_index] == 0) {
+			entry_name_cache[write_index] = entry_name_cache[read_index]
+			entry_directory_cache[write_index] = entry_directory_cache[read_index]
+			entry_child_count_cache[write_index] = entry_child_count_cache[read_index]
+			entry_shell[write_index] = entry_shell[read_index]
+			entry_preserved_angle[write_index] = entry_preserved_angle[read_index]
+			entry_render_x[write_index] = entry_render_x[read_index]
+			entry_render_y[write_index] = entry_render_y[read_index]
+			entry_render_depth[write_index] = entry_render_depth[read_index]
+			entry_node_radius[write_index] = entry_node_radius[read_index]
+			entry_slot_start_x[write_index] = entry_render_x[read_index]
+			entry_slot_start_y[write_index] = entry_render_y[read_index]
+			entry_slot_progress[write_index] = 0
+			entry_slot_elapsed[write_index] = 0
+			entry_slot_duration[write_index] = 220
+			entry_selected[write_index] = 0
+			entry_delete_mark[write_index] = 0
+			write_index += 1
+		}
+		read_index += 1
+	}
+	cached_entry_count = write_index
+	call compact_energy_shells(cached_entry_count)
+	shell = 0
+	while (shell < 8) {
+		deletion_shell_anchor[shell] = -1
+		shell += 1
+	}
+	read_index = 0
+	while (read_index < cached_entry_count) {
+		shell = entry_shell[read_index]
+		if (deletion_shell_anchor[shell] < 0) { deletion_shell_anchor[shell] = read_index }
+		read_index += 1
+	}
+	shell = 0
+	while (shell < shell_count) {
+		anchor = deletion_shell_anchor[shell]
+		population = shell_population_cache[shell]
+		if (anchor >= 0 && population > 0) {
+			phase = entry_preserved_angle[anchor] - entry_position_cache[anchor] * 360 / population - shell * 17
+			while (phase < 0) { phase += 360 }
+			while (phase >= 360) { phase -= 360 }
+			shell_phase[shell] = phase
+		}
+		shell += 1
+	}
+	read_index = 0
+	while (read_index < cached_entry_count) {
+		shell = entry_shell[read_index]
+		entry_slot_duration[read_index] = insertion_slot_duration(shell_population_cache[shell])
+		read_index += 1
+	}
+	call clear_entry_selection()
+	selected_entry = -1
+	selection_anchor = -1
+}
+
 proc confirm_context_delete() {
 	var index: int
 	var deleted_count: int
@@ -1333,6 +1473,7 @@ proc confirm_context_delete() {
 		return
 	}
 	use_selection = entry_selected[context_entry] != 0 && selected_entry_count() > 0
+	call prepare_context_delete()
 	index = 0
 	deleted_count = 0
 	failed_count = 0
@@ -1340,13 +1481,17 @@ proc confirm_context_delete() {
 		if ((use_selection && entry_selected[index] != 0) || (!use_selection && index == context_entry)) {
 			target_path = explorer_join_path(current_path, entry_name_cache[index])
 			operation_ok = os::delete(target_path)
-			if (operation_ok) { deleted_count += 1 }
+			if (operation_ok) {
+				entry_delete_mark[index] = 1
+				call capture_deletion_ghost(index)
+				deleted_count += 1
+			}
 			else { failed_count += 1 }
 		}
 		index += 1
 	}
 	if (deleted_count > 0) {
-		call reset_energy_shells()
+		call compact_deleted_entries()
 		if (failed_count > 0) { call explorer_set(status_text, "Some selected items could not be deleted") }
 		elseif (deleted_count == 1) { call explorer_set(status_text, "Moved to Trash") }
 		else { call explorer_set(status_text, "Moved selected items to Trash") }
@@ -1919,7 +2064,7 @@ proc draw_cached_orbit_entry(index: int, center_x: int, center_y: int, area_widt
 	if (drag_entry != index && (!drag_moved || !dragged_entry_in_group(index)) && transition_scale >= 24) {
 		visual_force_opaque = transition_progress > 0 && ((!transition_committed && transition_direction > 0 && transition_entry == index) || (transition_committed && transition_direction < 0 && transition_entry == index))
 		if (entry_directory_cache[index] != 0) {
-			call draw_placeholder_folder(atom_x, atom_y, node_radius + 1, entry_child_count_cache[index], nucleus_phase * 360 / 1200 + index * 31)
+			call draw_placeholder_folder(atom_x, atom_y, node_radius + 1, entry_child_count_cache[index], rotation + shell_phase[entry_shell[index]] + index * 31)
 		}
 		else {
 			call draw_placeholder_file(atom_x, atom_y, node_radius)
@@ -1994,6 +2139,65 @@ proc draw_cached_orbit_entry(index: int, center_x: int, center_y: int, area_widt
 		name_y = label_center_y - 2
 		call draw_explorer_text_clipped(name_x, name_y, entry_name_cache[index], name_chars, name_color)
 	}
+}
+
+proc update_deletion_ghosts(elapsed: int) {
+	var read_index: int
+	var write_index: int
+	read_index = 0
+	write_index = 0
+	while (read_index < deletion_ghost_count) {
+		deletion_ghost_age[read_index] += elapsed
+		deletion_ghost_accumulator[read_index] += elapsed * deletion_ghost_speed[read_index]
+		deletion_ghost_phase[read_index] = (deletion_ghost_phase[read_index] + deletion_ghost_accumulator[read_index] / 1000) % 360
+		deletion_ghost_accumulator[read_index] %= 1000
+		if (deletion_ghost_age[read_index] < deletion_ghost_duration) {
+			deletion_ghost_x[write_index] = deletion_ghost_x[read_index]
+			deletion_ghost_y[write_index] = deletion_ghost_y[read_index]
+			deletion_ghost_depth[write_index] = deletion_ghost_depth[read_index]
+			deletion_ghost_radius[write_index] = deletion_ghost_radius[read_index]
+			deletion_ghost_directory[write_index] = deletion_ghost_directory[read_index]
+			deletion_ghost_child_count[write_index] = deletion_ghost_child_count[read_index]
+			deletion_ghost_phase[write_index] = deletion_ghost_phase[read_index]
+			deletion_ghost_accumulator[write_index] = deletion_ghost_accumulator[read_index]
+			deletion_ghost_speed[write_index] = deletion_ghost_speed[read_index]
+			deletion_ghost_age[write_index] = deletion_ghost_age[read_index]
+			write_index += 1
+		}
+		read_index += 1
+	}
+	deletion_ghost_count = write_index
+}
+
+proc draw_deletion_ghosts(front: bool, center_x: int, center_y: int) {
+	var ghost: int
+	var progress: int
+	var eased: int
+	var ghost_x: int
+	var ghost_y: int
+	var ghost_radius: int
+	var saved_fade: int
+	saved_fade = visual_fade
+	ghost = 0
+	while (ghost < deletion_ghost_count) {
+		if ((front && deletion_ghost_depth[ghost] >= 0) || (!front && deletion_ghost_depth[ghost] < 0)) {
+			progress = deletion_ghost_age[ghost] * 100 / deletion_ghost_duration
+			if (progress > 100) { progress = 100 }
+			eased = slot_ease(progress)
+			ghost_x = deletion_ghost_x[ghost] + (center_x - deletion_ghost_x[ghost]) * eased / 500
+			ghost_y = deletion_ghost_y[ghost] + (center_y - deletion_ghost_y[ghost]) * eased / 500
+			ghost_radius = deletion_ghost_radius[ghost] * (100 - eased) / 100
+			visual_fade = saved_fade * (100 - eased) / 100
+			if (ghost_radius > 0) {
+				if (deletion_ghost_directory[ghost] != 0) {
+					call draw_placeholder_folder(ghost_x, ghost_y, ghost_radius + 1, deletion_ghost_child_count[ghost], deletion_ghost_phase[ghost])
+				}
+				else { call draw_placeholder_file(ghost_x, ghost_y, ghost_radius) }
+			}
+		}
+		ghost += 1
+	}
+	visual_fade = saved_fade
 }
 
 proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
@@ -2212,8 +2416,8 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			atom_y = viewport_center_y + transition_focus_y * transition_scale * eased_progress / 10000
 		}
 		if (transition_progress == 0 && entry_slot_progress[index] < 100) {
-			slot_duration = 220
-			if (shell_incremental_layout[shell] != 0) { slot_duration = insertion_slot_duration(position + 1) }
+			slot_duration = entry_slot_duration[index]
+			if (slot_duration < 1) { slot_duration = 220 }
 			entry_slot_elapsed[index] += delta_ms
 			if (entry_slot_elapsed[index] >= slot_duration) {
 				entry_slot_elapsed[index] = slot_duration
@@ -2255,6 +2459,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		if (entry_render_depth[index] < 0) { call draw_cached_orbit_entry(index, center_x, center_y, area_width, transition_scale) }
 		index += 1
 	}
+	call draw_deletion_ghosts(false, center_x, center_y)
 	visual_force_opaque = transition_progress > 0 && ((transition_direction > 0 && transition_committed) || (transition_direction < 0 && !transition_committed))
 	call draw_placeholder_nucleus(center_x, center_y, center_radius)
 	visual_force_opaque = false
@@ -2263,6 +2468,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		if (entry_render_depth[index] >= 0) { call draw_cached_orbit_entry(index, center_x, center_y, area_width, transition_scale) }
 		index += 1
 	}
+	call draw_deletion_ghosts(true, center_x, center_y)
 	visual_fade = 100
 	dx = pointer_x - center_x
 	dy = pointer_y - center_y
@@ -2329,7 +2535,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		dy = pointer_y - drag_start_y
 		if (dx * dx + dy * dy > 9) { drag_moved = true }
 		if (entry_directory_cache[drag_entry] != 0) {
-			call draw_placeholder_folder(pointer_x, pointer_y, 5, entry_child_count_cache[drag_entry], nucleus_phase * 360 / 1200 + drag_entry * 31)
+			call draw_placeholder_folder(pointer_x, pointer_y, 5, entry_child_count_cache[drag_entry], rotation + shell_phase[entry_shell[drag_entry]] + drag_entry * 31)
 		}
 		else {
 			call draw_placeholder_file(pointer_x, pointer_y, 3)
@@ -2426,7 +2632,8 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			else { operation_ok = os::make_directory(explorer_join_path(current_path, candidate_name)) }
 			if (operation_ok) {
 				call explorer_set(status_text, xestring::concat("Added ", candidate_name))
-				if (shell_incremental_layout[target_shell] == 0) { call begin_slot_animation_for_shell(target_shell) }
+				slot_duration = insertion_slot_duration(shell_population_cache[target_shell] + 1)
+				call begin_slot_animation_for_shell(target_shell, slot_duration)
 				if (target_was_empty) { shell_incremental_layout[target_shell] = 1 }
 				created_entry = cached_entry_count
 				entry_name_cache[created_entry] = candidate_name
@@ -2438,6 +2645,8 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 				entry_slot_start_y[created_entry] = pointer_y
 				entry_slot_progress[created_entry] = 0
 				entry_slot_elapsed[created_entry] = 0
+				entry_slot_duration[created_entry] = slot_duration
+				entry_delete_mark[created_entry] = 0
 				cached_entry_count += 1
 				call rebuild_shell_layout()
 				if (target_was_empty) { call align_shell_entry_to_angle(target_shell, created_entry, drop_angle) }
@@ -2579,6 +2788,8 @@ drop_path_target = ""
 visual_fade = 100
 visual_force_opaque = false
 view_roll = -12
+deletion_ghost_count = 0
+deletion_ghost_duration = 180
 
 explorer_window.x = 66
 explorer_window.y = 44
@@ -2595,6 +2806,7 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 	if (delta_ms < 1) { delta_ms = 1 }
 	if (delta_ms > 50) { delta_ms = 50 }
 	previous_ticks = current_ticks
+	call update_deletion_ghosts(delta_ms)
 	if (rename_pointer_guard > 0) { rename_pointer_guard -= 1 }
 	animation_step = delta_ms * 100 / 220
 	if (animation_step < 1) { animation_step = 1 }
