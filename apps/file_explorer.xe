@@ -1770,9 +1770,9 @@ proc draw_viewer_content(x: int, y: int, content_width: int, content_height: int
 	if (xestring::strlen(viewer_content) == 0) {
 		index = 0
 		column = 0
-		while (index < xestring::strlen("Empty file")) {
-			call graphics::draw_char_styled(explorer_window, x + column, y, "Empty file"[index], graphics::WHITE, font_size, 0)
-			column += graphics::char_advance("Empty file"[index], font_size)
+		while (index < xestring::strlen("(Empty file.)")) {
+			call graphics::draw_char_styled(explorer_window, x + column, y, "(Empty file.)"[index], graphics::WHITE, font_size, 0)
+			column += graphics::char_advance("(Empty file.)"[index], font_size)
 			index += 1
 		}
 		return
@@ -1788,7 +1788,7 @@ proc draw_viewer_content(x: int, y: int, content_width: int, content_height: int
 			index += 1
 		}
 		elseif (code == 13) { index += 1 }
-		elseif (code == 9 || code == 32) {
+		elseif (code == 9 || code == ' ') {
 			if (code == 9) { advance = viewer_tab_advance(column, font_size) }
 			else { advance = graphics::char_advance(' ', font_size) }
 			column += advance
@@ -3061,8 +3061,8 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 			}
 			elseif (context_open && key == graphics::KEY_ESCAPE) { context_open = false }
 			elseif (delete_confirm && key == graphics::KEY_ESCAPE) { delete_confirm = false }
-			elseif (key == 43 || key == 61) { call adjust_explorer_zoom(15) }
-			elseif (key == 45) { call adjust_explorer_zoom(-15) }
+			elseif (key == '+' || key == '=') { call adjust_explorer_zoom(15) }
+			elseif (key == '-') { call adjust_explorer_zoom(-15) }
 			key = graphics::read_key()
 		}
 	}

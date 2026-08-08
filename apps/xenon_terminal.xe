@@ -332,7 +332,7 @@ proc execute_terminal_command() {
 		return
 	}
 	elseif (terminal_command == "help") {
-		call set_active_output("\nhelp - Shows this message\nclear/cls - Clears the terminal\necho - Echos the passed message\ndate - Shows the current date\ntime - Shows the current time\nuptime - Shows the resource monitor\nmonitor - Toggles the resource monitor\npwd - Prints the working directory\ndir/ls - Lists all files in working directory\nhistory - Allows history viewing\nsaved - Toggles saved commands list\nsave - Saves previous command\nabout - View terminal info\nversion - View terminal version\nwhoami - View user\nsplit - Toggle split view\ntheme - Change theme\ntext - Change text size\nexit - Exits terminal")
+		call set_active_output("\nhelp - Shows this message\nclear/cls - Clears the terminal\necho - Echos the passed message\ndate - Shows the current date\ntime - Shows the current time\nuptime - Shows the resource monitor\nmonitor on/off - Toggles the resource monitor\npwd - Prints the working directory\ndir/ls - Lists all files in working directory\nhistory - Allows history viewing\nsaved - Toggles saved commands list\nsave - Saves previous command\nabout - View terminal info\nversion - View terminal version\nwhoami - View user\nsplit - Toggle split view\ntheme xenon/amber/mono - Change theme\ntext small/large - Change text size\nexit - Exits terminal")
 	}
 	elseif (terminal_command == "clear" || terminal_command == "cls") {
 		call clear_active_output()
@@ -903,7 +903,7 @@ var command_color: int
 terminal_window.x = 44
 terminal_window.y = 34
 terminal_window.width = 300
-terminal_window.height = 210
+terminal_window.height = 230
 terminal_window.title = "Xenon Terminal"
 terminal_window.ui_scale = 1
 terminal_window.state = graphics::WINDOW_NORMAL
