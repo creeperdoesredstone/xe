@@ -18,6 +18,7 @@ array entry_slot_start_y: int[64]
 array entry_slot_progress: int[64]
 array entry_name_cache: string[64]
 array entry_directory_cache: int[64]
+array entry_child_count_cache: int[64]
 array entry_position_cache: int[64]
 array shell_population_cache: int[8]
 array entry_selected: int[64]
@@ -136,6 +137,14 @@ fn transition_ease(progress: int) int {
 	return progress * progress * (300 - 2 * progress) / 10000
 }
 
+fn slot_ease(progress: int) int {
+	var t: float
+	if (progress < 0) { progress = 0 }
+	if (progress > 100) { progress = 100 }
+	t = (float)progress / 100.0
+	return (int)(t * t * t * (t * (t * 6.0 - 15.0) + 10.0) * 100.0)
+}
+
 fn placeholder_pixel_visible(x: int, y: int) bool {
 	# Fade complete shapes in a few palette-safe temporal steps. Spatial masks
 	# produced moving rows/scanlines while the camera zoomed.
@@ -217,11 +226,41 @@ proc draw_placeholder_nucleus(x: int, y: int, radius: int) {
 	call draw_placeholder_pixel(x - orbit_x, y - orbit_y, visual_shell)
 }
 
-proc draw_placeholder_folder(x: int, y: int, radius: int) {
+proc draw_placeholder_folder(x: int, y: int, radius: int, child_count: int, orbit_phase: int) {
+	var dot_count: int
+	var dot: int
+	var dot_angle: float
+	var dot_radius: int
+	var dot_x: int
+	var dot_y: int
+	var cosine: float
+	var sine: float
+	var next_cosine: float
+	var step_cosine: float
+	var step_sine: float
 	call draw_placeholder_orb(x, y, radius)
 	call draw_placeholder_circle(x, y, radius - 2, visual_accent)
-	call draw_placeholder_pixel(x - radius - 2, y, visual_accent)
-	call draw_placeholder_pixel(x + radius + 2, y, visual_accent)
+	dot_count = child_count
+	if (dot_count < 0) { dot_count = 0 }
+	if (dot_count > 8) { dot_count = 8 }
+	dot_radius = radius + 3
+	dot = 0
+	if (dot_count > 0) {
+		dot_angle = (float)orbit_phase
+		cosine = math::cos(dot_angle)
+		sine = math::sin(dot_angle)
+		step_cosine = math::cos(360.0 / (float)dot_count)
+		step_sine = math::sin(360.0 / (float)dot_count)
+	}
+	while (dot < dot_count) {
+		dot_x = x + (int)(cosine * (float)dot_radius)
+		dot_y = y + (int)(sine * (float)dot_radius)
+		call draw_placeholder_pixel(dot_x, dot_y, visual_accent)
+		next_cosine = cosine * step_cosine - sine * step_sine
+		sine = sine * step_cosine + cosine * step_sine
+		cosine = next_cosine
+		dot += 1
+	}
 }
 
 proc draw_placeholder_file(x: int, y: int, radius: int) {
@@ -484,11 +523,57 @@ fn explorer_modal_open() bool {
 	return context_open || rename_open || delete_confirm || viewer_open || transition_progress > 0
 }
 
+fn explorer_char_advance(value: char, font_size: int) int {
+	var advance: int
+	advance = graphics::char_advance(value, font_size)
+	if (advance < 1) { advance = 1 }
+	return advance
+}
+
+fn explorer_text_width_clipped(text: string, maximum_chars: int, font_size: int) int {
+	var index: int
+	var result: int
+	index = 0
+	result = 0
+	while (index < xestring::strlen(text) && index < maximum_chars) {
+		result += explorer_char_advance(text[index], font_size)
+		index += 1
+	}
+	if (result > 0) { result -= 1 }
+	return result
+}
+
 proc draw_explorer_text_clipped(x: int, y: int, text: string, maximum_chars: int, color: int) {
 	var index: int
+	var cursor_x: int
 	index = 0
+	cursor_x = x
 	while (index < xestring::strlen(text) && index < maximum_chars) {
-		call graphics::draw_char_small(explorer_window, x + index * 4, y, text[index], color)
+		call graphics::draw_char_small(explorer_window, cursor_x, y, text[index], color)
+		cursor_x += explorer_char_advance(text[index], graphics::FONT_SMALL)
+		index += 1
+	}
+}
+
+proc draw_explorer_text_centered(x: int, y: int, area_width: int, text: string, font_size: int, color: int) {
+	var index: int
+	var visible_chars: int
+	var text_width: int
+	var text_x: int
+	var cursor_x: int
+	visible_chars = xestring::strlen(text)
+	text_width = explorer_text_width_clipped(text, visible_chars, font_size)
+	while (visible_chars > 0 && text_width > area_width - 2) {
+		visible_chars -= 1
+		text_width = explorer_text_width_clipped(text, visible_chars, font_size)
+	}
+	text_x = x + (area_width - text_width) / 2
+	if (text_x < x + 1) { text_x = x + 1 }
+	index = 0
+	cursor_x = text_x
+	while (index < visible_chars) {
+		call graphics::draw_char_styled(explorer_window, cursor_x, y, text[index], color, font_size, 0)
+		cursor_x += explorer_char_advance(text[index], font_size)
 		index += 1
 	}
 }
@@ -667,6 +752,22 @@ fn selected_entry_count() int {
 		index += 1
 	}
 	return count
+}
+
+fn first_selected_entry() int {
+	var index: int
+	index = 0
+	while (index < cached_entry_count) {
+		if (entry_selected[index] != 0) { return index }
+		index += 1
+	}
+	return -1
+}
+
+fn dragged_entry_in_group(index: int) bool {
+	if (drag_entry < 0 || index < 0 || index >= cached_entry_count) { return false }
+	if (entry_selected[drag_entry] != 0) { return entry_selected[index] != 0 }
+	return index == drag_entry
 }
 
 proc update_selection_status() {
@@ -870,6 +971,7 @@ proc begin_slot_animation_for_shell(target_shell: int) {
 proc reset_energy_shells() {
 	var count: int
 	var index: int
+	var entry_path: string
 	count = os::entry_count(current_path)
 	if (count > 64) { count = 64 }
 	cached_entry_count = count
@@ -887,8 +989,16 @@ proc reset_energy_shells() {
 	index = 0
 	while (index < count) {
 		entry_name_cache[index] = os::entry_name(current_path, index)
-		if (os::entry_is_directory(current_path, index)) { entry_directory_cache[index] = 1 }
-		else { entry_directory_cache[index] = 0 }
+		if (os::entry_is_directory(current_path, index)) {
+			entry_directory_cache[index] = 1
+			entry_path = explorer_join_path(current_path, entry_name_cache[index])
+			entry_child_count_cache[index] = os::entry_count(entry_path)
+			if (entry_child_count_cache[index] < 0) { entry_child_count_cache[index] = 0 }
+		}
+		else {
+			entry_directory_cache[index] = 0
+			entry_child_count_cache[index] = 0
+		}
 		entry_shell[index] = index / shell_capacity
 		entry_slot_progress[index] = 100
 		index += 1
@@ -1098,23 +1208,112 @@ proc commit_rename() {
 	}
 }
 
+proc move_dragged_entries_into_folder(folder_index: int) {
+	var index: int
+	var moved_count: int
+	var failed_count: int
+	var folder_name: string
+	var folder_path: string
+	var source_name: string
+	var source_path: string
+	var destination_name: string
+	if (drag_entry < 0 || drag_entry >= cached_entry_count || folder_index < 0 || folder_index >= cached_entry_count) { return }
+	if (entry_directory_cache[folder_index] == 0 || dragged_entry_in_group(folder_index)) { return }
+	folder_name = entry_name_cache[folder_index]
+	folder_path = explorer_join_path(current_path, folder_name)
+	index = 0
+	moved_count = 0
+	failed_count = 0
+	while (index < cached_entry_count) {
+		if (dragged_entry_in_group(index)) {
+			source_name = entry_name_cache[index]
+			source_path = explorer_join_path(current_path, source_name)
+			destination_name = explorer_unique_child_name(folder_path, source_name, entry_directory_cache[index] != 0)
+			operation_ok = os::rename(source_path, explorer_join_path(folder_path, destination_name))
+			if (operation_ok) { moved_count += 1 }
+			else { failed_count += 1 }
+		}
+		index += 1
+	}
+	if (moved_count > 0) {
+		call reset_energy_shells()
+		if (failed_count > 0) { call explorer_set(status_text, "Some selected items could not be moved") }
+		else { call explorer_set(status_text, xestring::concat("Moved into ", folder_name)) }
+	}
+	else { call explorer_set(status_text, "Move failed") }
+}
+
+proc move_dragged_entries_to_path(destination_path: string) {
+	var index: int
+	var moved_count: int
+	var failed_count: int
+	var source_name: string
+	var source_path: string
+	var destination_name: string
+	if (drag_entry < 0 || drag_entry >= cached_entry_count) { return }
+	if (explorer_strings_equal(current_path, destination_path)) { return }
+	index = 0
+	moved_count = 0
+	failed_count = 0
+	while (index < cached_entry_count) {
+		if (dragged_entry_in_group(index)) {
+			source_name = entry_name_cache[index]
+			source_path = explorer_join_path(current_path, source_name)
+			destination_name = explorer_unique_child_name(destination_path, source_name, entry_directory_cache[index] != 0)
+			operation_ok = os::rename(source_path, explorer_join_path(destination_path, destination_name))
+			if (operation_ok) { moved_count += 1 }
+			else { failed_count += 1 }
+		}
+		index += 1
+	}
+	if (moved_count > 0) {
+		call reset_energy_shells()
+		if (failed_count > 0) { call explorer_set(status_text, "Some selected items could not be moved") }
+		else { call explorer_set(status_text, xestring::concat("Moved to ", destination_path)) }
+	}
+	else { call explorer_set(status_text, "Move failed") }
+}
+
 proc confirm_context_delete() {
+	var index: int
+	var deleted_count: int
+	var failed_count: int
+	var use_selection: bool
 	var target_path: string
 	if (context_entry < 0 || context_entry >= cached_entry_count) {
 		delete_confirm = false
 		return
 	}
-	target_path = explorer_join_path(current_path, entry_name_cache[context_entry])
-	operation_ok = os::delete(target_path)
-	if (operation_ok) {
-		call explorer_set(status_text, "Moved to Trash")
+	use_selection = entry_selected[context_entry] != 0 && selected_entry_count() > 0
+	index = 0
+	deleted_count = 0
+	failed_count = 0
+	while (index < cached_entry_count) {
+		if ((use_selection && entry_selected[index] != 0) || (!use_selection && index == context_entry)) {
+			target_path = explorer_join_path(current_path, entry_name_cache[index])
+			operation_ok = os::delete(target_path)
+			if (operation_ok) { deleted_count += 1 }
+			else { failed_count += 1 }
+		}
+		index += 1
+	}
+	if (deleted_count > 0) {
 		call reset_energy_shells()
-		selected_entry = -1
+		if (failed_count > 0) { call explorer_set(status_text, "Some selected items could not be deleted") }
+		elseif (deleted_count == 1) { call explorer_set(status_text, "Moved to Trash") }
+		else { call explorer_set(status_text, "Moved selected items to Trash") }
 	}
 	else {
 		call explorer_set(status_text, "Delete failed")
 	}
 	delete_confirm = false
+	context_open = false
+	context_entry = -1
+}
+
+proc delete_dragged_entries() {
+	context_entry = drag_entry
+	call confirm_context_delete()
 }
 
 proc draw_breadcrumbs(x: int, y: int, area_width: int) {
@@ -1142,7 +1341,7 @@ proc draw_breadcrumbs(x: int, y: int, area_width: int) {
 			call explorer_set(drop_path_target, ".")
 		}
 		call graphics::fill_rect(explorer_window, cursor_x, y, 14, 9, drop_color)
-		call graphics::draw_text(explorer_window, cursor_x + 4, y + 1, "/", visual_outline)
+		call draw_explorer_text_centered(cursor_x, y + 1, 14, "/", graphics::FONT_NORMAL, visual_outline)
 	}
 	elseif (!explorer_modal_open()) {
 		if (graphics::button_flat(explorer_window, cursor_x, y, 14, 9, "/", graphics::COLOR_8)) {
@@ -1154,7 +1353,7 @@ proc draw_breadcrumbs(x: int, y: int, area_width: int) {
 	}
 	else {
 		call graphics::fill_rect(explorer_window, cursor_x, y, 14, 9, visual_surface)
-		call graphics::draw_text(explorer_window, cursor_x + 4, y + 1, "/", visual_outline)
+		call draw_explorer_text_centered(cursor_x, y + 1, 14, "/", graphics::FONT_NORMAL, visual_outline)
 	}
 	cursor_x += 16
 	if (!explorer_strings_equal(current_path, ".")) {
@@ -1168,7 +1367,7 @@ proc draw_breadcrumbs(x: int, y: int, area_width: int) {
 					call xestring::append_char(segment, current_path[start])
 					start += 1
 				}
-				segment_width = xestring::strlen(segment) * 6 + 8
+				segment_width = explorer_text_width_clipped(segment, xestring::strlen(segment), graphics::FONT_NORMAL) + 8
 				if (dragging_path) {
 					drop_color = visual_surface
 					if (index < path_length && pointer_x >= cursor_x && pointer_x < cursor_x + segment_width && pointer_y >= y && pointer_y < y + 9) {
@@ -1178,7 +1377,7 @@ proc draw_breadcrumbs(x: int, y: int, area_width: int) {
 						call explorer_set(drop_path_target, destination)
 					}
 					call graphics::fill_rect(explorer_window, cursor_x, y, segment_width, 9, drop_color)
-					call graphics::draw_text(explorer_window, cursor_x + 4, y + 1, segment, visual_outline)
+					call draw_explorer_text_centered(cursor_x, y + 1, segment_width, segment, graphics::FONT_NORMAL, visual_outline)
 				}
 				elseif (!explorer_modal_open()) {
 					if (graphics::button_flat(explorer_window, cursor_x, y, segment_width, 9, segment, graphics::COLOR_8)) {
@@ -1191,7 +1390,7 @@ proc draw_breadcrumbs(x: int, y: int, area_width: int) {
 				}
 				else {
 					call graphics::fill_rect(explorer_window, cursor_x, y, segment_width, 9, visual_surface)
-					call graphics::draw_text(explorer_window, cursor_x + 4, y + 1, segment, visual_outline)
+					call draw_explorer_text_centered(cursor_x, y + 1, segment_width, segment, graphics::FONT_NORMAL, visual_outline)
 				}
 				cursor_x += segment_width + 2
 				start = index + 1
@@ -1460,13 +1659,24 @@ proc draw_context_menu() {
 		context_open = false
 		return
 	}
-	if (graphics::button_flat(explorer_window, context_x + 2, context_y + 10, menu_width - 4, 8, "Rename", visual_surface)) {
-		call begin_rename(context_entry)
-		return
+	if (selected_entry_count() == 1) {
+		if (graphics::button_flat(explorer_window, context_x + 2, context_y + 10, menu_width - 4, 8, "Rename", visual_surface)) {
+			call begin_rename(context_entry)
+			return
+		}
+	}
+	else {
+		call graphics::fill_rect(explorer_window, context_x + 2, context_y + 10, menu_width - 4, 8, visual_surface)
+		call draw_explorer_text_centered(context_x + 2, context_y + 11, menu_width - 4, "Rename", graphics::FONT_NORMAL, visual_shell)
 	}
 	if (graphics::button_flat(explorer_window, context_x + 2, context_y + 19, menu_width - 4, 8, "Delete", graphics::COLOR_4)) {
-		delete_confirm = true
-		context_open = false
+		if ((graphics::modifiers() & graphics::MOD_SHIFT) != 0) {
+			call confirm_context_delete()
+		}
+		else {
+			delete_confirm = true
+			context_open = false
+		}
 	}
 }
 
@@ -1560,7 +1770,12 @@ proc draw_delete_dialog() {
 	if (panel_y < 3) { panel_y = 3 }
 	call graphics::fill_rect(explorer_window, panel_x, panel_y, panel_width, 38, visual_surface)
 	call graphics::draw_rect(explorer_window, panel_x, panel_y, panel_width, 38, visual_accent)
-	call graphics::draw_text_small(explorer_window, panel_x + 4, panel_y + 5, "Move this item to Trash?", visual_highlight)
+	if (selected_entry_count() > 1) {
+		call graphics::draw_text_small(explorer_window, panel_x + 4, panel_y + 5, "Move selected items to Trash?", visual_highlight)
+	}
+	else {
+		call graphics::draw_text_small(explorer_window, panel_x + 4, panel_y + 5, "Move this item to Trash?", visual_highlight)
+	}
 	if (graphics::button_flat(explorer_window, panel_x + 4, panel_y + 23, (panel_width - 12) / 2, 10, "Delete", graphics::COLOR_4)) {
 		call confirm_context_delete()
 	}
@@ -1600,8 +1815,8 @@ proc draw_explorer_sidebar(x: int, y: int, max_height: int) {
 		else {
 			call graphics::fill_rect(explorer_window, x + 3, y + 12, sidebar_width - 6, 10, surface)
 			call graphics::fill_rect(explorer_window, x + 3, y + 23, sidebar_width - 6, 10, surface)
-			call draw_explorer_text_clipped(x + 8, y + 14, "New file", (sidebar_width - 12) / 4, visual_outline)
-			call draw_explorer_text_clipped(x + 8, y + 25, "New folder", (sidebar_width - 12) / 4, visual_outline)
+			call draw_explorer_text_centered(x + 3, y + 13, sidebar_width - 6, "New file", graphics::FONT_NORMAL, visual_outline)
+			call draw_explorer_text_centered(x + 3, y + 24, sidebar_width - 6, "New folder", graphics::FONT_NORMAL, visual_outline)
 		}
 		pointer_x = graphics::pointer_x(explorer_window)
 		pointer_y = graphics::pointer_y(explorer_window)
@@ -1614,7 +1829,7 @@ proc draw_explorer_sidebar(x: int, y: int, max_height: int) {
 		danger_color = surface
 		if (drag_entry >= 0 && graphics::pointer_x(explorer_window) >= x + 3 && graphics::pointer_x(explorer_window) < x + sidebar_width - 3 && graphics::pointer_y(explorer_window) >= y + 38 && graphics::pointer_y(explorer_window) < y + 48) { danger_color = graphics::COLOR_4 }
 		call graphics::fill_rect(explorer_window, x + 3, y + 38, sidebar_width - 6, 10, danger_color)
-		call draw_explorer_text_clipped(x + 8, y + 40, "Trash (Drag)", (sidebar_width - 12) / 4, visual_outline)
+		call draw_explorer_text_centered(x + 3, y + 39, sidebar_width - 6, "Trash (Drag)", graphics::FONT_NORMAL, visual_outline)
 		if (sidebar_progress >= 90 && max_height >= 61) {
 			call graphics::draw_text_small(explorer_window, x + 3, y + 53, "Orbit", visual_outline)
 			if (interactive) {
@@ -1858,9 +2073,9 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			atom_y = viewport_center_y + transition_focus_y * transition_scale * eased_progress / 10000
 		}
 		if (transition_progress == 0 && entry_slot_progress[index] < 100) {
-			entry_slot_progress[index] += animation_step * 2
+			entry_slot_progress[index] += animation_step
 			if (entry_slot_progress[index] > 100) { entry_slot_progress[index] = 100 }
-			slot_eased_progress = transition_ease(entry_slot_progress[index])
+			slot_eased_progress = slot_ease(entry_slot_progress[index])
 			atom_x = entry_slot_start_x[index] + (atom_x - entry_slot_start_x[index]) * slot_eased_progress / 100
 			atom_y = entry_slot_start_y[index] + (atom_y - entry_slot_start_y[index]) * slot_eased_progress / 100
 		}
@@ -1870,10 +2085,10 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		if (node_radius < 2) { node_radius = 2 }
 		if (transition_progress == 0 && node_radius > 6) { node_radius = 6 }
 		elseif (transition_progress > 0 && node_radius > 12) { node_radius = 12 }
-		if (drag_entry != index && transition_scale >= 24) {
+		if (drag_entry != index && (!drag_moved || !dragged_entry_in_group(index)) && transition_scale >= 24) {
 			visual_force_opaque = transition_progress > 0 && ((!transition_committed && transition_direction > 0 && transition_entry == index) || (transition_committed && transition_direction < 0 && transition_entry == index))
 			if (entry_directory_cache[index] != 0) {
-				call draw_placeholder_folder(atom_x, atom_y, node_radius + 1)
+				call draw_placeholder_folder(atom_x, atom_y, node_radius + 1, entry_child_count_cache[index], nucleus_phase * 360 / 1200 + index * 31)
 			}
 			else {
 				call draw_placeholder_file(atom_x, atom_y, node_radius)
@@ -1890,7 +2105,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		if (distance_squared < hit_radius * hit_radius && pointer_x > x + sidebar_width && !shell_button_hovered && !zoom_controls_hovered && (drag_entry != index || !drag_moved)) {
 			hovered_entry = index
 			hovered_shell = shell
-			if (drag_entry >= 0 && drag_moved && drag_entry != index && entry_directory_cache[index] != 0) {
+			if (drag_entry >= 0 && drag_moved && !dragged_entry_in_group(index) && entry_directory_cache[index] != 0) {
 				drop_folder_entry = index
 				call graphics::draw_circle(explorer_window, atom_x, atom_y, node_radius + 6, graphics::COLOR_14)
 			}
@@ -1904,7 +2119,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 				drag_moved = false
 			}
 		}
-		if (transition_progress == 0 && drag_entry != index) {
+		if (transition_progress == 0 && drag_entry != index && (!drag_moved || !dragged_entry_in_group(index))) {
 			label_full_chars = xestring::strlen(entry_name_cache[index])
 			if (label_full_chars > (area_width - sidebar_width - 8) / 4) { label_full_chars = (area_width - sidebar_width - 8) / 4 }
 			if (label_full_chars < 1) { label_full_chars = 1 }
@@ -1919,7 +2134,8 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 				name_chars = label_full_chars
 				name_color = visual_highlight
 			}
-			name_width = name_chars * 4
+			name_width = explorer_text_width_clipped(entry_name_cache[index], name_chars, graphics::FONT_SMALL)
+			if (name_width < 1) { name_width = 1 }
 			label_dx = atom_x - center_x
 			label_dy = atom_y - center_y
 			label_length = math::sqrt((float)(label_dx * label_dx + label_dy * label_dy))
@@ -1992,24 +2208,38 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	if (hovered_shell < 0 && best_distance <= 17 && projected_distance > base_center_radius + 4 && pointer_x > x + sidebar_width) {
 		hovered_shell = closest_shell
 	}
-	if (interaction_allowed && graphics::right_mouse_pressed() && hovered_entry >= 0) {
-		context_entry = hovered_entry
-		if (entry_selected[hovered_entry] == 0) { call select_only_entry(hovered_entry) }
-		else { selected_entry = hovered_entry }
-		context_x = pointer_x
-		context_y = pointer_y
-		context_open = true
-		last_click_entry = -1
+	if (interaction_allowed && graphics::right_mouse_pressed() && (hovered_entry >= 0 || (selected_entry_count() > 0 && pointer_x > x + sidebar_width && pointer_x < x + area_width && pointer_y > y && pointer_y < y + area_height))) {
+		if (hovered_entry >= 0) {
+			context_entry = hovered_entry
+			if (entry_selected[hovered_entry] == 0) {
+				call select_only_entry(hovered_entry)
+				call update_selection_status()
+			}
+			else { selected_entry = hovered_entry }
+		}
+		else {
+			context_entry = first_selected_entry()
+			selected_entry = context_entry
+		}
+		if (context_entry >= 0) {
+			context_x = pointer_x
+			context_y = pointer_y
+			context_open = true
+			last_click_entry = -1
+		}
 	}
 	if (drag_entry >= 0 && graphics::mouse_down()) {
 		dx = pointer_x - drag_start_x
 		dy = pointer_y - drag_start_y
 		if (dx * dx + dy * dy > 9) { drag_moved = true }
 		if (entry_directory_cache[drag_entry] != 0) {
-			call draw_placeholder_folder(pointer_x, pointer_y, 5)
+			call draw_placeholder_folder(pointer_x, pointer_y, 5, entry_child_count_cache[drag_entry], nucleus_phase * 360 / 1200 + drag_entry * 31)
 		}
 		else {
 			call draw_placeholder_file(pointer_x, pointer_y, 3)
+		}
+		if (entry_selected[drag_entry] != 0 && selected_entry_count() > 1) {
+			call graphics::draw_int_small(explorer_window, pointer_x + 7, pointer_y - 8, selected_entry_count(), visual_highlight)
 		}
 	}
 	if (drag_entry >= 0 && graphics::mouse_released()) {
@@ -2034,18 +2264,13 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			}
 		}
 		elseif (pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 38 && pointer_y < y + 48 && sidebar_progress >= 70) {
-			operation_ok = os::delete(explorer_join_path(current_path, entry_name_cache[drag_entry]))
-			call explorer_set(status_text, "Moved to Trash")
-			if (operation_ok) {
-				call reset_energy_shells()
-				selected_entry = -1
-			}
+			call delete_dragged_entries()
 		}
 		elseif (drag_moved && drop_path_active) {
-			call move_entry_to_path(drag_entry, drop_path_target)
+			call move_dragged_entries_to_path(drop_path_target)
 		}
 		elseif (drag_moved && drop_folder_entry >= 0) {
-			call move_entry_into_folder(drag_entry, drop_folder_entry)
+			call move_dragged_entries_into_folder(drop_folder_entry)
 		}
 		elseif (drag_moved) {
 			target_shell = drop_target_shell
@@ -2083,7 +2308,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			call draw_placeholder_file(pointer_x, pointer_y, 3)
 		}
 		else {
-			call draw_placeholder_folder(pointer_x, pointer_y, 5)
+			call draw_placeholder_folder(pointer_x, pointer_y, 5, 0, nucleus_phase * 360 / 1200)
 		}
 	}
 	if (drag_template > 0 && graphics::mouse_released()) {
@@ -2099,6 +2324,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 				entry_name_cache[created_entry] = candidate_name
 				if (drag_template == 2) { entry_directory_cache[created_entry] = 1 }
 				else { entry_directory_cache[created_entry] = 0 }
+				entry_child_count_cache[created_entry] = 0
 				entry_shell[created_entry] = target_shell
 				entry_slot_start_x[created_entry] = pointer_x
 				entry_slot_start_y[created_entry] = pointer_y
@@ -2347,7 +2573,7 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 				else {
 					call graphics::fill_rect(explorer_window, 3, 2, 32, 9, visual_surface)
 				}
-				call graphics::draw_text(explorer_window, 7, 3, "Back", visual_outline)
+				call draw_explorer_text_centered(3, 3, 32, "Back", graphics::FONT_NORMAL, visual_outline)
 			}
 			elseif (!explorer_modal_open() && !explorer_strings_equal(current_path, ".")) {
 				if (graphics::button_flat(explorer_window, 3, 2, 32, 9, "Back", visual_surface)) {
@@ -2356,7 +2582,7 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 			}
 			else {
 				call graphics::fill_rect(explorer_window, 3, 2, 32, 9, visual_surface)
-				call graphics::draw_text(explorer_window, 7, 3, "Back", visual_outline)
+				call draw_explorer_text_centered(3, 3, 32, "Back", graphics::FONT_NORMAL, visual_outline)
 			}
 			call draw_breadcrumbs(37, 2, width - 40)
 			call draw_file_atom(3, 12, width - 6, height - 24)

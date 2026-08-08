@@ -1688,6 +1688,18 @@ proc ide_reset_explorer_expansion() {
 	explorer_scroll = 0
 }
 
+proc ide_confirm_file_delete() {
+	operation_ok = os::delete(file_menu_path)
+	if (operation_ok) {
+		call ide_reset_explorer_expansion()
+		call ide_report("Moved to trash", false)
+	}
+	else {
+		call ide_report("Delete failed", true)
+	}
+	delete_confirm = false
+}
+
 proc ide_update_paths_after_rename(old_path: string, new_path: string) {
 	var slot: int
 	var index: int
@@ -2152,8 +2164,9 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 			call ide_begin_rename(file_menu_path)
 		}
 		if (file_menu_guard == 0 && graphics::button_flat(ide_window, menu_x + 1, y + 18, menu_width - 2, 7, "Delete", graphics::COLOR_4)) {
-			delete_confirm = true
 			file_menu_open = false
+			if ((graphics::modifiers() & graphics::MOD_SHIFT) != 0) { call ide_confirm_file_delete() }
+			else { delete_confirm = true }
 		}
 		if (file_menu_guard == 0 && graphics::button_flat(ide_window, menu_x + 1, y + 26, menu_width - 2, 7, "Close", graphics::COLOR_1)) { file_menu_open = false }
 		if (file_menu_guard > 0) {
@@ -3207,15 +3220,7 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 			call graphics::fill_rect(ide_window, width / 2 - 62, height / 2 - 18, 124, 36, graphics::COLOR_8)
 			call graphics::draw_text_small(ide_window, width / 2 - 56, height / 2 - 12, "Delete selected item?", graphics::WHITE)
 			if (graphics::button_flat(ide_window, width / 2 - 54, height / 2 + 2, 48, 7, "Delete", graphics::COLOR_4)) {
-				operation_ok = os::delete(file_menu_path)
-				if (operation_ok) {
-					call ide_reset_explorer_expansion()
-					call ide_report("Moved to trash", false)
-				}
-				else {
-					call ide_report("Delete failed", true)
-				}
-				delete_confirm = false
+				call ide_confirm_file_delete()
 			}
 			if (graphics::button_flat(ide_window, width / 2 + 6, height / 2 + 2, 48, 7, "Cancel", graphics::COLOR_1)) { delete_confirm = false }
 		}
