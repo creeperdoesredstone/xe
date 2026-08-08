@@ -116,6 +116,19 @@ def run(
 		optimized_asm = optimize(assembly.value, DEFAULT_PASSES)
 		formatted_asm = format_instructions(optimized_asm)
 
+		stem = Path(fn).stem
+		
+		if not stem.startswith("<"):
+			outdir = Path("asm")
+			outdir.mkdir(exist_ok=True)
+		
+			with open(
+				outdir / f"{stem}.xas",
+				"w",
+				encoding="utf-8",
+			) as f:
+				f.write(formatted_asm)
+
 		bytecode = assemble(fn, formatted_asm)
 		if bytecode.error:
 			return None, bytecode.error, None

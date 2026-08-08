@@ -332,7 +332,7 @@ proc execute_terminal_command() {
 		return
 	}
 	elseif (terminal_command == "help") {
-		call set_active_output("help clear cls echo date time uptime pwd dir ls history saved save about version whoami split monitor theme text exit")
+		call set_active_output("\nhelp - Shows this message\nclear/cls - Clears the terminal\necho - Echos the passed message\ndate - Shows the current date\ntime - Shows the current time\nuptime - Shows the resource monitor\nmonitor - Toggles the resource monitor\npwd - Prints the working directory\ndir/ls - Lists all files in working directory\nhistory - Allows history viewing\nsaved - Toggles saved commands list\nsave - Saves previous command\nabout - View terminal info\nversion - View terminal version\nwhoami - View user\nsplit - Toggle split view\ntheme - Change theme\ntext - Change text size\nexit - Exits terminal")
 	}
 	elseif (terminal_command == "clear" || terminal_command == "cls") {
 		call clear_active_output()
@@ -544,35 +544,53 @@ proc erase_terminal_character() {
 	}
 }
 
-proc draw_terminal_line(x: int, y: int, width: int, text: string, color: int) {
+proc draw_terminal_line(x: int, y: int, width: int, text: string) {
 	var length: int
 	var visible: int
 	var start: int
 	var index: int
+	var draw_x: int
+	var color: int
+	
 	length = xestring::strlen(text)
 	visible = (width - 8) / 6
 	start = 0
 	if (length > visible) { start = length - visible }
 	index = start
+	draw_x = x + 4
+	color = graphics::COLOR_14
+	
 	while (index < length) {
-		call graphics::draw_char(terminal_window, x + 4 + (index - start) * 6, y, text[index], color)
+		call graphics::draw_char(terminal_window, draw_x, y, text[index], color)
 		index += 1
+		draw_x += 6
+		
+		if (text[index] == ' ') { color = command_color }
 	}
 }
 
-proc draw_terminal_line_small(x: int, y: int, width: int, text: string, color: int) {
+proc draw_terminal_line_small(x: int, y: int, width: int, text: string) {
 	var length: int
 	var visible: int
 	var start: int
 	var index: int
+	var draw_x: int
+	var color: int
+	
 	length = xestring::strlen(text)
 	visible = (width - 4) / 4
 	start = 0
 	if (length > visible) { start = length - visible }
 	index = start
+	draw_x = x + 2
+	color = graphics::COLOR_14
+	
 	while (index < length) {
-		call graphics::draw_char_small(terminal_window, x + 2 + (index - start) * 4, y, text[index], color)
+		call graphics::draw_char_small(terminal_window, draw_x, y, text[index], color)
 		index += 1
+		draw_x += 4
+		
+		if (text[index] == ' ') { color = command_color }
 	}
 }
 
@@ -1007,8 +1025,8 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 		if (active_terminal_split()) { view_label = "Split view" }
 		monitor_label = "Monitor off"
 		if (active_terminal_monitor()) { monitor_label = "Monitor on" }
-		text_label = "Text small"
-		if (active_terminal_text_large()) { text_label = "Text large" }
+		text_label = "Small text"
+		if (active_terminal_text_large()) { text_label = "Large text" }
 		theme_label = "Theme Xenon"
 		if (tab_theme[active_tab] == 1) { theme_label = "Theme Amber" }
 		elseif (tab_theme[active_tab] == 2) { theme_label = "Theme Mono" }
@@ -1110,12 +1128,12 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 		if (terminal_selected_all) { command_color = graphics::COLOR_14 }
 		if (active_terminal_text_large() && command_height >= 9) {
 			call graphics::draw_text(terminal_window, 7, command_y + 2, ">", accent_color)
-			call draw_terminal_line(12, command_y + 2, command_width - 10, terminal_command, command_color)
+			call draw_terminal_line(12, command_y + 2, command_width - 10, terminal_command)
 			maximum_command_chars = (command_width - 18) / 6
 		}
 		else {
-			call graphics::draw_text_small(terminal_window, 7, command_y + 1, ">", accent_color)
-			call draw_terminal_line_small(12, command_y + 1, command_width - 10, terminal_command, command_color)
+			call graphics::draw_text_small(terminal_window, 7, command_y + 2, ">", accent_color)
+			call draw_terminal_line_small(12, command_y + 2, command_width - 10, terminal_command)
 			maximum_command_chars = (command_width - 14) / 4
 		}
 		if (maximum_command_chars < 0) { maximum_command_chars = 0 }
