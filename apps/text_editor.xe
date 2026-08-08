@@ -16,6 +16,7 @@ var compile_pending: bool
 var compile_ok: bool
 var selected_all: bool
 var cursor_index: int
+var cursor_style: int
 var selection_start: int
 var selection_end: int
 var selection_dragging: bool
@@ -47,6 +48,11 @@ var file_dialog_name_focused: bool
 var file_dialog_replace_name: bool
 var editor_scroll_delta: int
 
+enum class CursorStyle {
+	LINE,
+	BLOCK
+}
+
 proc clear_text(target: string) {
 	if (xestring::strlen(target) > 0) {
 		target[0] = '\0'
@@ -64,7 +70,7 @@ fn editor_strings_equal(left: string, right: string) bool {
 	if (xestring::strlen(left) != xestring::strlen(right)) { return false }
 	index = 0
 	while (index < xestring::strlen(left)) {
-		if ((int)(left[index]) != (int)(right[index])) { return false }
+		if (left[index] != right[index]) { return false }
 		index += 1
 	}
 	return true
@@ -81,7 +87,7 @@ fn editor_parent_path(path: string) string {
 	var copy_index: int
 	result = ""
 	index = xestring::strlen(path) - 1
-	while (index >= 0 && (int)(path[index]) != 47) { index -= 1 }
+	while (index >= 0 && path[index] != '/') { index -= 1 }
 	if (index < 0) {
 		call xestring::append(result, ".")
 		return result
@@ -100,7 +106,7 @@ fn editor_basename(path: string) string {
 	var index: int
 	result = ""
 	index = xestring::strlen(path) - 1
-	while (index >= 0 && (int)(path[index]) != 47) { index -= 1 }
+	while (index >= 0 && path[index] != '/') { index -= 1 }
 	index += 1
 	while (index < xestring::strlen(path)) {
 		call xestring::append_char(result, path[index])
@@ -111,12 +117,12 @@ fn editor_basename(path: string) string {
 
 fn editor_valid_filename(name: string) bool {
 	var index: int
-	var code: int
+	var code: char
 	if (xestring::strlen(name) == 0 || editor_strings_equal(name, ".") || editor_strings_equal(name, "..")) { return false }
 	index = 0
 	while (index < xestring::strlen(name)) {
-		code = (int)(name[index])
-		if (code == 47 || code == 92 || code < 32) { return false }
+		code = name[index]
+		if (code == '/' || code == '\\' || code < ' ') { return false }
 		index += 1
 	}
 	return true
@@ -414,7 +420,7 @@ fn editor_line_count() int {
 	index = 0
 	count = 1
 	while (index < xestring::strlen(editor_text)) {
-		if ((int)(editor_text[index]) == 10) { count += 1 }
+		if (editor_text[index] == 10) { count += 1 }
 		index += 1
 	}
 	return count
@@ -433,8 +439,8 @@ fn editor_last_column() int {
 	index = 0
 	column = 0
 	while (index < xestring::strlen(editor_text)) {
-		if ((int)(editor_text[index]) == 10) { column = 0 }
-		elseif ((int)(editor_text[index]) == 9) { column += editor_tab_advance(column) }
+		if (editor_text[index] == 10) { column = 0 }
+		elseif (editor_text[index] == 9) { column += editor_tab_advance(column) }
 		else { column += graphics::char_advance(editor_text[index], effective_font_size) }
 		index += 1
 	}
@@ -447,7 +453,7 @@ fn editor_cursor_line() int {
 	index = 0
 	line = 0
 	while (index < cursor_index && index < xestring::strlen(editor_text)) {
-		if ((int)(editor_text[index]) == 10) { line += 1 }
+		if (editor_text[index] == 10) { line += 1 }
 		index += 1
 	}
 	return line
@@ -459,8 +465,8 @@ fn editor_cursor_column() int {
 	index = 0
 	column = 0
 	while (index < cursor_index && index < xestring::strlen(editor_text)) {
-		if ((int)(editor_text[index]) == 10) { column = 0 }
-		elseif ((int)(editor_text[index]) == 9) { column += editor_tab_advance(column) }
+		if (editor_text[index] == 10) { column = 0 }
+		elseif (editor_text[index] == 9) { column += editor_tab_advance(column) }
 		else { column += graphics::char_advance(editor_text[index], effective_font_size) }
 		index += 1
 	}
@@ -626,10 +632,13 @@ proc draw_editor_source(x: int, y: int, draw_width: int, draw_height: int) {
 	var visible_width: int
 	var visible_rows: int
 	var color: int
+	var current_char: char
 	var in_string: bool
 	var in_comment: bool
+	var in_char: bool
 	var cursor_x: int
 	var cursor_y: int
+	var cursor_size: int
 	var cursor_found: bool
 	var text_end_line: int
 	var text_end_column: int
@@ -641,12 +650,14 @@ proc draw_editor_source(x: int, y: int, draw_width: int, draw_height: int) {
 	var advance: int
 	var selection_x: int
 	var selection_width: int
+
 	row_height = editor_row_height()
 	gutter = editor_gutter_width()
 	visible_width = draw_width - gutter
 	visible_rows = draw_height / row_height
 	if (visible_width < 1) { visible_width = 1 }
 	if (visible_rows < 1) { visible_rows = 1 }
+
 	index = 0
 	line = 0
 	column = 0
@@ -655,22 +666,26 @@ proc draw_editor_source(x: int, y: int, draw_width: int, draw_height: int) {
 	cursor_found = false
 	selection_begin = editor_selection_begin()
 	selection_finish = editor_selection_finish()
+
 	in_string = false
 	in_comment = false
+	in_char = false
+
 	while (index < xestring::strlen(editor_text)) {
+		current_char = editor_text[index]
 		if (index == cursor_index) {
 			cursor_x = column
 			cursor_y = line
 			cursor_found = true
 		}
-		if ((int)(editor_text[index]) == 10) {
+		if (current_char == 10) {
 			line += 1
 			column = 0
 			in_string = false
 			in_comment = false
 		}
 		else {
-			if ((int)(editor_text[index]) == 9) {
+			if (current_char == 9) {
 				advance = editor_tab_advance(column)
 				if (line >= scroll_line && line < scroll_line + visible_rows && column + advance > scroll_column && column < scroll_column + visible_width && index >= selection_begin && index < selection_finish) {
 					selection_x = column - scroll_column
@@ -682,17 +697,19 @@ proc draw_editor_source(x: int, y: int, draw_width: int, draw_height: int) {
 				column += advance
 			}
 			else {
-				if ((int)(editor_text[index]) == 35 && !in_string) { in_comment = true }
-				if ((int)(editor_text[index]) == 34 && !in_comment) { in_string = !in_string }
-				advance = graphics::char_advance(editor_text[index], effective_font_size)
+				if (current_char == '#' && !in_string) { in_comment = true }
+				if (current_char == '"' && !in_comment && !in_char) { in_string = !in_string }
+				if (current_char == '\'' && !in_string && !in_comment) { in_char = !in_char }
+				advance = graphics::char_advance(current_char, effective_font_size)
 				if (line >= scroll_line && line < scroll_line + visible_rows && column + advance > scroll_column && column < scroll_column + visible_width) {
 					color = graphics::WHITE
 					if (xe_mode) {
 						color = graphics::COLOR_10
 						if (in_comment) { color = graphics::COLOR_8 }
-						elseif (in_string || (int)(editor_text[index]) == 34) { color = graphics::COLOR_11 }
-						elseif ((int)(editor_text[index]) >= 48 && (int)(editor_text[index]) <= 57) { color = graphics::COLOR_14 }
-						elseif ((int)(editor_text[index]) == 35 || (int)(editor_text[index]) == 60 || (int)(editor_text[index]) == 62) { color = graphics::COLOR_13 }
+						elseif (in_string || editor_text[index] == '"') { color = graphics::COLOR_11 }
+						elseif (in_char || editor_text[index] == '\'') { color = graphics::COLOR_12 }
+						elseif (current_char >= '0' && current_char <= '9') { color = graphics::COLOR_14 }
+						elseif (current_char == '!' || (current_char >= '%' && current_char <= '/') || (current_char >= ':' && current_char <= '>') || (current_char >= '[' && current_char <= '^') || (current_char >= '{' && current_char <= '~')) { color = graphics::COLOR_13 }
 					}
 					if (index >= selection_begin && index < selection_finish) {
 						selection_x = column - scroll_column
@@ -702,7 +719,7 @@ proc draw_editor_source(x: int, y: int, draw_width: int, draw_height: int) {
 						if (selection_width > 0) { call graphics::fill_rect(editor_window, x + gutter + selection_x, y + (line - scroll_line) * row_height, selection_width, row_height, graphics::COLOR_5) }
 						color = graphics::WHITE
 					}
-					if (column >= scroll_column) { call draw_editor_character(x + gutter + column - scroll_column, y + (line - scroll_line) * row_height, editor_text[index], color) }
+					if (column >= scroll_column) { call draw_editor_character(x + gutter + column - scroll_column, y + (line - scroll_line) * row_height, current_char, color) }
 				}
 				column += advance
 			}
@@ -726,7 +743,14 @@ proc draw_editor_source(x: int, y: int, draw_width: int, draw_height: int) {
 		call draw_error_marker(x, y, draw_width, error_row * row_height, gutter)
 	}
 	if (cursor_found && !editor_has_selection() && cursor_y >= scroll_line && cursor_y < scroll_line + visible_rows && cursor_x >= scroll_column && cursor_x <= scroll_column + visible_width && (current_ticks / 450) % 2 == 0) {
-		call graphics::draw_line(editor_window, x + gutter + cursor_x - scroll_column, y + (cursor_y - scroll_line) * row_height, x + gutter + cursor_x - scroll_column, y + (cursor_y - scroll_line) * row_height + row_height - 2, graphics::COLOR_13)
+		if (cursor_style == CursorStyle.LINE) {
+			call graphics::draw_line(editor_window, x + gutter + cursor_x - scroll_column, y + (cursor_y - scroll_line) * row_height, x + gutter + cursor_x - scroll_column, y + (cursor_y - scroll_line) * row_height + row_height - 2, graphics::COLOR_13)
+		} else {
+			if (font_size == graphics::FONT_SMALL) { cursor_size = 3 }
+			elseif (font_size == graphics::FONT_LARGE) { cursor_size = 10 }
+			else { cursor_size = 5 }
+			call graphics::fill_rect(editor_window, x + gutter + cursor_x - scroll_column, y + (cursor_y - scroll_line) * row_height, cursor_size, row_height, graphics::COLOR_13)
+		}	
 	}
 }
 
@@ -745,15 +769,15 @@ fn editor_index_at(pointer_x: int, pointer_y: int, x: int, y: int) int {
 	line = 0
 	column = 0
 	while (index < xestring::strlen(editor_text)) {
-		if ((int)(editor_text[index]) == 9) { advance = editor_tab_advance(column) }
+		if (editor_text[index] == 9) { advance = editor_tab_advance(column) }
 		else { advance = graphics::char_advance(editor_text[index], effective_font_size) }
-		if (line == target_line && (target_column < column + advance / 2 || (int)(editor_text[index]) == 10)) { return index }
-		if ((int)(editor_text[index]) == 10) {
+		if (line == target_line && (target_column < column + advance / 2 || editor_text[index] == 10)) { return index }
+		if (editor_text[index] == 10) {
 			if (line >= target_line) { return index }
 			line += 1
 			column = 0
 		}
-		elseif ((int)(editor_text[index]) == 9) { column += advance }
+		elseif (editor_text[index] == 9) { column += advance }
 		else { column += advance }
 		index += 1
 	}
@@ -860,7 +884,7 @@ proc draw_edit_menu(menu_x: int, menu_y: int, content_width: int, content_height
 	if (menu_x < 2) { menu_x = 2 }
 	row_height = 9
 	if (content_height < 92 || menu_width < 68) { row_height = 7 }
-	target_height = row_height * 6 + 2
+	target_height = row_height * 7 + 2
 	if (target_height > content_height - menu_y - 2) { target_height = content_height - menu_y - 2 }
 	if (target_height < 1) { target_height = 1 }
 	menu_height = target_height * edit_menu_progress / 100
@@ -898,6 +922,8 @@ proc draw_edit_menu(menu_x: int, menu_y: int, content_width: int, content_height
 	row_y += row_height
 	if (menu_interactive && menu_height >= row_y - menu_y + row_height && graphics::button_flat(editor_window, menu_x + 1, row_y, column_width, row_height, underline_label, underline_color)) { call toggle_text_style(graphics::TEXT_UNDERLINE) }
 	if (menu_interactive && menu_height >= row_y - menu_y + row_height && graphics::button_flat(editor_window, menu_x + 1 + column_width, row_y, menu_width - column_width - 2, row_height, "Plain", graphics::COLOR_8)) { text_style = 0; call set_text(editor_status, "Plain text style") }
+	row_y += row_height
+	if (menu_interactive && menu_height >= row_y - menu_y + row_height && graphics::button_flat(editor_window, menu_x + 1, row_y, column_width * 2, row_height, "Change cursor", graphics::COLOR_8)) { cursor_style = 1 - cursor_style; edit_menu_open = false }
 }
 
 proc draw_file_dialog() {
@@ -1030,6 +1056,7 @@ dirty = false
 compile_pending = false
 selected_all = false
 cursor_index = xestring::strlen(editor_text)
+cursor_style = CursorStyle.LINE
 selection_start = cursor_index
 selection_end = cursor_index
 selection_dragging = false
@@ -1223,7 +1250,7 @@ while (editor_window.state != graphics::WINDOW_CLOSED) {
 			menu_left = edit_button_x
 			if (menu_left + menu_width > width - 2) { menu_left = width - menu_width - 2 }
 			if (menu_left < 2) { menu_left = 2 }
-			menu_height = 56
+			menu_height = 65
 			if (height < 92 || menu_width < 68) { menu_height = 44 }
 			if (menu_height > height - toolbar_height - 5) { menu_height = height - toolbar_height - 5 }
 			if (menu_height < 1) { menu_height = 1 }
