@@ -13,6 +13,9 @@ array shell_accumulator: int[8]
 array shell_speed: int[8]
 array entry_render_x: int[64]
 array entry_render_y: int[64]
+array entry_slot_start_x: int[64]
+array entry_slot_start_y: int[64]
+array entry_slot_progress: int[64]
 array entry_name_cache: string[64]
 array entry_directory_cache: int[64]
 array entry_position_cache: int[64]
@@ -840,6 +843,30 @@ proc compact_energy_shells(entry_count: int) {
 	call rebuild_shell_layout()
 }
 
+proc begin_slot_animation_all() {
+	var index: int
+	index = 0
+	while (index < cached_entry_count) {
+		entry_slot_start_x[index] = entry_render_x[index]
+		entry_slot_start_y[index] = entry_render_y[index]
+		entry_slot_progress[index] = 0
+		index += 1
+	}
+}
+
+proc begin_slot_animation_for_shell(target_shell: int) {
+	var index: int
+	index = 0
+	while (index < cached_entry_count) {
+		if (entry_shell[index] == target_shell) {
+			entry_slot_start_x[index] = entry_render_x[index]
+			entry_slot_start_y[index] = entry_render_y[index]
+			entry_slot_progress[index] = 0
+		}
+		index += 1
+	}
+}
+
 proc reset_energy_shells() {
 	var count: int
 	var index: int
@@ -863,6 +890,7 @@ proc reset_energy_shells() {
 		if (os::entry_is_directory(current_path, index)) { entry_directory_cache[index] = 1 }
 		else { entry_directory_cache[index] = 0 }
 		entry_shell[index] = index / shell_capacity
+		entry_slot_progress[index] = 100
 		index += 1
 	}
 	shell_count = (count + shell_capacity - 1) / shell_capacity
@@ -1645,7 +1673,6 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	var tilt_cosine: float
 	var projected_distance: int
 	var drop_target_shell: int
-	var desired_shell_count: int
 	var created_entry: int
 	var add_radius: int
 	var add_size: int
@@ -1680,6 +1707,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	var label_radicand: float
 	var label_center_distance: float
 	var usable_width: int
+	var slot_eased_progress: int
 	count = cached_entry_count
 	call prepare_orbit_projection(tilt, view_roll)
 	usable_width = area_width - sidebar_width
@@ -1828,6 +1856,13 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		elseif (transition_progress > 0 && transition_direction < 0 && transition_committed && transition_entry == index) {
 			atom_x = viewport_center_x + transition_focus_x * transition_scale * eased_progress / 10000
 			atom_y = viewport_center_y + transition_focus_y * transition_scale * eased_progress / 10000
+		}
+		if (transition_progress == 0 && entry_slot_progress[index] < 100) {
+			entry_slot_progress[index] += animation_step * 2
+			if (entry_slot_progress[index] > 100) { entry_slot_progress[index] = 100 }
+			slot_eased_progress = transition_ease(entry_slot_progress[index])
+			atom_x = entry_slot_start_x[index] + (atom_x - entry_slot_start_x[index]) * slot_eased_progress / 100
+			atom_y = entry_slot_start_y[index] + (atom_y - entry_slot_start_y[index]) * slot_eased_progress / 100
 		}
 		entry_render_x[index] = atom_x
 		entry_render_y[index] = atom_y
@@ -2024,6 +2059,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			}
 			elseif (target_shell >= 0 && entry_shell[drag_entry] != target_shell) { selection_move_count = 1 }
 			if (target_shell >= 0 && shell_population_cache[target_shell] + selection_move_count <= shell_capacity) {
+				if (selection_move_count > 0) { call begin_slot_animation_all() }
 				if (entry_selected[drag_entry] != 0) {
 					selection_index = 0
 					while (selection_index < count) {
@@ -2054,18 +2090,21 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		target_shell = drop_target_shell
 		if (target_shell >= 0 && shell_population_cache[target_shell] < shell_capacity) {
 			candidate_name = explorer_unique_template_name(drag_template == 2)
-			desired_shell_count = shell_count
 			if (drag_template == 1) { operation_ok = os::make_file(explorer_join_path(current_path, candidate_name)) }
 			else { operation_ok = os::make_directory(explorer_join_path(current_path, candidate_name)) }
 			if (operation_ok) {
 				call explorer_set(status_text, xestring::concat("Added ", candidate_name))
-				call reset_energy_shells()
-				if (desired_shell_count > shell_count) { shell_count = desired_shell_count }
-				created_entry = find_entry_named(candidate_name)
-				if (created_entry >= 0) {
-					entry_shell[created_entry] = target_shell
-					call rebuild_shell_layout()
-				}
+				call begin_slot_animation_for_shell(target_shell)
+				created_entry = cached_entry_count
+				entry_name_cache[created_entry] = candidate_name
+				if (drag_template == 2) { entry_directory_cache[created_entry] = 1 }
+				else { entry_directory_cache[created_entry] = 0 }
+				entry_shell[created_entry] = target_shell
+				entry_slot_start_x[created_entry] = pointer_x
+				entry_slot_start_y[created_entry] = pointer_y
+				entry_slot_progress[created_entry] = 0
+				cached_entry_count += 1
+				call rebuild_shell_layout()
 			}
 			else {
 				call explorer_set(status_text, "Could not create item")
@@ -2088,6 +2127,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		call graphics::draw_line(explorer_window, shell_button_x, shell_button_y - add_size, shell_button_x, shell_button_y + add_size, shell_button_color)
 		if (interaction_allowed && shell_button_hovered && graphics::mouse_pressed()) {
 			if (all_shells_full) {
+				call begin_slot_animation_all()
 				shell_count += 1
 				full_hint = 0
 				call explorer_set(status_text, "Empty shell added; drag an item onto it")
