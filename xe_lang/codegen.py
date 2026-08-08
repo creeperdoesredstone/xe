@@ -1302,21 +1302,15 @@ def emit_TypeCast(node: TypeCast) -> Result:
 	if res.error:
 		return res
 
-	if (
-		node.type.base == "float"
-		and node.type.pointer_layers == 0
-		and node.value.type.base == "int"
-		and node.value.type.pointer_layers == 0
-	):
-		instructions.append((node.start_pos, node.end_pos, "I2F"))
-
-	if (
-		node.type.base == "int"
-		and node.type.pointer_layers == 0
-		and node.value.type.base == "float"
-		and node.value.type.pointer_layers == 0
-	):
-		instructions.append((node.start_pos, node.end_pos, "F2I"))
+	match (node.type.base, node.value.type.base):
+		case ("float", "int"):
+			instructions.append((node.start_pos, node.end_pos, "I2F"))
+		case ("int", "float"):
+			instructions.append((node.start_pos, node.end_pos, "F2I"))
+		case ("int", "bool"):
+			instructions.append((node.start_pos, node.end_pos, "NEGI"))
+		case ("bool", "int"):
+			instructions.append((node.start_pos, node.end_pos, "I2B"))
 
 	return res.success(instructions)
 

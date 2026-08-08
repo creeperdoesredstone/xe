@@ -1888,6 +1888,7 @@ proc draw_context_menu() {
 	var menu_width: int
 	var menu_height: int
 	var inside: bool
+	var delete_y: int
 	menu_width = 68
 	menu_height = 29
 	if (menu_width > width - 4) { menu_width = width - 4 }

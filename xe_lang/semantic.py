@@ -1467,6 +1467,8 @@ class SemanticAnalyzer:
 			("float", "int"),
 			("int", "char"),
 			("char", "int"),
+			("int", "bool"),
+			("bool", "int")
 		)
 
 		if (
