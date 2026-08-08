@@ -2853,7 +2853,7 @@ visual_fade = 100
 visual_force_opaque = false
 view_roll = -12
 # Set false to keep the shell-add + fixed while horizontal dragging rotates the atom.
-shell_add_follows_rotation = true
+shell_add_follows_rotation = false
 deletion_ghost_count = 0
 deletion_ghost_duration = 180
 
