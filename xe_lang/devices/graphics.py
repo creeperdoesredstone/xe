@@ -819,3 +819,9 @@ class GraphicsDevice:
 					if self.back_buffer[y][x] != 0:
 						self.front_buffer[y][x] = self.back_buffer[y][x]
 		return self.publish(palette)
+
+	def get_chr_width(self, char: int) -> int:
+		return VARIABLE_FONT_5X7.get(chr(char), (5,))[0]
+
+	def get_chr_width_small(self, char: int) -> int:
+		return VARIABLE_FONT_3X5.get(chr(char), (3,))[0]

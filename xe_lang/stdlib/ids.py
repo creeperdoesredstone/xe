@@ -60,6 +60,8 @@ class BuiltInID(Enum):
 	GRAPHICS_DRAW_FLOAT_SMALL = auto()
 	GRAPHICS_BUTTON_FLAT = auto()
 	GRAPHICS_DRAW_ATOM = auto()
+	GRAPHICS_GET_CWIDTH = auto()
+	GRAPHICS_GET_CWIDTH_SMALL = auto()
 
 	OS_GET_VOLUME = auto()
 	OS_SET_VOLUME = auto()

@@ -117,6 +117,8 @@ class DeviceRuntime:
 			SyscallID.GRAPHICS_DRAW_BG: self._graphics_draw_background,
 			SyscallID.GRAPHICS_BUTTON: self._raw_button,
 			SyscallID.GRAPHICS_SLIDER: self._raw_slider,
+			SyscallID.GRAPHICS_GET_CWIDTH: self._raw_width,
+			SyscallID.GRAPHICS_GET_CWIDTH_SMALL: self._raw_width_small,
 			SyscallID.MOUSE_POLL: self._raw_mouse_poll,
 			SyscallID.INPUT_PREVIOUS_EVENT: self._raw_previous_event,
 			SyscallID.KEYBOARD_POLL: self._raw_keyboard_poll,
@@ -674,6 +676,20 @@ class DeviceRuntime:
 		self.graphics.fill_rect(left, (y + 3) * scale, max(scale, (knob - x + 1) * scale), scale, 11)
 		self.graphics.fill_rect(knob * scale, (y + 1) * scale, scale, 5 * scale, 15)
 		vm.push(value & TRUE)
+
+	def _raw_width(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is None:
+			return
+		char = args[0]
+		vm.push(self.graphics.get_chr_width(char))
+
+	def _raw_width_small(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is None:
+			return
+		char = args[0]
+		vm.push(self.graphics.get_chr_width_small(char))
 
 	def _raw_mouse_poll(self, vm: Any, result: Any) -> None:
 		event, x, y = self.input.poll_mouse()

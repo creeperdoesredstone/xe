@@ -870,7 +870,7 @@ class WindowManager:
 		self.graphics.fill_rect(rect.x, rect.y, rect.width, rect.height, color)
 		if framed:
 			self._draw_frame(rect, self.theme.text_color, scale)
-		if height <= 7:
+		if height <= 9:
 			glyph_height = 5 * scale
 			visible_label = self._fit_text(label, max(0, rect.width - 2 * scale), scale, small=True)
 			text_width = self.graphics.measure_text(visible_label, scale, small=True)

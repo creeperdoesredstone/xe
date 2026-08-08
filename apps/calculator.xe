@@ -29,20 +29,30 @@ enum class ErrorCode {
 	UNEXPECTED_TRAIL
 }
 
+enum class CalculatorMode {
+	STANDARD,
+	SCIENTIFIC,
+	PROGRAMMER,
+	GRAPHING,
+	CURRENCY,
+	UNIT_CONVERSION,
+	HISTORY
+}
+
 fn is_whitespace(value: char) bool {
-	return value == 32 || value == 9 || value == 10 || value == 13
+	return value == ' ' || value == 9 || value == 10 || value == 13
 }
 
 fn is_digit(value: char) bool {
-	return value >= 48 && value <= 57
+	return value >= '0' && value <= '9'
 }
 
 fn is_letter(value: char) bool {
-	return (value >= 65 && value <= 90) || (value >= 97 && value <= 122)
+	return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z')
 }
 
 fn is_identifier_char(value: char) bool {
-	return is_letter(value) || is_digit(value) || value == 95
+	return is_letter(value) || is_digit(value) || value == '_'
 }
 
 fn is_integral(value: float) bool {
@@ -366,7 +376,7 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 
 		if (!matched_constant) {
 			call skip_whitespace(text, position)
-			if (peek_code(text, *position) != 40) {
+			if (peek_code(text, *position) != '(') {
 				call set_error(error_code, error_position, 4, *position)
 				return 0.0
 			}
@@ -378,9 +388,9 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 			}
 
 			second_argument = 0.0
-			if (function_code == 8) {
+			if (function_code == FunctionCode.POW) {
 				call skip_whitespace(text, position)
-				if (peek_code(text, *position) != 44) {
+				if (peek_code(text, *position) != ',') {
 					call set_error(error_code, error_position, 4, *position)
 					return 0.0
 				}
@@ -392,7 +402,7 @@ fn parse_expression(text: string, position: int*, minimum_precedence: int, degre
 			}
 
 			call skip_whitespace(text, position)
-			if (peek_code(text, *position) != 41) {
+			if (peek_code(text, *position) != ')') {
 				call set_error(error_code, error_position, 4, *position)
 				return 0.0
 			}
@@ -755,7 +765,7 @@ proc draw_editor_key_sized(x: int, y: int, width: int, height: int, label: strin
 }
 
 proc draw_editor_key_compact(x: int, y: int, width: int, label: string, color: int, key: int, text: string, dirty: bool*, error: int*) {
-	if (graphics::button_tone(calculator_window, x, y, width, 5, label, color)) {
+	if (graphics::button_tone(calculator_window, x, y, width, 9, label, color)) {
 		call append_editor_key(text, key)
 		*dirty = true
 		*error = 0
@@ -921,44 +931,44 @@ proc draw_standard_keypad(x: int, y: int, width: int, height: int, text: string,
 proc draw_compact_keypad(x: int, y: int, width: int, height: int, text: string, dirty: bool*, error: int*, result: float*, error_position: int*, degrees_mode: bool) {
 	var key_width: int
 	key_width = (width - 8) / 5
-	if (height >= y + 5) {
-		call draw_editor_key_compact(x, y, key_width, "7", graphics::COLOR_5, 55, text, dirty, error)
-		call draw_editor_key_compact(x + key_width + 2, y, key_width, "8", graphics::COLOR_5, 56, text, dirty, error)
-		call draw_editor_key_compact(x + (key_width + 2) * 2, y, key_width, "9", graphics::COLOR_5, 57, text, dirty, error)
-		call draw_editor_key_compact(x + (key_width + 2) * 3, y, key_width, "/", graphics::COLOR_3, 47, text, dirty, error)
-		if (graphics::button_tone(calculator_window, x + (key_width + 2) * 4, y, key_width, 5, "DEL", graphics::COLOR_4)) {
+	if (height >= y + 9) {
+		call draw_editor_key_compact(x, y + 12, key_width, "7", graphics::COLOR_5, 55, text, dirty, error)
+		call draw_editor_key_compact(x + key_width + 2, y + 12, key_width, "8", graphics::COLOR_5, 56, text, dirty, error)
+		call draw_editor_key_compact(x + (key_width + 2) * 2, y + 12, key_width, "9", graphics::COLOR_5, 57, text, dirty, error)
+		call draw_editor_key_compact(x + (key_width + 2) * 3, y + 12, key_width, "/", graphics::COLOR_3, 47, text, dirty, error)
+		if (graphics::button_tone(calculator_window, x + (key_width + 2) * 4, y + 12, key_width, 9, "DEL", graphics::COLOR_4)) {
 			call erase_last_editor_key(text)
 			*error = 0
 			*dirty = true
 		}
 	}
 
-	if (height >= y + 11) {
-		call draw_editor_key_compact(x, y + 6, key_width, "4", graphics::COLOR_5, 52, text, dirty, error)
-		call draw_editor_key_compact(x + key_width + 2, y + 6, key_width, "5", graphics::COLOR_5, 53, text, dirty, error)
-		call draw_editor_key_compact(x + (key_width + 2) * 2, y + 6, key_width, "6", graphics::COLOR_5, 54, text, dirty, error)
-		call draw_editor_key_compact(x + (key_width + 2) * 3, y + 6, key_width, "*", graphics::COLOR_3, 42, text, dirty, error)
-		if (graphics::button_tone(calculator_window, x + (key_width + 2) * 4, y + 6, key_width, 5, "AC", graphics::COLOR_4)) {
+	if (height >= y + 19) {
+		call draw_editor_key_compact(x, y + 22, key_width, "4", graphics::COLOR_5, 52, text, dirty, error)
+		call draw_editor_key_compact(x + key_width + 2, y + 22, key_width, "5", graphics::COLOR_5, 53, text, dirty, error)
+		call draw_editor_key_compact(x + (key_width + 2) * 2, y + 22, key_width, "6", graphics::COLOR_5, 54, text, dirty, error)
+		call draw_editor_key_compact(x + (key_width + 2) * 3, y + 22, key_width, "*", graphics::COLOR_3, 42, text, dirty, error)
+		if (graphics::button_tone(calculator_window, x + (key_width + 2) * 4, y + 22, key_width, 9, "AC", graphics::COLOR_4)) {
 			call clear_editor(text)
 			*error = 0
 			*dirty = true
 		}
 	}
 
-	if (height >= y + 17) {
-		call draw_editor_key_compact(x, y + 12, key_width, "1", graphics::COLOR_5, 49, text, dirty, error)
-		call draw_editor_key_compact(x + key_width + 2, y + 12, key_width, "2", graphics::COLOR_5, 50, text, dirty, error)
-		call draw_editor_key_compact(x + (key_width + 2) * 2, y + 12, key_width, "3", graphics::COLOR_5, 51, text, dirty, error)
-		call draw_editor_key_compact(x + (key_width + 2) * 3, y + 12, key_width, "+", graphics::COLOR_3, 43, text, dirty, error)
-		call draw_editor_key_compact(x + (key_width + 2) * 4, y + 12, key_width, "-", graphics::COLOR_3, 45, text, dirty, error)
+	if (height >= y + 29) {
+		call draw_editor_key_compact(x, y + 32, key_width, "1", graphics::COLOR_5, 49, text, dirty, error)
+		call draw_editor_key_compact(x + key_width + 2, y + 32, key_width, "2", graphics::COLOR_5, 50, text, dirty, error)
+		call draw_editor_key_compact(x + (key_width + 2) * 2, y + 32, key_width, "3", graphics::COLOR_5, 51, text, dirty, error)
+		call draw_editor_key_compact(x + (key_width + 2) * 3, y + 32, key_width, "+", graphics::COLOR_3, 43, text, dirty, error)
+		call draw_editor_key_compact(x + (key_width + 2) * 4, y + 32, key_width, "-", graphics::COLOR_3, 45, text, dirty, error)
 	}
 
-	if (height >= y + 23) {
-		call draw_editor_key_compact(x, y + 18, key_width, "0", graphics::COLOR_5, 48, text, dirty, error)
-		call draw_editor_key_compact(x + key_width + 2, y + 18, key_width, ".", graphics::COLOR_5, 46, text, dirty, error)
-		call draw_editor_key_compact(x + (key_width + 2) * 2, y + 18, key_width, "%", graphics::COLOR_1, 37, text, dirty, error)
-		call draw_editor_key_compact(x + (key_width + 2) * 3, y + 18, key_width, "(", graphics::COLOR_1, 40, text, dirty, error)
-		if (graphics::button_tone(calculator_window, x + (key_width + 2) * 4, y + 18, key_width, 5, "=", graphics::COLOR_13)) {
+	if (height >= y + 39) {
+		call draw_editor_key_compact(x, y + 42, key_width, "0", graphics::COLOR_5, 48, text, dirty, error)
+		call draw_editor_key_compact(x + key_width + 2, y + 42, key_width, ".", graphics::COLOR_5, 46, text, dirty, error)
+		call draw_editor_key_compact(x + (key_width + 2) * 2, y + 42, key_width, "%", graphics::COLOR_1, 37, text, dirty, error)
+		call draw_editor_key_compact(x + (key_width + 2) * 3, y + 42, key_width, "(", graphics::COLOR_1, 40, text, dirty, error)
+		if (graphics::button_tone(calculator_window, x + (key_width + 2) * 4, y + 42, key_width, 9, "=", graphics::COLOR_13)) {
 			call evaluate_editor(text, degrees_mode, result, error, error_position)
 			*dirty = false
 		}
@@ -2013,7 +2023,7 @@ degrees_mode = true
 graphical_mode = true
 dirty = false
 shift_mode = false
-calculator_mode = 0
+calculator_mode = CalculatorMode.STANDARD
 mode_menu_open = false
 mode_menu_progress = 0
 mode_menu_page = 0
@@ -2125,7 +2135,7 @@ if (graphical_mode) {
 			call graphics::fill_rect(calculator_window, panel_x, 4, panel_width, display_height, graphics::COLOR_5)
 			call graphics::draw_rect(calculator_window, panel_x, 4, panel_width, display_height, graphics::COLOR_13)
 			if (panel_width >= 140) {
-				if (shift_mode && calculator_mode == 1) {
+				if (shift_mode && calculator_mode == CalculatorMode.SCIENTIFIC) {
 					call graphics::draw_text(calculator_window, panel_x + 6, 6, "SHIFT", graphics::COLOR_14)
 				}
 				elseif (dirty) {
@@ -2144,21 +2154,21 @@ if (graphical_mode) {
 				if (content_width < 90 || content_height < 52) {
 					# The display remains keyboard-operable at the absolute window minimum.
 				}
-				elseif (content_width < 150 || content_height < 148) {
+				elseif (content_width < 150 || content_height < 88) {
 					keypad_x = panel_x + 3
-					if (calculator_mode == 0 || calculator_mode == 1) {
+					if (calculator_mode == CalculatorMode.STANDARD || calculator_mode == CalculatorMode.SCIENTIFIC) {
 						call draw_compact_keypad(keypad_x, 27, panel_width - 6, content_height, expression, &dirty, &error_code, &result, &error_position, degrees_mode)
 					}
-					elseif (calculator_mode == 2) {
+					elseif (calculator_mode == CalculatorMode.PROGRAMMER) {
 						call draw_compact_programmer_view(keypad_x, 29, panel_width - 6, result, &programmer_base)
 					}
-					elseif (calculator_mode == 3) {
+					elseif (calculator_mode == CalculatorMode.GRAPHING) {
 						call draw_compact_graph_view(keypad_x, 28, panel_width - 6, content_height - 29, &graph_function)
 					}
-					elseif (calculator_mode == 4) {
+					elseif (calculator_mode == CalculatorMode.CURRENCY) {
 						call draw_currency_view(keypad_x, 28, panel_width - 6, content_height - 29, result, &currency_from, &currency_to, &currency_range)
 					}
-					elseif (calculator_mode == 5) {
+					elseif (calculator_mode == CalculatorMode.UNIT_CONVERSION) {
 						call draw_unit_view(keypad_x, 28, panel_width - 6, result, &unit_pair, &unit_swapped)
 					}
 					else {
@@ -2167,10 +2177,10 @@ if (graphical_mode) {
 				}
 				else {
 					keypad_x = panel_x + 4
-					if (calculator_mode == 0) {
+					if (calculator_mode == CalculatorMode.STANDARD) {
 						call draw_standard_keypad(keypad_x, 42, panel_width - 8, content_height - 46, expression, &dirty, &error_code, &result, &error_position, degrees_mode)
 					}
-					elseif (calculator_mode == 1) {
+					elseif (calculator_mode == CalculatorMode.SCIENTIFIC) {
 						button_width = (panel_width - 8) / 5
 						keypad_x = panel_x + (panel_width - (button_width * 5 + 8)) / 2
 				shift_color = graphics::COLOR_4
@@ -2253,16 +2263,16 @@ if (graphical_mode) {
 						call draw_editor_key(keypad_x, 128, button_width * 2 + 2, "0", graphics::COLOR_5, 48, expression, &dirty, &error_code)
 						call draw_editor_key(keypad_x + (button_width + 2) * 2, 128, button_width * 2 + 2, ".", graphics::COLOR_5, 46, expression, &dirty, &error_code)
 					}
-					elseif (calculator_mode == 2) {
+					elseif (calculator_mode == CalculatorMode.PROGRAMMER) {
 						call draw_programmer_view(keypad_x, panel_width - 8, result, &programmer_base)
 					}
-					elseif (calculator_mode == 3) {
+					elseif (calculator_mode == CalculatorMode.GRAPHING) {
 						call draw_graph_view(keypad_x, panel_width - 8, &graph_function)
 					}
-					elseif (calculator_mode == 4) {
+					elseif (calculator_mode == CalculatorMode.CURRENCY) {
 						call draw_currency_view(keypad_x, 42, panel_width - 8, content_height - 46, result, &currency_from, &currency_to, &currency_range)
 					}
-					elseif (calculator_mode == 5) {
+					elseif (calculator_mode == CalculatorMode.UNIT_CONVERSION) {
 						call draw_unit_view(keypad_x, 42, panel_width - 8, result, &unit_pair, &unit_swapped)
 					}
 					else {

@@ -110,6 +110,8 @@ GRAPHICS_SPEC = LibrarySpec(
 		_builtin("right_mouse_down", BuiltInID.GRAPHICS_RIGHT_MOUSE_DOWN, (), "bool", SyscallID.APP_GRAPHICS_RIGHT_MOUSE_DOWN),
 		_builtin("right_mouse_pressed", BuiltInID.GRAPHICS_RIGHT_MOUSE_PRESSED, (), "bool", SyscallID.APP_GRAPHICS_RIGHT_MOUSE_PRESSED),
 		_builtin("right_mouse_released", BuiltInID.GRAPHICS_RIGHT_MOUSE_RELEASED, (), "bool", SyscallID.APP_GRAPHICS_RIGHT_MOUSE_RELEASED),
+		_builtin("get_cwidth", BuiltInID.GRAPHICS_GET_CWIDTH, ("char",), "int", SyscallID.GRAPHICS_GET_CWIDTH),
+		_builtin("get_cwidth_small", BuiltInID.GRAPHICS_GET_CWIDTH_SMALL, ("char",), "int", SyscallID.GRAPHICS_GET_CWIDTH_SMALL),
 	),
 	(
 		ConstantSpec("SCREEN_WIDTH", 480),
