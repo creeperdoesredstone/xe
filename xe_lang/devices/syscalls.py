@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from xe_lang import graphics_commands as gc
 from xe_lang.helper import Position, VMError
 from xe_lang.syscall_abi import (
 	GRAPHICS_REFERENCE_ADDRESS_MASK,
@@ -18,6 +19,7 @@ from xe_lang.syscall_abi import (
 
 from .currency import CurrencyDevice
 from .compiler import CompilerDevice
+from .assets import AudioDevice, AudioState, ImageAssetStore
 from .filesystem import FileSystemDevice
 from .graphics import FrameSnapshot, GraphicsDevice
 from .input import InputDevice
@@ -31,8 +33,11 @@ FALSE = 0
 COMPILER_RUN_INSTRUCTION_LIMIT = 500_000
 COMPILER_RUN_OUTPUT_LIMIT = 8_192
 COMPILER_RUN_SOURCE_LIMIT = 32_768
+COMPILER_WORKSPACE_FILE_LIMIT = 128
+COMPILER_WORKSPACE_SOURCE_LIMIT = 131_072
 COMPILER_RUN_TIME_LIMIT = 2.0
 COMPILER_RUN_TRUNCATION_MARKER = "\n[output truncated]"
+GRAPHICS_FRAME_INTERVAL = 1.0 / 60.0
 _compiler_run_state = threading.local()
 
 WINDOW_X = 0
@@ -71,19 +76,27 @@ class DeviceRuntime:
 		width: int = SCREEN_WIDTH,
 		height: int = SCREEN_HEIGHT,
 		filesystem_root: str | Path | None = None,
+		audio_handler: Callable[[AudioState], None] | None = None,
 	) -> None:
 		self.input = InputDevice(width, height)
 		self.graphics = GraphicsDevice(width, height, frame_handler)
 		self.os = os_device or OSDevice()
+		self.files = FileSystemDevice(filesystem_root)
+		self.images = ImageAssetStore(self.files)
+		self.audio = AudioDevice(
+			self.files,
+			audio_handler,
+			lambda: self.os.volume * self.os.music_volume // 100,
+		)
 		self.currency = CurrencyDevice()
 		self.compiler = CompilerDevice()
 		self.windows = WindowManager(self.graphics, self.input, appearance=self.os)
-		self.files = FileSystemDevice(filesystem_root)
 		self._rng = random.Random()
 		self._raw_slider_capture: tuple[int, int, int] | None = None
 		self._frame_window_pointer: int | None = None
 		self._frame_window_handle = 0
 		self._frame_is_screen = False
+		self._next_frame_at = 0.0
 		self._handlers = {
 			SyscallID.OS_RAND32: self._raw_rand32,
 			SyscallID.OS_RANDF: self._raw_randf,
@@ -187,6 +200,7 @@ class DeviceRuntime:
 			SyscallID.APP_WINDOW_IS_MINIMIZED: self._window_is_minimized,
 			SyscallID.APP_OS_OPEN_READ: self._os_open_read,
 			SyscallID.APP_OS_OPEN_WRITE: self._os_open_write,
+			SyscallID.APP_OS_OPEN_APPEND: self._os_open_append,
 			SyscallID.APP_OS_READ: self._os_read,
 			SyscallID.APP_OS_WRITE: self._os_write,
 			SyscallID.APP_OS_CLOSE: self._os_close,
@@ -225,6 +239,12 @@ class DeviceRuntime:
 			SyscallID.APP_OS_MAKE_DIRECTORY: self._os_make_directory,
 			SyscallID.APP_OS_RENAME: self._os_rename,
 			SyscallID.APP_OS_DELETE: self._os_delete,
+			SyscallID.APP_OS_IS_DIRECTORY: self._os_is_directory,
+			SyscallID.APP_OS_COPY: self._os_copy,
+			SyscallID.APP_OS_FILE_SIZE: self._os_file_size,
+			SyscallID.APP_OS_MODIFIED_TICKS: self._os_modified_ticks,
+			SyscallID.APP_OS_REVISION: self._os_revision,
+			SyscallID.APP_OS_NORMALIZE_PATH: self._os_normalize_path,
 			SyscallID.APP_COMPILER_CHECK: self._compiler_check,
 			SyscallID.APP_COMPILER_ERROR: self._compiler_error,
 			SyscallID.APP_COMPILER_ERROR_LINE: self._compiler_error_line,
@@ -252,6 +272,25 @@ class DeviceRuntime:
 			SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_ENABLED: self._compiler_document_script_enabled,
 			SyscallID.APP_COMPILER_DOCUMENT_SOURCE: self._compiler_document_source,
 			SyscallID.APP_COMPILER_RUN: self._compiler_run,
+			SyscallID.APP_COMPILER_CHECK_WORKSPACE: self._compiler_check_workspace,
+			SyscallID.APP_COMPILER_RUN_WORKSPACE: self._compiler_run_workspace,
+			SyscallID.APP_GRAPHICS_LOAD_IMAGE: self._graphics_load_image,
+			SyscallID.APP_GRAPHICS_IMAGE_WIDTH: self._graphics_image_width,
+			SyscallID.APP_GRAPHICS_IMAGE_HEIGHT: self._graphics_image_height,
+			SyscallID.APP_GRAPHICS_IMAGE_FRAME_COUNT: self._graphics_image_frame_count,
+			SyscallID.APP_GRAPHICS_IMAGE_FRAME_DURATION: self._graphics_image_frame_duration,
+			SyscallID.APP_GRAPHICS_DRAW_IMAGE: self._graphics_draw_image,
+			SyscallID.APP_GRAPHICS_DRAW_COMMANDS: self._graphics_draw_commands,
+			SyscallID.APP_AUDIO_LOAD_TRACK: self._audio_load_track,
+			SyscallID.APP_AUDIO_PLAY: self._audio_play,
+			SyscallID.APP_AUDIO_PAUSE: self._audio_pause,
+			SyscallID.APP_AUDIO_STOP: self._audio_stop,
+			SyscallID.APP_AUDIO_SEEK: self._audio_seek,
+			SyscallID.APP_AUDIO_POSITION: self._audio_position,
+			SyscallID.APP_AUDIO_DURATION: self._audio_duration,
+			SyscallID.APP_AUDIO_IS_PLAYING: self._audio_is_playing,
+			SyscallID.APP_AUDIO_UPDATE: self._audio_update,
+			SyscallID.APP_AUDIO_ACTIVE_PITCH: self._audio_active_pitch,
 		}
 
 	def set_frame_handler(self, handler: Callable[[FrameSnapshot], None] | None) -> None:
@@ -425,18 +464,36 @@ class DeviceRuntime:
 		self.graphics.clear_screen(0)
 
 	def _raw_update(self, vm: Any, result: Any) -> None:
+		self._pace_frame(vm)
 		self.graphics.present(self.os.palette)
 
 	def _raw_flip(self, vm: Any, result: Any) -> None:
+		self._pace_frame(vm)
 		self.graphics.present(self.os.palette)
 		self.graphics.clear(0)
 
 	def _raw_append(self, vm: Any, result: Any) -> None:
+		self._pace_frame(vm)
 		self.graphics.append(self.os.palette)
 
 	def _raw_dump(self, vm: Any, result: Any) -> None:
+		self._pace_frame(vm)
 		self.graphics.append(self.os.palette)
 		self.graphics.clear(0)
+
+	def _pace_frame(self, vm: Any) -> None:
+		now = time.perf_counter()
+		if self._next_frame_at <= 0.0 or now - self._next_frame_at > GRAPHICS_FRAME_INTERVAL * 4:
+			self._next_frame_at = now
+		delay = self._next_frame_at - now
+		if delay > 0.0:
+			cancel_event = getattr(vm, "cancel_event", None)
+			if cancel_event is not None:
+				cancel_event.wait(delay)
+			else:
+				time.sleep(delay)
+		now = time.perf_counter()
+		self._next_frame_at = max(self._next_frame_at + GRAPHICS_FRAME_INTERVAL, now)
 
 	def _raw_set_region(self, vm: Any, result: Any) -> None:
 		args = self._args(vm, result, 4)
@@ -799,6 +856,7 @@ class DeviceRuntime:
 			return
 		pointer, handle, _ = entry
 		try:
+			self._pace_frame(vm)
 			self.graphics.reset_clip()
 			if handle == SCREEN_TARGET_HANDLE:
 				self._sync_screen(vm, pointer)
@@ -816,7 +874,12 @@ class DeviceRuntime:
 	def _graphics_clear(self, vm: Any, result: Any) -> None:
 		entry = self._window_args(vm, result, 2)
 		if entry:
-			self.graphics.clear(_signed(entry[2][0]))
+			_, handle, values = entry
+			color = _signed(values[0])
+			if handle == SCREEN_TARGET_HANDLE:
+				self.graphics.clear(color)
+			elif handle:
+				self.windows.clear_content(handle, color)
 
 	def _translate_draw(self, vm: Any, result: Any, count: int, draw: str) -> None:
 		entry = self._window_args(vm, result, count)
@@ -1330,6 +1393,11 @@ class DeviceRuntime:
 		if args is not None:
 			vm.push(self.files.open_write(self._read_string(vm, args[0])))
 
+	def _os_open_append(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			vm.push(self.files.open_append(self._read_string(vm, args[0])))
+
 	def _os_read(self, vm: Any, result: Any) -> None:
 		args = self._args(vm, result, 1)
 		if args is not None:
@@ -1384,6 +1452,36 @@ class DeviceRuntime:
 		args = self._args(vm, result, 1)
 		if args is not None:
 			self._push_bool(vm, self.files.delete(self._read_string(vm, args[0])))
+
+	def _os_is_directory(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_bool(vm, self.files.is_directory(self._read_string(vm, args[0])))
+
+	def _os_copy(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 2)
+		if args is not None:
+			self._push_bool(vm, self.files.copy(self._read_string(vm, args[0]), self._read_string(vm, args[1])))
+
+	def _os_file_size(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			entry = self.files.stat(self._read_string(vm, args[0]))
+			vm.push((entry.size if entry is not None else -1) & TRUE)
+
+	def _os_modified_ticks(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			entry = self.files.stat(self._read_string(vm, args[0]))
+			vm.push(((entry.modified_ns // 1_000_000) if entry is not None else -1) & TRUE)
+
+	def _os_revision(self, vm: Any, result: Any) -> None:
+		vm.push(self.files.revision & TRUE)
+
+	def _os_normalize_path(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_string(vm, result, self.files.normalize(self._read_string(vm, args[0])))
 
 	def _os_get_music_volume(self, vm: Any, result: Any) -> None:
 		vm.push(self.os.music_volume)
@@ -1603,11 +1701,96 @@ class DeviceRuntime:
 		if args is not None:
 			self._push_string(vm, result, self.compiler.document_source(_signed(args[0])))
 
+	def _compiler_workspace_sources(self, entry_path: str) -> tuple[dict[str, str], str]:
+		entry = self.files.normalize(entry_path)
+		if not entry or entry == "." or not entry.lower().endswith(".xe"):
+			return {}, "Workspace entry must be a portable .xe file path"
+		workspace_root = entry.rsplit("/", 1)[0] if "/" in entry else "."
+		workspace_prefix = "" if workspace_root == "." else workspace_root + "/"
+		sources: dict[str, str] = {}
+		pending = [workspace_root]
+		visited: set[str] = set()
+		while pending:
+			folder = pending.pop()
+			if folder in visited:
+				continue
+			visited.add(folder)
+			for item in self.files.entries(folder):
+				path = item.name if folder == "." else f"{folder}/{item.name}"
+				normalized = self.files.normalize(path)
+				if not normalized:
+					continue
+				if item.is_directory:
+					pending.append(normalized)
+				elif normalized.lower().endswith(".xe"):
+					if len(sources) >= COMPILER_WORKSPACE_FILE_LIMIT:
+						return {}, f"Workspace exceeds {COMPILER_WORKSPACE_FILE_LIMIT} Xe files"
+					text = self.files.read_text(normalized)
+					if text is not None:
+						sources[normalized] = text
+		for document in self.compiler.documents:
+			if not document.name:
+				continue
+			normalized = self.files.normalize(document.name)
+			inside_workspace = bool(normalized) and (
+				workspace_root == "." or normalized.startswith(workspace_prefix)
+			)
+			if inside_workspace and normalized.lower().endswith(".xe"):
+				sources[normalized] = document.source
+		if len(sources) > COMPILER_WORKSPACE_FILE_LIMIT:
+			return {}, f"Workspace exceeds {COMPILER_WORKSPACE_FILE_LIMIT} Xe files"
+		if sum(len(source) for source in sources.values()) > COMPILER_WORKSPACE_SOURCE_LIMIT:
+			return {}, f"Workspace exceeds {COMPILER_WORKSPACE_SOURCE_LIMIT} source characters"
+		if entry not in sources:
+			return {}, f"Workspace entry file not found: {entry}"
+		return sources, ""
+
+	def _compiler_check_workspace(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is None:
+			return
+		entry = self._read_string(vm, args[0])
+		sources, error = self._compiler_workspace_sources(entry)
+		if error:
+			self.compiler.set_runtime_error(error)
+			self._push_bool(vm, False)
+			return
+		self._push_bool(vm, self.compiler.compile_workspace(sources, self.files.normalize(entry)))
+
 	def _compiler_run(self, vm: Any, result: Any) -> None:
 		args = self._args(vm, result, 1)
 		if args is None:
 			return
 		source = self._read_string(vm, args[0])
+		self._compiler_execute(vm, result, lambda: self.compiler.compile(source), len(source), COMPILER_RUN_SOURCE_LIMIT)
+
+	def _compiler_run_workspace(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is None:
+			return
+		entry = self._read_string(vm, args[0])
+		sources, error = self._compiler_workspace_sources(entry)
+		if error:
+			self.compiler.set_runtime_error(error)
+			self._push_string(vm, result, error)
+			return
+		normalized_entry = self.files.normalize(entry)
+		self._compiler_execute(
+			vm,
+			result,
+			lambda: self.compiler.compile_workspace(sources, normalized_entry),
+			sum(len(source) for source in sources.values()),
+			COMPILER_WORKSPACE_SOURCE_LIMIT,
+		)
+
+	def _compiler_execute(
+		self,
+		vm: Any,
+		result: Any,
+		compile_action: Callable[[], bool],
+		source_size: int,
+		source_limit: int,
+	) -> None:
 
 		def bounded_text(value: str) -> str:
 			text = str(value).replace("\x00", "\\0")
@@ -1622,8 +1805,8 @@ class DeviceRuntime:
 			self.compiler.set_runtime_error(message)
 			self._push_string(vm, result, message)
 			return
-		if len(source) > COMPILER_RUN_SOURCE_LIMIT:
-			message = f"Compile error: source exceeds {COMPILER_RUN_SOURCE_LIMIT} characters"
+		if source_size > source_limit:
+			message = f"Compile error: source exceeds {source_limit} characters"
 			self.compiler.set_runtime_error(message)
 			self._push_string(vm, result, message)
 			return
@@ -1632,7 +1815,7 @@ class DeviceRuntime:
 			self.compiler.set_runtime_error(message)
 			self._push_string(vm, result, message)
 			return
-		if not self.compiler.compile(source):
+		if not compile_action():
 			message = bounded_text(
 				f"Compile error at {self.compiler.snapshot.line}:"
 				f"{self.compiler.snapshot.column}: {self.compiler.snapshot.error}"
@@ -1702,6 +1885,568 @@ class DeviceRuntime:
 		if not text:
 			text = "Program completed."
 		self._push_string(vm, result, text)
+
+	def _graphics_load_image(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			vm.push(self.images.load(self._read_string(vm, args[0])))
+
+	def _graphics_image_width(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			asset = self.images.get(args[0])
+			vm.push(asset.image.width if asset else 0)
+
+	def _graphics_image_height(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			asset = self.images.get(args[0])
+			vm.push(asset.image.height if asset else 0)
+
+	def _graphics_image_frame_count(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			asset = self.images.get(args[0])
+			vm.push(len(asset.image.frames) if asset else 0)
+
+	def _graphics_image_frame_duration(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 2)
+		if args is not None:
+			asset = self.images.get(args[0])
+			index = _signed(args[1])
+			vm.push(asset.image.frames[index].duration_ms if asset and 0 <= index < len(asset.image.frames) else 0)
+
+	def _graphics_draw_image(self, vm: Any, result: Any) -> None:
+		entry = self._window_args(vm, result, 6)
+		if not entry or not entry[1]:
+			return
+		_, handle, args = entry
+		image_handle, x, y, frame_index, image_scale = args
+		asset = self.images.get(image_handle)
+		frame_index = _signed(frame_index)
+		if asset is None or not 0 <= frame_index < len(asset.image.frames):
+			return
+		origin_x, origin_y = self._origin(handle)
+		target_scale = self._target_scale(handle)
+		scale = max(1, min(64, _signed(image_scale))) * target_scale
+		left = origin_x + _signed(x) * target_scale
+		top = origin_y + _signed(y) * target_scale
+		self.graphics.draw_indexed_pixels(
+			left,
+			top,
+			asset.image.width,
+			asset.image.height,
+			asset.image.frames[frame_index].pixels,
+			scale,
+			16,
+		)
+
+	def _graphics_draw_commands(self, vm: Any, result: Any) -> None:
+		entry = self._window_args(vm, result, 11)
+		if not entry or not entry[1]:
+			vm.push((-1) & TRUE)
+			return
+		_, handle, args = entry
+		(
+			stream_address,
+			word_count,
+			names_address,
+			short_names_address,
+			selected_address,
+			out_x,
+			out_y,
+			out_depth,
+			out_radius,
+			depth_order_address,
+		) = args
+		word_count = _signed(word_count)
+		if word_count < gc.HEADER_WORDS or word_count > gc.MAX_STREAM_WORDS or not self._valid_span(vm, stream_address, word_count):
+			vm.push((-2) & TRUE)
+			return
+		memory = vm.data_memory
+		if (
+			memory[stream_address + gc.HEADER_MAGIC_OFFSET] != gc.MAGIC
+			or memory[stream_address + gc.HEADER_VERSION_OFFSET] != gc.VERSION
+		):
+			vm.push((-3) & TRUE)
+			return
+		if memory[stream_address + gc.HEADER_TOTAL_WORDS_OFFSET] != word_count:
+			vm.push((-4) & TRUE)
+			return
+		command_count = _signed(memory[stream_address + gc.HEADER_COMMAND_COUNT_OFFSET])
+		command_offset = _signed(memory[stream_address + gc.HEADER_FIRST_COMMAND_OFFSET])
+		if (
+			command_count != 1
+			or command_offset != gc.HEADER_WORDS
+			or any(
+				memory[stream_address + gc.HEADER_RESERVED_OFFSET + offset] != 0
+				for offset in range(gc.HEADER_RESERVED_WORDS)
+			)
+		):
+			vm.push((-4) & TRUE)
+			return
+		command = stream_address + command_offset
+		if command_offset + 2 > word_count:
+			vm.push((-4) & TRUE)
+			return
+		opcode = _signed(memory[command + gc.ORBIT_OPCODE_OFFSET])
+		command_words = _signed(memory[command + gc.ORBIT_WORDS_OFFSET])
+		if opcode != gc.ORBIT_SCENE:
+			vm.push((-5) & TRUE)
+			return
+		if command_words != gc.ORBIT_WORDS or command_offset + command_words > word_count:
+			vm.push((-4) & TRUE)
+			return
+		packed_hover = self._draw_orbit_scene_command(
+			vm,
+			handle,
+			stream_address,
+			word_count,
+			command,
+			names_address,
+			short_names_address,
+			selected_address,
+			out_x,
+			out_y,
+			out_depth,
+			out_radius,
+			depth_order_address,
+		)
+		vm.push(packed_hover & TRUE)
+
+	def _draw_orbit_scene_command(
+		self,
+		vm: Any,
+		handle: int,
+		stream_address: int,
+		word_count: int,
+		command: int,
+		names_address: int,
+		short_names_address: int,
+		selected_address: int,
+		out_x: int,
+		out_y: int,
+		out_depth: int,
+		out_radius: int,
+		depth_order_address: int,
+	) -> int:
+		memory = vm.data_memory
+		if memory[command + gc.ORBIT_WORDS_OFFSET] != gc.ORBIT_WORDS:
+			return -6
+		entry_count = _signed(memory[command + gc.ORBIT_ENTRY_COUNT_OFFSET])
+		shell_count = _signed(memory[command + gc.ORBIT_SHELL_COUNT_OFFSET])
+		if not 0 <= entry_count <= gc.MAX_ORBIT_ENTRIES or not 1 <= shell_count <= gc.MAX_ORBIT_SHELLS:
+			return -6
+		scene_x = _signed(memory[command + gc.ORBIT_SCENE_X_OFFSET])
+		scene_y = _signed(memory[command + gc.ORBIT_SCENE_Y_OFFSET])
+		center_x = _signed(memory[command + gc.ORBIT_CENTER_X_OFFSET])
+		center_y = _signed(memory[command + gc.ORBIT_CENTER_Y_OFFSET])
+		area_width = _signed(memory[command + gc.ORBIT_AREA_WIDTH_OFFSET])
+		area_height = _signed(memory[command + gc.ORBIT_AREA_HEIGHT_OFFSET])
+		sidebar_width = _signed(memory[command + gc.ORBIT_SIDEBAR_WIDTH_OFFSET])
+		render_scale = _signed(memory[command + gc.ORBIT_RENDER_SCALE_OFFSET])
+		outer_radius = _signed(memory[command + gc.ORBIT_OUTER_RADIUS_OFFSET])
+		shell_gap = _signed(memory[command + gc.ORBIT_SHELL_GAP_OFFSET])
+		center_radius = _signed(memory[command + gc.ORBIT_CENTER_RADIUS_OFFSET])
+		node_radius = _signed(memory[command + gc.ORBIT_NODE_RADIUS_OFFSET])
+		tilt = _signed(memory[command + gc.ORBIT_TILT_OFFSET])
+		roll = _signed(memory[command + gc.ORBIT_ROLL_OFFSET])
+		rotation = _signed(memory[command + gc.ORBIT_ROTATION_OFFSET])
+		surface = _signed(memory[command + gc.ORBIT_SURFACE_COLOR_OFFSET])
+		outline = _signed(memory[command + gc.ORBIT_OUTLINE_COLOR_OFFSET])
+		accent = _signed(memory[command + gc.ORBIT_ACCENT_COLOR_OFFSET])
+		shell_color = _signed(memory[command + gc.ORBIT_SHELL_COLOR_OFFSET])
+		highlight = _signed(memory[command + gc.ORBIT_HIGHLIGHT_COLOR_OFFSET])
+		pointer_x = _signed(memory[command + gc.ORBIT_POINTER_X_OFFSET])
+		pointer_y = _signed(memory[command + gc.ORBIT_POINTER_Y_OFFSET])
+		shell_button_word = memory[command + gc.ORBIT_SHELL_BUTTON_HOVERED_OFFSET]
+		zoom_controls_word = memory[command + gc.ORBIT_ZOOM_CONTROLS_HOVERED_OFFSET]
+		shell_button_hovered = bool(shell_button_word)
+		zoom_controls_hovered = bool(zoom_controls_word)
+		camera_zoom = _signed(memory[command + gc.ORBIT_CAMERA_ZOOM_OFFSET])
+		label_char_limit = _signed(memory[command + gc.ORBIT_LABEL_CHAR_LIMIT_OFFSET])
+		item_offset = _signed(memory[command + gc.ORBIT_ITEM_TABLE_OFFSET])
+		item_stride = _signed(memory[command + gc.ORBIT_ITEM_STRIDE_OFFSET])
+		shell_offset = _signed(memory[command + gc.ORBIT_SHELL_TABLE_OFFSET])
+		shell_stride = _signed(memory[command + gc.ORBIT_SHELL_STRIDE_OFFSET])
+		flags = memory[command + gc.ORBIT_FLAGS_OFFSET]
+		shell_points = _signed(memory[command + gc.ORBIT_SHELL_POINTS_OFFSET])
+		expected_shell_offset = gc.HEADER_WORDS + gc.ORBIT_WORDS
+		expected_item_offset = expected_shell_offset + shell_count * gc.ORBIT_SHELL_WORDS
+		expected_word_count = expected_item_offset + entry_count * gc.ORBIT_ITEM_WORDS
+		expected_shell_gap = 0 if shell_count == 1 else (outer_radius - 30) // (shell_count - 1)
+		if (
+			not 1 <= area_width <= 4096 or not 1 <= area_height <= 4096
+			or not 0 <= sidebar_width < area_width
+			or not 25 <= render_scale <= 500
+			or not 30 <= outer_radius <= 2048
+			or shell_gap != expected_shell_gap
+			or not 1 <= center_radius <= 128 or not 1 <= node_radius <= 32
+			or any(not 0 <= color < 16 for color in (surface, outline, accent, shell_color, highlight))
+			or shell_button_word not in (0, 1) or zoom_controls_word not in (0, 1)
+			or not 25 <= camera_zoom <= 500 or not 1 <= label_char_limit <= 1024
+			or flags & ~gc.ORBIT_FLAG_DRAW_LABELS or not 4 <= shell_points <= 64
+			or item_stride != gc.ORBIT_ITEM_WORDS or shell_stride != gc.ORBIT_SHELL_WORDS
+			or shell_offset != expected_shell_offset or item_offset != expected_item_offset
+			or word_count != expected_word_count
+			or not self._valid_span(vm, names_address, entry_count)
+			or not self._valid_span(vm, short_names_address, entry_count)
+			or not self._valid_span(vm, selected_address, entry_count)
+			or not self._valid_span(vm, out_x, entry_count)
+			or not self._valid_span(vm, out_y, entry_count)
+			or not self._valid_span(vm, out_depth, entry_count)
+			or not self._valid_span(vm, out_radius, entry_count)
+			or not self._valid_span(vm, depth_order_address, entry_count)
+		):
+			return -6
+
+		def overlaps(first: int, first_words: int, second: int, second_words: int) -> bool:
+			return first_words > 0 and second_words > 0 and first < second + second_words and second < first + first_words
+
+		for input_address in (names_address, short_names_address, selected_address):
+			if overlaps(input_address, entry_count, stream_address, word_count):
+				return -6
+		if (
+			overlaps(selected_address, entry_count, names_address, entry_count)
+			or overlaps(selected_address, entry_count, short_names_address, entry_count)
+		):
+			return -6
+
+		mutable_spans = (out_x, out_y, out_depth, out_radius, depth_order_address)
+		for index, address in enumerate(mutable_spans):
+			if overlaps(address, entry_count, stream_address, word_count):
+				return -6
+			if any(
+				overlaps(address, entry_count, input_address, entry_count)
+				for input_address in (names_address, short_names_address, selected_address)
+			):
+				return -6
+			if any(overlaps(address, entry_count, other, entry_count) for other in mutable_spans[index + 1:]):
+				return -6
+
+		# Validate every table record and every three-word string descriptor before
+		# either the framebuffer or caller-owned output arrays are changed.
+		shell_phases: list[int] = []
+		shell_populations: list[int] = []
+		for shell in range(shell_count):
+			record = stream_address + shell_offset + shell * shell_stride
+			phase = _signed(memory[record + gc.ORBIT_SHELL_PHASE_OFFSET])
+			population = _signed(memory[record + gc.ORBIT_SHELL_POPULATION_OFFSET])
+			if not 0 <= population <= gc.MAX_ORBIT_SHELL_POPULATION:
+				return -6
+			shell_phases.append(phase)
+			shell_populations.append(population)
+		if sum(shell_populations) != entry_count:
+			return -6
+
+		raw_entries: list[tuple[int, int, int, int, str, str, bool]] = []
+		seen_positions: list[set[int]] = [set() for _ in range(shell_count)]
+		for index in range(entry_count):
+			record = stream_address + item_offset + index * item_stride
+			shell = _signed(memory[record + gc.ORBIT_ITEM_SHELL_OFFSET])
+			position = _signed(memory[record + gc.ORBIT_ITEM_POSITION_OFFSET])
+			is_directory = _signed(memory[record + gc.ORBIT_ITEM_DIRECTORY_OFFSET])
+			child_count = _signed(memory[record + gc.ORBIT_ITEM_CHILD_COUNT_OFFSET])
+			name_index = _signed(memory[record + gc.ORBIT_ITEM_NAME_INDEX_OFFSET])
+			short_name_index = _signed(memory[record + gc.ORBIT_ITEM_SHORT_NAME_INDEX_OFFSET])
+			if (
+				not 0 <= shell < shell_count
+				or not 0 <= position < shell_populations[shell]
+				or position in seen_positions[shell]
+				or is_directory not in (0, 1)
+				or not 0 <= child_count <= 64
+				or not 0 <= name_index < entry_count
+				or not 0 <= short_name_index < entry_count
+			):
+				return -6
+			try:
+				full_name = vm.read_string_descriptor(memory[names_address + name_index])
+				short_name = vm.read_string_descriptor(memory[short_names_address + short_name_index])
+			except ValueError:
+				return -6
+			if len(full_name) > 1024 or len(short_name) > 64:
+				return -6
+			seen_positions[shell].add(position)
+			raw_entries.append(
+				(shell, position, is_directory, child_count, full_name, short_name, bool(memory[selected_address + index]))
+			)
+
+		def f32(value: float) -> float:
+			return _float(_float_bits(value))
+
+		def addf(left: float, right: float) -> float:
+			return f32(f32(left) + f32(right))
+
+		def subf(left: float, right: float) -> float:
+			return f32(f32(left) - f32(right))
+
+		def mulf(left: float, right: float) -> float:
+			return f32(f32(left) * f32(right))
+
+		def cos_degrees(value: float) -> float:
+			return f32(math.cos(math.radians(f32(value))))
+
+		def sin_degrees(value: float) -> float:
+			return f32(math.sin(math.radians(f32(value))))
+
+		def trunc_div(numerator: int, denominator: int) -> int:
+			if numerator < 0:
+				return -((-numerator) // denominator)
+			return numerator // denominator
+
+		tilt_cos = cos_degrees(float(tilt))
+		depth_scale = abs(sin_degrees(float(tilt)))
+		roll_cos = cos_degrees(float(roll))
+		roll_sin = sin_degrees(float(roll))
+		rotation_cos = cos_degrees(float(rotation))
+		rotation_sin = sin_degrees(float(rotation))
+
+		def project(radius: int, cosine: float, sine: float) -> tuple[int, int, int]:
+			float_radius = f32(float(radius))
+			plane_x = mulf(cosine, float_radius)
+			plane_y = mulf(mulf(sine, float_radius), tilt_cos)
+			x = int(subf(mulf(plane_x, roll_cos), mulf(plane_y, roll_sin)))
+			y = int(addf(mulf(plane_x, roll_sin), mulf(plane_y, roll_cos)))
+			depth = int(mulf(mulf(mulf(-sine, float_radius), depth_scale), 100.0))
+			return center_x + x, center_y + y, depth
+
+		slot_components: list[list[tuple[float, float]]] = []
+		for shell in range(shell_count):
+			population = shell_populations[shell]
+			divisor = max(1, population)
+			base_angle = f32(float(rotation + shell_phases[shell] + shell * 17))
+			cosine = cos_degrees(base_angle)
+			sine = sin_degrees(base_angle)
+			step_angle = f32(f32(360.0) / f32(float(divisor)))
+			step_cosine = cos_degrees(step_angle)
+			step_sine = sin_degrees(step_angle)
+			slots: list[tuple[float, float]] = []
+			for _ in range(population):
+				slots.append((cosine, sine))
+				next_cosine = subf(mulf(cosine, step_cosine), mulf(sine, step_sine))
+				sine = addf(mulf(sine, step_cosine), mulf(cosine, step_sine))
+				cosine = next_cosine
+			slot_components.append(slots)
+
+		entries: list[tuple[int, int, int, int, int, int, int, str, str, bool]] = []
+		for index, (shell, position, is_directory, child_count, full_name, short_name, selected) in enumerate(raw_entries):
+			radius = (30 + shell * shell_gap) * render_scale // 100
+			cosine, sine = slot_components[shell][position]
+			x, y, depth = project(radius, cosine, sine)
+			entries.append((depth, index, x, y, shell, is_directory, child_count, full_name, short_name, selected))
+
+		previous_order = [_signed(memory[depth_order_address + index]) for index in range(entry_count)]
+		if sorted(previous_order) != list(range(entry_count)):
+			previous_order = list(range(entry_count))
+		previous_rank = {entry_index: rank for rank, entry_index in enumerate(previous_order)}
+		ordered = sorted(entries, key=lambda item: (item[0], previous_rank[item[1]]))
+
+		# All validation and projection have completed. Output mutation starts here.
+		for depth, index, x, y, *_ in entries:
+			memory[out_x + index] = x & TRUE
+			memory[out_y + index] = y & TRUE
+			memory[out_depth + index] = depth & TRUE
+			memory[out_radius + index] = node_radius & TRUE
+		for position, entry_data in enumerate(ordered):
+			memory[depth_order_address + position] = entry_data[1] & TRUE
+
+		hovered_entry = -1
+		hovered_shell = -1
+		if (
+			pointer_x > scene_x + sidebar_width
+			and pointer_x < scene_x + area_width
+			and scene_y <= pointer_y < scene_y + area_height
+			and not shell_button_hovered
+			and not zoom_controls_hovered
+		):
+			outside_nucleus = (pointer_x - center_x) ** 2 + (pointer_y - center_y) ** 2 > center_radius ** 2
+			for depth, index, x, y, shell, *_ in entries:
+				dx = pointer_x - x
+				dy = pointer_y - y
+				hit_radius = node_radius + 10
+				if dx * dx + dy * dy < hit_radius * hit_radius and (depth >= 0 or outside_nucleus):
+					hovered_entry = index
+					hovered_shell = shell
+
+		origin_x, origin_y = self._origin(handle)
+		target_scale = self._target_scale(handle)
+
+		def pixel(x: int, y: int, color: int) -> None:
+			self.graphics.fill_rect(
+				origin_x + x * target_scale,
+				origin_y + y * target_scale,
+				target_scale,
+				target_scale,
+				color,
+			)
+
+		def circle(x: int, y: int, radius: int, color: int) -> None:
+			self.graphics.draw_circle_scaled(origin_x, origin_y, x, y, radius, color, target_scale)
+
+		def fill_rect(x: int, y: int, width: int, height: int, color: int) -> None:
+			self.graphics.fill_rect(
+				origin_x + x * target_scale,
+				origin_y + y * target_scale,
+				width * target_scale,
+				height * target_scale,
+				color,
+			)
+
+		def draw_file(x: int, y: int, radius: int) -> None:
+			fill_rect(x - radius, y - radius - 1, radius * 2 + 1, radius * 2 + 3, surface)
+			self.graphics.draw_rect_scaled(
+				origin_x, origin_y, x - radius, y - radius - 1,
+				radius * 2 + 1, radius * 2 + 3, outline, target_scale,
+			)
+			pixel(x + radius, y - radius - 1, 0)
+			pixel(x + radius - 1, y - radius - 1, accent)
+			pixel(x + radius, y - radius, accent)
+
+		def draw_folder(x: int, y: int, radius: int, child_count: int, phase: int) -> None:
+			inner_half = max(1, radius * 7 // 10)
+			fill_rect(x - inner_half, y - inner_half, inner_half * 2 + 1, inner_half * 2 + 1, surface)
+			circle(x, y, radius, outline)
+			pixel(x - radius // 2, y - radius // 2, highlight)
+			circle(x, y, radius - 2, accent)
+			dot_count = max(0, min(8, child_count))
+			dot_radius = radius + 3
+			if dot_count > 0:
+				cosine = cos_degrees(float(phase))
+				sine = sin_degrees(float(phase))
+				step_angle = f32(f32(360.0) / f32(float(dot_count)))
+				step_cosine = cos_degrees(step_angle)
+				step_sine = sin_degrees(step_angle)
+				for _ in range(dot_count):
+					pixel(x + int(mulf(cosine, float(dot_radius))), y + int(mulf(sine, float(dot_radius))), accent)
+					next_cosine = subf(mulf(cosine, step_cosine), mulf(sine, step_sine))
+					sine = addf(mulf(sine, step_cosine), mulf(cosine, step_sine))
+					cosine = next_cosine
+
+		# Twenty samples preserve the original orbit-ring density while one syscall
+		# keeps the per-point loop out of Xe bytecode.
+		step_angle = f32(f32(360.0) / f32(float(shell_points)))
+		step_cos = cos_degrees(step_angle)
+		step_sin = sin_degrees(step_angle)
+		for shell in range(shell_count):
+			radius = (30 + shell * shell_gap) * render_scale // 100
+			cosine = rotation_cos
+			sine = rotation_sin
+			for _ in range(shell_points):
+				x, y, _ = project(radius, cosine, sine)
+				pixel(x, y, shell_color)
+				next_cosine = subf(mulf(cosine, step_cos), mulf(sine, step_sin))
+				sine = addf(mulf(sine, step_cos), mulf(cosine, step_sin))
+				cosine = next_cosine
+
+		def draw_entry(entry: tuple[int, int, int, int, int, int, int, str, str, bool]) -> None:
+			depth, index, x, y, shell, is_directory, child_count, full_name, short_name, selected = entry
+			if is_directory:
+				draw_folder(x, y, node_radius + 1, child_count, rotation + shell_phases[shell] + index * 31)
+			else:
+				draw_file(x, y, node_radius)
+			if selected:
+				circle(x, y, node_radius + 4, accent)
+			if hovered_entry == index:
+				pixel(x - 2, y + node_radius + 5, highlight)
+				pixel(x, y + node_radius + 5, highlight)
+				pixel(x + 2, y + node_radius + 5, highlight)
+
+			if not flags & gc.ORBIT_FLAG_DRAW_LABELS:
+				return
+			show_full = camera_zoom >= 125 or selected or hovered_entry == index
+			label = full_name if show_full else short_name
+			color = (highlight if selected or hovered_entry == index else outline) if show_full else shell_color
+			if show_full and len(label) > label_char_limit:
+				label = label[:label_char_limit]
+			name_width = sum(self.graphics.text_advance(char, 1, small=True) for char in label)
+			if name_width > 0:
+				name_width -= 1
+			name_width = max(1, name_width)
+			dx = x - center_x
+			dy = y - center_y
+			abs_x = abs(dx)
+			abs_y = abs(dy)
+			norm = (abs_x + abs_y * 3 // 8) if abs_x > abs_y else (abs_y + abs_x * 3 // 8)
+			if norm < 1:
+				dx, dy, norm = 0, -1, 1
+			offset = node_radius + 4 + (abs_x * name_width // 2 + abs_y * 3) // norm
+			label_center_x = x + trunc_div(dx * offset, norm)
+			label_center_y = y + trunc_div(dy * offset, norm)
+			self.graphics.draw_text_small(
+				origin_x + (label_center_x - name_width // 2) * target_scale,
+				origin_y + (label_center_y - 2) * target_scale,
+				label,
+				color,
+				pixel_scale=target_scale,
+			)
+
+		for entry in ordered:
+			if entry[0] < 0:
+				draw_entry(entry)
+		self.graphics.fill_circle_scaled(origin_x, origin_y, center_x, center_y, center_radius, surface, target_scale)
+		circle(center_x, center_y, center_radius, outline)
+		circle(center_x, center_y, center_radius - 2, accent)
+		pixel(center_x - center_radius // 2, center_y - center_radius // 2, highlight)
+		for entry in ordered:
+			if entry[0] >= 0:
+				draw_entry(entry)
+
+		return (hovered_entry + 1) | ((hovered_shell + 1) << 8)
+
+	def _audio_load_track(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			vm.push(self.audio.load(self._read_string(vm, args[0])))
+
+	def _audio_play(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_bool(vm, self.audio.play(args[0]))
+
+	def _audio_pause(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_bool(vm, self.audio.pause(args[0]))
+
+	def _audio_stop(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_bool(vm, self.audio.stop(args[0]))
+
+	def _audio_seek(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 2)
+		if args is not None:
+			self._push_bool(vm, self.audio.seek(args[0], _signed(args[1])))
+
+	def _audio_position(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			asset = self.audio.get(args[0])
+			vm.push(int(asset.sequencer.position_ticks) if asset else 0)
+
+	def _audio_duration(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			asset = self.audio.get(args[0])
+			vm.push(asset.sequencer.duration_ticks if asset else 0)
+
+	def _audio_is_playing(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			asset = self.audio.get(args[0])
+			self._push_bool(vm, bool(asset and asset.sequencer.playing))
+
+	def _audio_update(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 2)
+		if args is not None:
+			self.audio.update(args[0], _signed(args[1]))
+
+	def _audio_active_pitch(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			asset = self.audio.get(args[0])
+			active = asset.sequencer.active_notes() if asset else ()
+			vm.push((active[0].pitch if active else -1) & TRUE)
 
 	def _string_append(self, vm: Any, result: Any) -> None:
 		args = self._args(vm, result, 2)

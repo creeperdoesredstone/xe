@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from xe_lang import graphics_commands as gc
 from xe_lang.stdlib.ids import BuiltInID
 from xe_lang.syscall_abi import SyscallID
 
@@ -106,6 +107,23 @@ GRAPHICS_SPEC = LibrarySpec(
 		_builtin("draw_icon_scaled", BuiltInID.GRAPHICS_DRAW_ICON_SCALED, ("Window", "int", "int", "int", "int", "string", "int"), None, SyscallID.APP_GRAPHICS_DRAW_ICON_SCALED, WINDOW_REF),
 		_builtin("char_advance", BuiltInID.GRAPHICS_CHAR_ADVANCE, ("char", "int"), "int", SyscallID.APP_GRAPHICS_CHAR_ADVANCE),
 		_builtin("draw_char_styled", BuiltInID.GRAPHICS_DRAW_CHAR_STYLED, ("Window", "int", "int", "char", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_DRAW_CHAR_STYLED, WINDOW_REF),
+		_builtin("load_image", BuiltInID.GRAPHICS_LOAD_IMAGE, ("string",), "Image", SyscallID.APP_GRAPHICS_LOAD_IMAGE),
+		_builtin("image_width", BuiltInID.GRAPHICS_IMAGE_WIDTH, ("Image",), "int", SyscallID.APP_GRAPHICS_IMAGE_WIDTH),
+		_builtin("image_height", BuiltInID.GRAPHICS_IMAGE_HEIGHT, ("Image",), "int", SyscallID.APP_GRAPHICS_IMAGE_HEIGHT),
+		_builtin("image_frame_count", BuiltInID.GRAPHICS_IMAGE_FRAME_COUNT, ("Image",), "int", SyscallID.APP_GRAPHICS_IMAGE_FRAME_COUNT),
+		_builtin("image_frame_duration", BuiltInID.GRAPHICS_IMAGE_FRAME_DURATION, ("Image", "int"), "int", SyscallID.APP_GRAPHICS_IMAGE_FRAME_DURATION),
+		_builtin("draw_image", BuiltInID.GRAPHICS_DRAW_IMAGE, ("Window", "Image", "int", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_DRAW_IMAGE, WINDOW_REF),
+		_builtin(
+			"draw_commands",
+			BuiltInID.GRAPHICS_DRAW_COMMANDS,
+			(
+				"Window", "int*", "int", "string*", "string*", "int*",
+				"int*", "int*", "int*", "int*", "int*",
+			),
+			"int",
+			SyscallID.APP_GRAPHICS_DRAW_COMMANDS,
+			WINDOW_REF,
+		),
 		_builtin("modifiers", BuiltInID.GRAPHICS_MODIFIERS, (), "int", SyscallID.APP_GRAPHICS_MODIFIERS),
 		_builtin("right_mouse_down", BuiltInID.GRAPHICS_RIGHT_MOUSE_DOWN, (), "bool", SyscallID.APP_GRAPHICS_RIGHT_MOUSE_DOWN),
 		_builtin("right_mouse_pressed", BuiltInID.GRAPHICS_RIGHT_MOUSE_PRESSED, (), "bool", SyscallID.APP_GRAPHICS_RIGHT_MOUSE_PRESSED),
@@ -154,6 +172,64 @@ GRAPHICS_SPEC = LibrarySpec(
 		ConstantSpec("TEXT_BOLD", 1),
 		ConstantSpec("TEXT_ITALIC", 2),
 		ConstantSpec("TEXT_UNDERLINE", 4),
+		ConstantSpec("COMMAND_MAGIC", gc.MAGIC),
+		ConstantSpec("COMMAND_VERSION", gc.VERSION),
+		ConstantSpec("COMMAND_HEADER_WORDS", gc.HEADER_WORDS),
+		ConstantSpec("COMMAND_HEADER_MAGIC_OFFSET", gc.HEADER_MAGIC_OFFSET),
+		ConstantSpec("COMMAND_HEADER_VERSION_OFFSET", gc.HEADER_VERSION_OFFSET),
+		ConstantSpec("COMMAND_HEADER_TOTAL_WORDS_OFFSET", gc.HEADER_TOTAL_WORDS_OFFSET),
+		ConstantSpec("COMMAND_HEADER_COUNT_OFFSET", gc.HEADER_COMMAND_COUNT_OFFSET),
+		ConstantSpec("COMMAND_HEADER_FIRST_OFFSET", gc.HEADER_FIRST_COMMAND_OFFSET),
+		ConstantSpec("COMMAND_HEADER_RESERVED_OFFSET", gc.HEADER_RESERVED_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_SCENE", gc.ORBIT_SCENE),
+		ConstantSpec("COMMAND_ORBIT_WORDS", gc.ORBIT_WORDS),
+		ConstantSpec("COMMAND_ORBIT_OPCODE_OFFSET", gc.ORBIT_OPCODE_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_WORDS_OFFSET", gc.ORBIT_WORDS_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_ENTRY_COUNT_OFFSET", gc.ORBIT_ENTRY_COUNT_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_SHELL_COUNT_OFFSET", gc.ORBIT_SHELL_COUNT_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_SCENE_X_OFFSET", gc.ORBIT_SCENE_X_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_SCENE_Y_OFFSET", gc.ORBIT_SCENE_Y_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_CENTER_X_OFFSET", gc.ORBIT_CENTER_X_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_CENTER_Y_OFFSET", gc.ORBIT_CENTER_Y_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_AREA_WIDTH_OFFSET", gc.ORBIT_AREA_WIDTH_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_AREA_HEIGHT_OFFSET", gc.ORBIT_AREA_HEIGHT_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_SIDEBAR_WIDTH_OFFSET", gc.ORBIT_SIDEBAR_WIDTH_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_RENDER_SCALE_OFFSET", gc.ORBIT_RENDER_SCALE_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_OUTER_RADIUS_OFFSET", gc.ORBIT_OUTER_RADIUS_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_SHELL_GAP_OFFSET", gc.ORBIT_SHELL_GAP_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_CENTER_RADIUS_OFFSET", gc.ORBIT_CENTER_RADIUS_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_NODE_RADIUS_OFFSET", gc.ORBIT_NODE_RADIUS_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_TILT_OFFSET", gc.ORBIT_TILT_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_ROLL_OFFSET", gc.ORBIT_ROLL_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_ROTATION_OFFSET", gc.ORBIT_ROTATION_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_SURFACE_OFFSET", gc.ORBIT_SURFACE_COLOR_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_OUTLINE_OFFSET", gc.ORBIT_OUTLINE_COLOR_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_ACCENT_OFFSET", gc.ORBIT_ACCENT_COLOR_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_SHELL_COLOR_OFFSET", gc.ORBIT_SHELL_COLOR_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_HIGHLIGHT_OFFSET", gc.ORBIT_HIGHLIGHT_COLOR_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_POINTER_X_OFFSET", gc.ORBIT_POINTER_X_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_POINTER_Y_OFFSET", gc.ORBIT_POINTER_Y_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_SHELL_HOVER_OFFSET", gc.ORBIT_SHELL_BUTTON_HOVERED_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_ZOOM_HOVER_OFFSET", gc.ORBIT_ZOOM_CONTROLS_HOVERED_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_CAMERA_ZOOM_OFFSET", gc.ORBIT_CAMERA_ZOOM_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_LABEL_LIMIT_OFFSET", gc.ORBIT_LABEL_CHAR_LIMIT_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_ITEM_TABLE_OFFSET", gc.ORBIT_ITEM_TABLE_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_ITEM_STRIDE_OFFSET", gc.ORBIT_ITEM_STRIDE_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_SHELL_TABLE_OFFSET", gc.ORBIT_SHELL_TABLE_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_SHELL_STRIDE_OFFSET", gc.ORBIT_SHELL_STRIDE_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_FLAGS_OFFSET", gc.ORBIT_FLAGS_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_SHELL_POINTS_OFFSET", gc.ORBIT_SHELL_POINTS_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_DRAW_LABELS", gc.ORBIT_FLAG_DRAW_LABELS),
+		ConstantSpec("COMMAND_ORBIT_SHELL_WORDS", gc.ORBIT_SHELL_WORDS),
+		ConstantSpec("COMMAND_ORBIT_SHELL_PHASE_OFFSET", gc.ORBIT_SHELL_PHASE_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_SHELL_POPULATION_OFFSET", gc.ORBIT_SHELL_POPULATION_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_ITEM_WORDS", gc.ORBIT_ITEM_WORDS),
+		ConstantSpec("COMMAND_ORBIT_ITEM_SHELL_OFFSET", gc.ORBIT_ITEM_SHELL_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_ITEM_POSITION_OFFSET", gc.ORBIT_ITEM_POSITION_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_ITEM_DIRECTORY_OFFSET", gc.ORBIT_ITEM_DIRECTORY_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_ITEM_CHILD_COUNT_OFFSET", gc.ORBIT_ITEM_CHILD_COUNT_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_ITEM_NAME_OFFSET", gc.ORBIT_ITEM_NAME_INDEX_OFFSET),
+		ConstantSpec("COMMAND_ORBIT_ITEM_SHORT_NAME_OFFSET", gc.ORBIT_ITEM_SHORT_NAME_INDEX_OFFSET),
 	),
 )
 
@@ -174,6 +250,7 @@ OS_SPEC = LibrarySpec(
 		_builtin("minute", BuiltInID.OS_MINUTE, (), "int", SyscallID.OS_GET_MINUTE),
 		_builtin("open_read", BuiltInID.OS_OPEN_READ, ("string",), "File", SyscallID.APP_OS_OPEN_READ),
 		_builtin("open_write", BuiltInID.OS_OPEN_WRITE, ("string",), "File", SyscallID.APP_OS_OPEN_WRITE),
+		_builtin("open_append", BuiltInID.OS_OPEN_APPEND, ("string",), "File", SyscallID.APP_OS_OPEN_APPEND),
 		_builtin("read", BuiltInID.OS_READ, ("File",), "string", SyscallID.APP_OS_READ),
 		_builtin("write", BuiltInID.OS_WRITE, ("File", "string"), "bool", SyscallID.APP_OS_WRITE),
 		_builtin("close", BuiltInID.OS_CLOSE, ("string",), None, SyscallID.APP_OS_CLOSE),
@@ -185,6 +262,12 @@ OS_SPEC = LibrarySpec(
 		_builtin("make_directory", BuiltInID.OS_MAKE_DIRECTORY, ("string",), "bool", SyscallID.APP_OS_MAKE_DIRECTORY),
 		_builtin("rename", BuiltInID.OS_RENAME, ("string", "string"), "bool", SyscallID.APP_OS_RENAME),
 		_builtin("delete", BuiltInID.OS_DELETE, ("string",), "bool", SyscallID.APP_OS_DELETE),
+		_builtin("is_directory", BuiltInID.OS_IS_DIRECTORY, ("string",), "bool", SyscallID.APP_OS_IS_DIRECTORY),
+		_builtin("copy", BuiltInID.OS_COPY, ("string", "string"), "bool", SyscallID.APP_OS_COPY),
+		_builtin("file_size", BuiltInID.OS_FILE_SIZE, ("string",), "int", SyscallID.APP_OS_FILE_SIZE),
+		_builtin("modified_ticks", BuiltInID.OS_MODIFIED_TICKS, ("string",), "int", SyscallID.APP_OS_MODIFIED_TICKS),
+		_builtin("revision", BuiltInID.OS_REVISION, (), "int", SyscallID.APP_OS_REVISION),
+		_builtin("normalize_path", BuiltInID.OS_NORMALIZE_PATH, ("string",), "string", SyscallID.APP_OS_NORMALIZE_PATH),
 		_builtin(
 			"apply_preferences",
 			BuiltInID.OS_APPLY_PREFERENCES,
@@ -280,6 +363,8 @@ COMPILER_SPEC = LibrarySpec(
 		_builtin("document_script_enabled", BuiltInID.COMPILER_DOCUMENT_SCRIPT_ENABLED, ("int", "int"), "bool", SyscallID.APP_COMPILER_DOCUMENT_SCRIPT_ENABLED),
 		_builtin("document_source", BuiltInID.COMPILER_DOCUMENT_SOURCE, ("int",), "string", SyscallID.APP_COMPILER_DOCUMENT_SOURCE),
 		_builtin("run", BuiltInID.COMPILER_RUN, ("string",), "string", SyscallID.APP_COMPILER_RUN),
+		_builtin("check_workspace", BuiltInID.COMPILER_CHECK_WORKSPACE, ("string",), "bool", SyscallID.APP_COMPILER_CHECK_WORKSPACE),
+		_builtin("run_workspace", BuiltInID.COMPILER_RUN_WORKSPACE, ("string",), "string", SyscallID.APP_COMPILER_RUN_WORKSPACE),
 	),
 	(
 		ConstantSpec("ATOM_EVENT", 0),
@@ -291,7 +376,24 @@ COMPILER_SPEC = LibrarySpec(
 )
 
 
-STANDARD_LIBRARY_SPECS = (GRAPHICS_SPEC, OS_SPEC, CURRENCY_SPEC, COMPILER_SPEC)
+AUDIO_SPEC = LibrarySpec(
+	"audio",
+	(
+		_builtin("load", BuiltInID.AUDIO_LOAD_TRACK, ("string",), "Track", SyscallID.APP_AUDIO_LOAD_TRACK),
+		_builtin("play", BuiltInID.AUDIO_PLAY, ("Track",), "bool", SyscallID.APP_AUDIO_PLAY),
+		_builtin("pause", BuiltInID.AUDIO_PAUSE, ("Track",), "bool", SyscallID.APP_AUDIO_PAUSE),
+		_builtin("stop", BuiltInID.AUDIO_STOP, ("Track",), "bool", SyscallID.APP_AUDIO_STOP),
+		_builtin("seek", BuiltInID.AUDIO_SEEK, ("Track", "int"), "bool", SyscallID.APP_AUDIO_SEEK),
+		_builtin("position", BuiltInID.AUDIO_POSITION, ("Track",), "int", SyscallID.APP_AUDIO_POSITION),
+		_builtin("duration", BuiltInID.AUDIO_DURATION, ("Track",), "int", SyscallID.APP_AUDIO_DURATION),
+		_builtin("is_playing", BuiltInID.AUDIO_IS_PLAYING, ("Track",), "bool", SyscallID.APP_AUDIO_IS_PLAYING),
+		_builtin("update", BuiltInID.AUDIO_UPDATE, ("Track", "int"), None, SyscallID.APP_AUDIO_UPDATE),
+		_builtin("active_pitch", BuiltInID.AUDIO_ACTIVE_PITCH, ("Track",), "int", SyscallID.APP_AUDIO_ACTIVE_PITCH),
+	),
+)
+
+
+STANDARD_LIBRARY_SPECS = (GRAPHICS_SPEC, OS_SPEC, CURRENCY_SPEC, COMPILER_SPEC, AUDIO_SPEC)
 
 BUILTIN_SYSCALLS = {
 	builtin.builtin_id: builtin.syscall

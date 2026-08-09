@@ -1,12 +1,8 @@
-from xe_lang.lexer import lex
-from xe_lang.parser import parse
 from xe_lang.semantic import SemanticAnalyzer
-from xe_lang.optimizer import Optimizer
-from xe_lang.codegen import compile_ast, format_instructions
-from xe_lang.ir_optimize import optimize, DEFAULT_PASSES
 from xe_lang.assembler import assemble
+from xe_lang.compiler_service import compile_source
 from xe_lang.vm import DEFAULT_DATA_WORDS, VM, MAGIC, VERSION
-from xe_lang.devices import OSDevice
+from xe_lang.devices import OSDevice, default_settings_path
 from xe_lang.helper import ANSI
 
 import traceback
@@ -23,6 +19,7 @@ class RuntimeContext:
 		filesystem_root: str | Path | None = None,
 		input_handler=None,
 		request_handler=None,
+		audio_handler=None,
 		memory_words: int = DEFAULT_DATA_WORDS,
 	) -> None:
 		self.semantic = SemanticAnalyzer()
@@ -31,6 +28,7 @@ class RuntimeContext:
 		self.vm_ready_handler = vm_ready_handler
 		self.input_handler = input_handler
 		self.request_handler = request_handler
+		self.audio_handler = audio_handler
 		self.memory_words = memory_words
 		self.filesystem_root = Path(filesystem_root).resolve() if filesystem_root is not None else None
 		self.cancel_event = threading.Event()
@@ -44,6 +42,7 @@ class RuntimeContext:
 			filesystem_root=self.filesystem_root,
 			input_handler=self.input_handler,
 			request_handler=self.request_handler,
+			audio_handler=self.audio_handler,
 			memory_words=self.memory_words,
 		)
 		self.filesystem_root = self.vm.devices.files.root
@@ -59,6 +58,7 @@ class RuntimeContext:
 			filesystem_root=self.filesystem_root,
 			input_handler=self.input_handler,
 			request_handler=self.request_handler,
+			audio_handler=self.audio_handler,
 			memory_words=self.memory_words,
 		)
 		if self.vm_ready_handler:
@@ -78,7 +78,7 @@ def run(
 		context = RuntimeContext()
 
 	if fn.lower().endswith(".xas"):
-		bytecode = assemble(fn, ftxt)
+		bytecode = assemble(fn, ftxt, emit_file=False)
 		if bytecode.error:
 			return None, bytecode.error, None
 
@@ -93,50 +93,17 @@ def run(
 			ftxt,
 		)
 	else:
-		tokens, error = lex(fn, ftxt)
-		if error:
-			return None, error, None
-
-		ast = parse(tokens)
-		if ast.error:
-			return None, ast.error, None
-		if __name__ == "__main__":
-			print(ast.value)
-
-		context.semantic = SemanticAnalyzer()
-		seman_res = context.semantic.analyze(ast.value)
-		if seman_res.error:
-			return None, seman_res.error, None
-
-		optimized_ast = Optimizer().optimize(ast.value)
-
-		assembly = compile_ast(optimized_ast, fn)
-		if assembly.error:
-			return None, assembly.error, None
-		optimized_asm = optimize(assembly.value, DEFAULT_PASSES)
-		formatted_asm = format_instructions(optimized_asm)
-
-		stem = Path(fn).stem
-		
-		if not stem.startswith("<"):
-			outdir = Path("asm")
-			outdir.mkdir(exist_ok=True)
-		
-			with open(
-				outdir / f"{stem}.xas",
-				"w",
-				encoding="utf-8",
-			) as f:
-				f.write(formatted_asm)
-
-		bytecode = assemble(fn, formatted_asm)
-		if bytecode.error:
-			return None, bytecode.error, None
+		artifact = compile_source(ftxt, fn)
+		if not artifact.success:
+			diagnostic = artifact.diagnostics[0] if artifact.diagnostics else "Compilation failed"
+			return None, diagnostic, None
+		formatted_asm = artifact.assembly
+		program = list(artifact.program)
 
 
 	if __name__ == "__main__":
 		print(f"\n\n{ANSI.BOLD}{ANSI.PURPLE}STDOUT:{ANSI.END}")
-	context.create_vm(bytecode.value)
+	context.create_vm(program)
 	context.vm.ip = 0
 
 	result = context.vm.run()
@@ -168,7 +135,11 @@ if __name__ == "__main__":
 				with open(path, "r") as file:
 					source_code = file.read()
 
-				result, error, asm = run(path, source_code, None)
+				result, error, asm = run(
+					path,
+					source_code,
+					RuntimeContext(os_device=OSDevice(settings_path=default_settings_path())),
+				)
 
 				print()
 				if error:
@@ -185,7 +156,7 @@ if __name__ == "__main__":
 		print("-" * 50)
 
 		fn = "<repl>"
-		context = RuntimeContext()
+		context = RuntimeContext(os_device=OSDevice(settings_path=default_settings_path()))
 		while True:
 			try:
 				text = input("xe >>> ").strip()

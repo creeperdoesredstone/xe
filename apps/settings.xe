@@ -113,6 +113,7 @@ var drawer_target_width: int
 var drawer_compact: bool
 var applied: bool
 var drawer_surface: int
+var drawer_foreground: int
 var drawer_flash: int
 var drawer_flash_color: int
 var previous_ticks: int
@@ -156,7 +157,11 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 		content_width = graphics::content_width(settings_window)
 		content_height = graphics::content_height(settings_window)
 		drawer_surface = graphics::COLOR_8
-		if (os::theme_mode == os::THEME_LIGHT) { drawer_surface = graphics::COLOR_1 }
+		drawer_foreground = graphics::WHITE
+		if (os::theme_mode == os::THEME_LIGHT) {
+			drawer_surface = graphics::COLOR_7
+			drawer_foreground = graphics::COLOR_1
+		}
 
 		if (drawer_open && drawer_progress < 100) {
 			drawer_progress += drawer_step
@@ -167,7 +172,7 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 			if (drawer_progress < 0) { drawer_progress = 0 }
 		}
 
-		drawer_target_width = 108
+		drawer_target_width = 100
 		if (content_width < 180) { drawer_target_width = content_width / 2 }
 		elseif (drawer_target_width > content_width - 72) { drawer_target_width = content_width - 72 }
 		if (drawer_target_width < 14) { drawer_target_width = 14 }
@@ -192,7 +197,7 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 		control_x = panel_x + 4
 		control_width = panel_width - 8
 		if (control_width < 4) { control_width = 4 }
-		if (layout_panel_width >= 154 && panel_height >= 104) {
+		if (layout_panel_width >= 142 && panel_height >= 104) {
 			call graphics::fill_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_1)
 			call graphics::draw_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_8)
 
@@ -246,17 +251,18 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 			}
 			elseif (active_tab == 2) {
 				call graphics::draw_text(settings_window, panel_x + 4, 8, "Window appearance", graphics::WHITE)
-				call draw_value_line("Transparency", 23, staged_transparency, panel_x + 4, panel_width - 8)
+				call draw_value_line("Transparency %", 23, staged_transparency, panel_x + 4, panel_width - 8)
 				staged_transparency = graphics::slider(settings_window, control_x, 31, control_width, staged_transparency, 0, 100)
-				call graphics::draw_text(settings_window, panel_x + 4, 51, "Corner style", graphics::COLOR_7)
+				call graphics::draw_text_small(settings_window, panel_x + 4, 43, "0 opaque - 100 clear", graphics::COLOR_8)
+				call graphics::draw_text(settings_window, panel_x + 4, 55, "Corner style", graphics::COLOR_7)
 				if (staged_corners == os::CORNER_SQUARE) {
-					if (graphics::button(settings_window, control_x, 61, control_width, 11, "Square")) { staged_corners = os::CORNER_ROUNDED }
+					if (graphics::button(settings_window, control_x, 65, control_width, 11, "Square")) { staged_corners = os::CORNER_ROUNDED }
 				}
 				elseif (staged_corners == os::CORNER_ROUNDED) {
-					if (graphics::button(settings_window, control_x, 61, control_width, 11, "Rounded")) { staged_corners = os::CORNER_SOFT }
+					if (graphics::button(settings_window, control_x, 65, control_width, 11, "Rounded")) { staged_corners = os::CORNER_SOFT }
 				}
 				else {
-					if (graphics::button(settings_window, control_x, 61, control_width, 11, "Soft")) { staged_corners = os::CORNER_SQUARE }
+					if (graphics::button(settings_window, control_x, 65, control_width, 11, "Soft")) { staged_corners = os::CORNER_SQUARE }
 				}
 			}
 			elseif (active_tab == 3) {
@@ -307,41 +313,62 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 		elseif (panel_height < 32 || layout_panel_width < 44) {
 			call graphics::fill_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_1)
 			call graphics::draw_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_8)
-			if (active_tab == 0) {
-				call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Sound", graphics::WHITE)
-				call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Master", graphics::COLOR_7)
+			if (panel_width >= 18 && panel_height >= 12 && active_tab == 0) {
+				if (panel_width >= 34) {
+					call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Sound", graphics::WHITE)
+					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Master", graphics::COLOR_7)
+				}
+				else {
+					call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Snd", graphics::WHITE)
+					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Vol", graphics::COLOR_7)
+				}
 				call graphics::draw_int_small(settings_window, panel_x + 3, 19, staged_master, graphics::COLOR_14)
 			}
-			elseif (active_tab == 1) {
-				call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Personal", graphics::WHITE)
+			elseif (panel_width >= 18 && panel_height >= 12 && active_tab == 1) {
+				if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Personal", graphics::WHITE) }
+				else { call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Th", graphics::WHITE) }
 				if (staged_theme == os::THEME_DARK) {
-					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Dark", graphics::COLOR_7)
+					if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Dark", graphics::COLOR_7) }
+					else { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Dk", graphics::COLOR_7) }
 				}
 				else {
-					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Light", graphics::COLOR_7)
+					if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Light", graphics::COLOR_7) }
+					else { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Lt", graphics::COLOR_7) }
 				}
 			}
-			elseif (active_tab == 2) {
-				call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Windows", graphics::WHITE)
-				call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Opacity", graphics::COLOR_7)
+			elseif (panel_width >= 18 && panel_height >= 12 && active_tab == 2) {
+				if (panel_width >= 34) {
+					call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Windows", graphics::WHITE)
+					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Transparency", graphics::COLOR_7)
+				}
+				else {
+					call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Win", graphics::WHITE)
+					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Clr", graphics::COLOR_7)
+				}
 				call graphics::draw_int_small(settings_window, panel_x + 3, 19, staged_transparency, graphics::COLOR_14)
 			}
-			elseif (active_tab == 3) {
-				call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Display", graphics::WHITE)
+			elseif (panel_width >= 18 && panel_height >= 12 && active_tab == 3) {
+				if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Display", graphics::WHITE) }
+				else { call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Tm", graphics::WHITE) }
 				if (staged_clock == os::CLOCK_24_HOUR) {
-					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "24 hour", graphics::COLOR_7)
+					if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "24 hour", graphics::COLOR_7) }
+					else { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "24h", graphics::COLOR_7) }
 				}
 				else {
-					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "12 hour", graphics::COLOR_7)
+					if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "12 hour", graphics::COLOR_7) }
+					else { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "12h", graphics::COLOR_7) }
 				}
 			}
-			else {
-				call graphics::draw_text_small(settings_window, panel_x + 3, 5, "System", graphics::WHITE)
+			elseif (panel_width >= 18 && panel_height >= 12) {
+				if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 5, "System", graphics::WHITE) }
+				else { call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Sys", graphics::WHITE) }
 				if (staged_enabled) {
-					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Enabled", graphics::COLOR_7)
+					if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Enabled", graphics::COLOR_7) }
+					else { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "On", graphics::COLOR_7) }
 				}
 				else {
-					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Disabled", graphics::COLOR_7)
+					if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Disabled", graphics::COLOR_7) }
+					else { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Off", graphics::COLOR_7) }
 				}
 			}
 
@@ -453,59 +480,59 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				drawer_open = false
 				drawer_flash = 96
 			}
-			call draw_menu_arrow(9, 7, true, graphics::WHITE)
+			call draw_menu_arrow(9, 7, true, drawer_foreground)
 		}
 		else {
 			if (graphics::button_flat(settings_window, 4, 4, 14, 9, " ", drawer_surface)) {
 				drawer_open = true
 				drawer_flash = 96
 			}
-			call draw_menu_arrow(9, 6, false, graphics::WHITE)
+			call draw_menu_arrow(9, 6, false, drawer_foreground)
 		}
 
 		# Navigation becomes interactive only once its motion is complete. This
 		# prevents a row from sliding underneath a held pointer and being chosen.
 		if (drawer_open && drawer_progress == 100 && drawer_compact && drawer_width >= 40) {
 			if (drawer_height >= 18) {
-				if (graphics::button_flat(settings_window, 8, 13, drawer_width - 12, 7, "Sound", drawer_surface)) { active_tab = 0; drawer_open = false; drawer_flash = 96 }
+				if (graphics::button_flat(settings_window, 8, 13, drawer_width - 12, 7, "Sound", drawer_surface)) { active_tab = 0 }
 				if (active_tab == 0) { call graphics::fill_rect(settings_window, 5, 14, 2, 5, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 25) {
-				if (graphics::button_flat(settings_window, 8, 20, drawer_width - 12, 7, "Theme", drawer_surface)) { active_tab = 1; drawer_open = false; drawer_flash = 96 }
+				if (graphics::button_flat(settings_window, 8, 20, drawer_width - 12, 7, "Theme", drawer_surface)) { active_tab = 1 }
 				if (active_tab == 1) { call graphics::fill_rect(settings_window, 5, 21, 2, 5, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 32) {
-				if (graphics::button_flat(settings_window, 8, 27, drawer_width - 12, 7, "Window", drawer_surface)) { active_tab = 2; drawer_open = false; drawer_flash = 96 }
+				if (graphics::button_flat(settings_window, 8, 27, drawer_width - 12, 7, "Window", drawer_surface)) { active_tab = 2 }
 				if (active_tab == 2) { call graphics::fill_rect(settings_window, 5, 28, 2, 5, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 39) {
-				if (graphics::button_flat(settings_window, 8, 34, drawer_width - 12, 7, "Display", drawer_surface)) { active_tab = 3; drawer_open = false; drawer_flash = 96 }
+				if (graphics::button_flat(settings_window, 8, 34, drawer_width - 12, 7, "Display", drawer_surface)) { active_tab = 3 }
 				if (active_tab == 3) { call graphics::fill_rect(settings_window, 5, 35, 2, 5, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 46) {
-				if (graphics::button_flat(settings_window, 8, 41, drawer_width - 12, 7, "System", drawer_surface)) { active_tab = 4; drawer_open = false; drawer_flash = 96 }
+				if (graphics::button_flat(settings_window, 8, 41, drawer_width - 12, 7, "System", drawer_surface)) { active_tab = 4 }
 				if (active_tab == 4) { call graphics::fill_rect(settings_window, 5, 42, 2, 5, graphics::COLOR_10) }
 			}
 		}
 		elseif (drawer_open && drawer_progress == 100 && drawer_width >= 76) {
 			if (drawer_height >= 22) {
-				if (graphics::button_flat(settings_window, 8, 13, drawer_width - 12, 9, "Sound", drawer_surface)) { active_tab = 0; drawer_open = false; drawer_flash = 96 }
+				if (graphics::button_flat(settings_window, 8, 13, drawer_width - 12, 9, "Sound", drawer_surface)) { active_tab = 0 }
 				if (active_tab == 0) { call graphics::fill_rect(settings_window, 5, 14, 2, 7, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 31) {
-				if (graphics::button_flat(settings_window, 8, 22, drawer_width - 12, 9, "Personalization", drawer_surface)) { active_tab = 1; drawer_open = false; drawer_flash = 96 }
+				if (graphics::button_flat(settings_window, 8, 22, drawer_width - 12, 9, "Personalization", drawer_surface)) { active_tab = 1 }
 				if (active_tab == 1) { call graphics::fill_rect(settings_window, 5, 23, 2, 7, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 40) {
-				if (graphics::button_flat(settings_window, 8, 31, drawer_width - 12, 9, "Appearance", drawer_surface)) { active_tab = 2; drawer_open = false; drawer_flash = 96 }
+				if (graphics::button_flat(settings_window, 8, 31, drawer_width - 12, 9, "Appearance", drawer_surface)) { active_tab = 2 }
 				if (active_tab == 2) { call graphics::fill_rect(settings_window, 5, 32, 2, 7, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 49) {
-				if (graphics::button_flat(settings_window, 8, 40, drawer_width - 12, 9, "Icons and time", drawer_surface)) { active_tab = 3; drawer_open = false; drawer_flash = 96 }
+				if (graphics::button_flat(settings_window, 8, 40, drawer_width - 12, 9, "Icons and time", drawer_surface)) { active_tab = 3 }
 				if (active_tab == 3) { call graphics::fill_rect(settings_window, 5, 41, 2, 7, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 58) {
-				if (graphics::button_flat(settings_window, 8, 49, drawer_width - 12, 9, "System", drawer_surface)) { active_tab = 4; drawer_open = false; drawer_flash = 96 }
+				if (graphics::button_flat(settings_window, 8, 49, drawer_width - 12, 9, "System", drawer_surface)) { active_tab = 4 }
 				if (active_tab == 4) { call graphics::fill_rect(settings_window, 5, 50, 2, 7, graphics::COLOR_10) }
 			}
 		}
@@ -518,5 +545,4 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 	}
 
 	call graphics::update(settings_window)
-	call os::sleep(16)
 }

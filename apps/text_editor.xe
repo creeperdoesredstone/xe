@@ -46,6 +46,10 @@ var file_dialog_selected: string
 var file_dialog_scroll: int
 var file_dialog_name_focused: bool
 var file_dialog_replace_name: bool
+var file_dialog_last_entry: int
+var file_dialog_last_ticks: int
+var dirty_prompt_open: bool
+var dirty_prompt_action: int
 var editor_scroll_delta: int
 
 enum class CursorStyle {
@@ -316,6 +320,40 @@ proc new_editor_file() {
 	call set_text(editor_status, "New file")
 }
 
+proc begin_open_dialog() {
+	file_dialog_open = true
+	file_dialog_save = false
+	file_dialog_scroll = 0
+	file_dialog_name_focused = false
+	file_dialog_replace_name = false
+	file_dialog_last_entry = -1
+	file_dialog_last_ticks = -1000
+	call set_text(file_dialog_path, ".")
+	call clear_text(file_dialog_name)
+	call clear_text(file_dialog_selected)
+	edit_menu_open = false
+	call set_text(editor_status, "Choose a file")
+}
+
+proc finish_dirty_prompt_action() {
+	var action: int
+	action = dirty_prompt_action
+	dirty_prompt_action = 0
+	dirty_prompt_open = false
+	if (action == 1) { call new_editor_file() }
+	elseif (action == 2) { call begin_open_dialog() }
+}
+
+proc request_new_editor_file() {
+	if (dirty) {
+		dirty_prompt_action = 1
+		dirty_prompt_open = true
+		edit_menu_open = false
+		call set_text(editor_status, "Save changes before creating a file?")
+	}
+	else { call new_editor_file() }
+}
+
 proc load_editor_file(path: string) {
 	call record_undo()
 	if (!editor_strings_equal(editor_path, path)) {
@@ -341,24 +379,12 @@ proc save_editor_to(path: string) {
 	if (os::write(editor_file, editor_text)) {
 		call set_text(editor_status, "Saved")
 		dirty = false
+		if (dirty_prompt_action != 0) { call finish_dirty_prompt_action() }
 	}
 	else {
 		call set_text(editor_status, "Save failed")
 	}
 	call os::close(editor_path)
-}
-
-proc begin_open_dialog() {
-	file_dialog_open = true
-	file_dialog_save = false
-	file_dialog_scroll = 0
-	file_dialog_name_focused = false
-	file_dialog_replace_name = false
-	call set_text(file_dialog_path, ".")
-	call clear_text(file_dialog_name)
-	call clear_text(file_dialog_selected)
-	edit_menu_open = false
-	call set_text(editor_status, "Choose a file")
 }
 
 proc begin_save_dialog() {
@@ -367,6 +393,8 @@ proc begin_save_dialog() {
 	file_dialog_scroll = 0
 	file_dialog_name_focused = true
 	file_dialog_replace_name = true
+	file_dialog_last_entry = -1
+	file_dialog_last_ticks = -1000
 	if (xestring::strlen(editor_path) > 0) {
 		call set_text(file_dialog_path, editor_parent_path(editor_path))
 		call set_text(file_dialog_name, editor_basename(editor_path))
@@ -390,7 +418,13 @@ proc save_editor_file() {
 }
 
 proc open_editor_file() {
-	call begin_open_dialog()
+	if (dirty) {
+		dirty_prompt_action = 2
+		dirty_prompt_open = true
+		edit_menu_open = false
+		call set_text(editor_status, "Save changes before opening?")
+	}
+	else { call begin_open_dialog() }
 }
 
 proc confirm_file_dialog() {
@@ -1004,6 +1038,7 @@ proc draw_file_dialog() {
 				call set_text(file_dialog_path, editor_join_path(file_dialog_path, entry_name))
 				call clear_text(file_dialog_selected)
 				file_dialog_scroll = 0
+				file_dialog_last_entry = -1
 			}
 			else {
 				call set_text(file_dialog_selected, entry_name)
@@ -1011,6 +1046,14 @@ proc draw_file_dialog() {
 					call set_text(file_dialog_name, entry_name)
 					file_dialog_name_focused = true
 					file_dialog_replace_name = true
+				}
+				elseif (file_dialog_last_entry == index && current_ticks - file_dialog_last_ticks <= 450) {
+					file_dialog_last_entry = -1
+					call confirm_file_dialog()
+				}
+				else {
+					file_dialog_last_entry = index
+					file_dialog_last_ticks = current_ticks
 				}
 			}
 		}
@@ -1033,6 +1076,7 @@ proc draw_file_dialog() {
 	}
 	if (graphics::button_flat(editor_window, panel_x + panel_width - 92, footer_y, 42, 9, "Cancel", graphics::COLOR_1)) {
 		file_dialog_open = false
+		dirty_prompt_action = 0
 		call set_text(editor_status, "Cancelled")
 	}
 	if (file_dialog_save) {
@@ -1040,6 +1084,33 @@ proc draw_file_dialog() {
 	}
 	else {
 		if (graphics::button_flat(editor_window, panel_x + panel_width - 48, footer_y, 44, 9, "Open", graphics::COLOR_10)) { call confirm_file_dialog() }
+	}
+}
+
+proc draw_dirty_prompt() {
+	var panel_width: int
+	var panel_x: int
+	var panel_y: int
+	panel_width = width - 16
+	if (panel_width > 210) { panel_width = 210 }
+	if (panel_width < 102) { panel_width = 102 }
+	panel_x = (width - panel_width) / 2
+	panel_y = height / 2 - 18
+	call graphics::fill_rect(editor_window, panel_x, panel_y, panel_width, 36, graphics::COLOR_8)
+	call graphics::draw_rect(editor_window, panel_x, panel_y, panel_width, 36, graphics::COLOR_10)
+	call graphics::draw_text_small(editor_window, panel_x + 5, panel_y + 5, "Save changes?", graphics::WHITE)
+	if (graphics::button_flat(editor_window, panel_x + 5, panel_y + 21, 40, 9, "Save", graphics::COLOR_10)) {
+		dirty_prompt_open = false
+		call save_editor_file()
+	}
+	if (graphics::button_flat(editor_window, panel_x + 48, panel_y + 21, 56, 9, "Don't save", graphics::COLOR_1)) {
+		dirty = false
+		call finish_dirty_prompt_action()
+	}
+	if (graphics::button_flat(editor_window, panel_x + panel_width - 48, panel_y + 21, 43, 9, "Cancel", graphics::COLOR_1)) {
+		dirty_prompt_open = false
+		dirty_prompt_action = 0
+		call set_text(editor_status, "Cancelled")
 	}
 }
 
@@ -1078,6 +1149,10 @@ file_dialog_selected = ""
 file_dialog_scroll = 0
 file_dialog_name_focused = false
 file_dialog_replace_name = false
+file_dialog_last_entry = -1
+file_dialog_last_ticks = -1000
+dirty_prompt_open = false
+dirty_prompt_action = 0
 editor_scroll_delta = 0
 
 editor_window.x = 70
@@ -1127,8 +1202,8 @@ while (editor_window.state != graphics::WINDOW_CLOSED) {
 		button_x = 3
 		edit_clicked = false
 		if (width >= 262) {
-			if (!file_dialog_open && graphics::button_flat(editor_window, button_x, 2, 30, toolbar_height, "New", graphics::COLOR_8)) {
-				call new_editor_file()
+			if (!file_dialog_open && !dirty_prompt_open && graphics::button_flat(editor_window, button_x, 2, 30, toolbar_height, "New", graphics::COLOR_8)) {
+				call request_new_editor_file()
 			}
 			button_x += 32
 			if (!file_dialog_open && graphics::button_flat(editor_window, button_x, 2, 34, toolbar_height, "Open", graphics::COLOR_8)) {
@@ -1162,8 +1237,8 @@ while (editor_window.state != graphics::WINDOW_CLOSED) {
 		}
 		elseif (width >= 138) {
 			toolbar_height = 7
-			if (!file_dialog_open && graphics::button_flat(editor_window, button_x, 2, 24, toolbar_height, "New", graphics::COLOR_8)) {
-				call new_editor_file()
+			if (!file_dialog_open && !dirty_prompt_open && graphics::button_flat(editor_window, button_x, 2, 24, toolbar_height, "New", graphics::COLOR_8)) {
+				call request_new_editor_file()
 			}
 			button_x += 26
 			if (!file_dialog_open && graphics::button_flat(editor_window, button_x, 2, 28, toolbar_height, "Open", graphics::COLOR_8)) {
@@ -1208,14 +1283,14 @@ while (editor_window.state != graphics::WINDOW_CLOSED) {
 		if (body_width < 8) { body_width = 8 }
 		effective_font_size = font_size
 		if (width < 126 || height < 76) { effective_font_size = graphics::FONT_SMALL }
-		if (!edit_menu_open && !file_dialog_open && graphics::mouse_pressed() && pointer_x >= 3 && pointer_x < 3 + body_width && pointer_y >= body_y && pointer_y < body_y + body_height) {
+		if (!edit_menu_open && !file_dialog_open && !dirty_prompt_open && graphics::mouse_pressed() && pointer_x >= 3 && pointer_x < 3 + body_width && pointer_y >= body_y && pointer_y < body_y + body_height) {
 			cursor_index = editor_index_at(pointer_x, pointer_y, 3, body_y + 2)
 			selection_start = cursor_index
 			selection_end = cursor_index
 			selected_all = false
 			selection_dragging = true
 		}
-		if (selection_dragging && graphics::mouse_down() && !edit_menu_open && !file_dialog_open) {
+		if (selection_dragging && graphics::mouse_down() && !edit_menu_open && !file_dialog_open && !dirty_prompt_open) {
 			selection_end = editor_index_at(pointer_x, pointer_y, 3, body_y + 2)
 			cursor_index = selection_end
 			selected_all = selection_start == 0 && selection_end == xestring::strlen(editor_text)
@@ -1262,12 +1337,21 @@ while (editor_window.state != graphics::WINDOW_CLOSED) {
 		if (file_dialog_open) {
 			call draw_file_dialog()
 		}
+		if (dirty_prompt_open) { call draw_dirty_prompt() }
 
 		key = graphics::read_key()
 		while (key != 0) {
-			if (file_dialog_open) {
+			if (dirty_prompt_open) {
+				if (key == graphics::KEY_ESCAPE) {
+					dirty_prompt_open = false
+					dirty_prompt_action = 0
+					call set_text(editor_status, "Cancelled")
+				}
+			}
+			elseif (file_dialog_open) {
 				if (key == graphics::KEY_ESCAPE) {
 					file_dialog_open = false
+					dirty_prompt_action = 0
 					call set_text(editor_status, "Cancelled")
 				}
 				elseif (key == graphics::KEY_ENTER) {
@@ -1315,5 +1399,4 @@ while (editor_window.state != graphics::WINDOW_CLOSED) {
 		}
 	}
 	call graphics::update(editor_window)
-	call os::sleep(16)
 }

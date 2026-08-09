@@ -1,18 +1,19 @@
-# Xe graphics, OS, currency, and compiler standard libraries
+# Xe graphics, OS, currency, compiler, and audio standard libraries
 
-The public app API has four modules. `graphics` owns the frameless `Screen` target,
+Five device-facing extension modules are documented here. `graphics` owns the frameless `Screen` target,
 the plain `Window` type, drawing, widgets, and input. `os` owns the solid screen
 background, system settings,
 process utilities, and filesystem access. `currency` provides bundled reference
 rates and history without runtime network access. `compiler` exposes the in-VM Xe
-compiler and visual-document model. There is no separate `window` module or shell UI.
+compiler and visual-document model. `audio` owns portable XMusic tracks and their
+deterministic sequencer state. There is no separate `window` module or shell UI.
 
 ## Screen, Window, and frame lifecycle
 
 `graphics::Screen` draws directly into the complete Scratch stage. It has no title,
 position, state, border, lifecycle methods, dragging, resizing, minimizing, or
 maximizing. After `begin_draw`, its runtime-owned `width` and `height` fields contain
-the current framebuffer dimensions (`480x360` in the Scratch-compatible runtime).
+the current framebuffer dimensions (`480x360` in XVM and the intended Scratch host).
 
 ```xe
 var bg: graphics::Screen
@@ -32,7 +33,7 @@ Screen coordinates are absolute stage pixels with origin `(0, 0)` and scale `1`.
 window-manager record and therefore cannot produce window chrome accidentally.
 
 `graphics::Window` exposes the framebuffer-pixel
-geometry fields `x`, `y`, `width`, and `height`, plus `title` and
+geometry fields `x`, `y`, `width`, and `height`, plus `title`, `ui_scale`, and
 read-only-by-convention `state`. Its method surface remains exactly:
 
 - `close()` — closes and destroys the window.
@@ -62,7 +63,6 @@ while (win.state != graphics::WINDOW_CLOSED) {
 	call graphics::draw_circle(win, 30, 30, 12, graphics::COLOR_13)
 	call graphics::draw_line(win, 5, 5, content_width - 6, content_height - 6, graphics::WHITE)
 	call graphics::update(win)
-	call os::sleep(16)
 }
 ```
 
@@ -71,6 +71,11 @@ draws the window chrome, and clips subsequent rendering to the content area. Dra
 coordinates are relative to the top-left of that content area. `update` draws any
 move/resize outline last and publishes one immutable frame.
 
+`graphics::update` is the host's 60 Hz frame boundary. Application loops should use
+`os::ticks()` deltas for motion and should not add a second fixed `sleep(16)` after
+each update; this avoids double throttling while keeping the same deterministic
+state progression for the eventual Scratch host.
+
 `Window.ui_scale` selects an integer pixel density. New Xenon apps use `1`; legacy
 programs that leave it unset retain the crisp `2x2` default. Resizing reveals more or
 less logical content instead of stretching an old frame. There is no fractional
@@ -78,8 +83,8 @@ scaling inside the Scratch framebuffer. During maximize or restore,
 `is_fullscreen()` reports the target state as soon as the transition starts. This
 lets an application select its matching responsive density before the captured
 window reaches its target and prevents a final-frame typography or menu-size jump.
-Calculator uses that behavior to map its compact `240x190` design to a readable 2x
-fullscreen layout.
+Calculator keeps a stable logical density through the transition and uses the newly
+available content area to reflow its controls without a final-frame scale jump.
 
 Use `graphics::content_width(win)` and `graphics::content_height(win)` after
 `begin_draw` to read the current drawable size in logical application pixels.
@@ -127,7 +132,7 @@ the same integer pixel density before, during, and after the commit.
 - Screen information: `width()`, `height()`, `content_width(target)`,
   `content_height(target)`, `pointer_x(target)`, `pointer_y(target)`
 - Shapes: `clear`, `set_pixel`, `draw_circle`, `draw_line`, `draw_rect`, `fill_rect`,
-  `draw_atom`, `draw_icon`, and `draw_icon_scaled`
+  `draw_atom`, `draw_icon`, `draw_icon_scaled`, and checked `draw_commands`
 - Text: `draw_text`, `draw_char`, `draw_int`, `draw_float`, plus the compact
   `draw_text_small`, `draw_char_small`, `draw_int_small`, and `draw_float_small`;
   `char_advance` and `draw_char_styled` provide proportional layout with composable
@@ -139,7 +144,8 @@ the same integer pixel density before, during, and after the commit.
 - Constants: screen dimensions, `COLOR_0` through `COLOR_15`, `BLACK`, `WHITE`,
   window states, atom/ring states, `MOUSE_LEFT`, `MOUSE_RIGHT`, common key codes,
   `MOD_SHIFT`, `MOD_CTRL`, `MOD_ALT`, `FONT_SMALL`, `FONT_NORMAL`, `FONT_LARGE`,
-  `TEXT_BOLD`, `TEXT_ITALIC`, and `TEXT_UNDERLINE`
+  `TEXT_BOLD`, `TEXT_ITALIC`, `TEXT_UNDERLINE`, and the `COMMAND_*` stream-layout
+  constants
 
 `read_key()` emits an initial key press and deterministic held-key repeats after a
 380 ms delay at roughly 45 ms intervals. The queue is bounded after a stalled frame,
@@ -179,6 +185,94 @@ draws nothing. Window UI scaling composes with the icon scale, while Screen rema
 at stage-pixel density. `os::icon_size` is an OS preference (`0`, `1`, or `2`), not
 an implicit rendering transform; pass `os::icon_size + 1` as the explicit scale when
 desktop icons should follow that preference.
+
+Portable images use the first-class one-word `graphics::Image` resource:
+
+```xe
+var sprite: graphics::Image
+sprite = graphics::load_image("assets/player.ximg")
+call graphics::draw_image(win, sprite, 12, 18, 0, 2)
+```
+
+`image_width`, `image_height`, `image_frame_count`, and
+`image_frame_duration(image, frame)` expose validated metadata. `draw_image` uses
+integer nearest-neighbor scaling, clips to the current target, and skips transparent
+index `16`. The runtime caches decoded assets by private-drive revision and blits
+opaque runs directly, so animated images are not reparsed or redrawn one Python call
+per pixel.
+
+`.ximg` files are canonical XIMG2 32-bit word streams. Their checked header contains
+dimensions, frame count, loop metadata, table/data offsets, total words, and CRC32.
+Each frame deterministically chooses packed raw, RLE, or bounded previous-frame
+delta-RLE encoding. Six 5-bit pixels fit in one word (`0-15` palette indices and
+`16` transparent). Dimensions, offsets, frame chains, decoded size, checksum, and
+the hard 200,000-word budget are validated before a handle is returned.
+
+`draw_commands` is the versioned checked accelerator used by dense scenes whose
+projection loop would otherwise execute once per object in Xe bytecode. XGC1 version
+1 deliberately supports the bounded atom/orbit scene described below; it is not a
+general replacement for the ordinary pixel, line, text, or icon drawing functions:
+
+```xe
+result = graphics::draw_commands(
+	win, stream, words, names, short_names, selected,
+	projected_x, projected_y, projected_depth, node_radius, depth_order
+)
+```
+
+The exact parameter types are `(Window|Screen, int*, int, string*, string*, int*,
+int*, int*, int*, int*, int*) -> int`. `names` and `short_names` are arrays of
+one-word string-descriptor handles; every referenced handle is validated as the
+normal three-word Xe string descriptor before drawing. `selected` is read-only.
+The four projected arrays and `depth_order` are caller-owned outputs with one word
+per entry. The radius output is the base visual node radius; hit testing uses exactly
+`radius + 10`, matching the Xe fallback and drag logic (folders draw one pixel larger
+without changing their hit geometry). An invalid prior depth-order permutation is deterministically initialized
+to entry order; a valid permutation supplies stable painter-order tie breaking.
+
+The current XGC1 record is a reusable atom/orbit scene. The framing is versioned so
+future command types can be added explicitly, but unknown opcodes are rejected rather
+than guessed. Its eight-word header is:
+
+| Offset | Field |
+| ---: | --- |
+| 0 | `COMMAND_MAGIC` (`0x58474331`) |
+| 1 | `COMMAND_VERSION` (`1`) |
+| 2 | exact total word count |
+| 3 | command count, currently exactly `1` |
+| 4 | first command offset, exactly `COMMAND_HEADER_WORDS` (`8`) |
+| 5-7 | zero |
+
+The 36-word orbit command uses these relative offsets:
+
+| Offset | Field |
+| ---: | --- |
+| 0-3 | opcode, record words, entry count, shell count |
+| 4-10 | scene x/y, nucleus center x/y, area width/height, sidebar width |
+| 11-18 | render scale, outer radius, shell gap, center radius, node radius, tilt, roll, rotation |
+| 19-23 | surface, outline, accent, shell, and highlight palette indices |
+| 24-29 | pointer x/y, shell-button hover, zoom-control hover, camera zoom, label-character limit |
+| 30-33 | item-table offset/stride and shell-table offset/stride |
+| 34 | flags (`COMMAND_ORBIT_DRAW_LABELS`) |
+| 35 | ring sample count (`4-64`; File Explorer uses `20`) |
+
+All named `COMMAND_ORBIT_*_OFFSET` constants map these fields without duplicating
+numeric offsets in applications. A shell record is exactly two words: phase and
+population. An item record is exactly six words: shell, position, directory flag,
+child count, full-name array index, and short-name array index. Shell populations
+are `0-8`; the populated positions must be unique and contiguous, and their sum must
+equal the entry count (`0-64`). Exact accounting is required: the shell table starts
+at word `44`, the item table immediately follows the active shell records, and the
+stream ends immediately after all item records. There are no ignored trailing words.
+
+Validation covers the complete header, every record, all descriptor and output
+spans, colors, flags, geometry, non-overlap of mutable spans, and exact table
+accounting before any output word or pixel is changed. A nonnegative return packs
+hover as `(entry + 1) + ((shell + 1) * 256)`; zero means no item. Negative values are
+`-1` invalid target, `-2` invalid stream span/count, `-3` bad magic/version, `-4`
+bad header/record length, `-5` unsupported opcode, or `-6` invalid orbit data or
+external array. Hosts, including the eventual Scratch implementation, must preserve
+this all-or-nothing validation and the written projected geometry.
 
 `button_tone` has the same
 interaction behavior as `button` plus a final palette-index argument for the
@@ -240,8 +334,11 @@ palette. Borders, title text, and window controls remain opaque for legibility.
 
 Palettes `0-2` are the dark Xenon variants and `3-5` are coordinated light
 variants. Changing `theme_mode` preserves the palette variant while moving it to
-the matching light or dark group. The OS remains the persistence owner; apps
-should stage edits locally and use `apply_preferences` only when Apply is chosen.
+the matching light or dark group. The OS device remains the source of truth; apps
+stage edits locally and use `apply_preferences` only when Apply is chosen. The host
+IDE and command-line runtime persist accepted values atomically in XenonOS's private
+application-data settings file. Programmatic embedders that do not provide a
+settings path intentionally keep session-only state.
 
 `background_id` selects a solid backdrop color. The OS clears the framebuffer to
 that palette-backed color before drawing a Screen or Window; it does not synthesize
@@ -267,7 +364,10 @@ out << os::read(file)
 call os::close("example.txt")
 ```
 
-`open_write(path)` and `write(file, text)` provide the write side. Unless a host
+`open_write(path)` and `write(file, text)` provide the write side;
+`open_append(path)` appends without truncating. `is_directory`, `copy`, `file_size`,
+`modified_ticks`, `revision`, and `normalize_path` support deterministic editors and
+workspace tools without exposing host paths. Unless a host
 explicitly supplies a test/integration root, the runtime uses the private
 `%LOCALAPPDATA%/XenonOS/VirtualDrive` directory (or
 `~/.xenonos/VirtualDrive` when `LOCALAPPDATA` is unavailable). It never defaults to
@@ -312,9 +412,9 @@ Ranges are `RANGE_1D`, `RANGE_5D`, `RANGE_1W`, `RANGE_1M`, `RANGE_YTD`, and
 `RANGE_5Y`. YTD data is grouped weekly and five-year data monthly. Cross rates
 are calculated from the same USD-relative row, so every listed pair and reverse
 pair stays internally consistent. The runtime imports no HTTP or worker-thread
-code. Before a product update, run `python tools/update_currency_snapshot.py` to
-refresh `xe_lang/devices/currency_snapshot.py`; the generated `SNAPSHOT_DATE`
-records the final included day.
+code. Release updates replace the generated
+`xe_lang/devices/currency_snapshot.py` module and its `SNAPSHOT_DATE`; applications
+never fetch rates while they run.
 
 ## `compiler`
 
@@ -326,12 +426,24 @@ code generator, and assembler in-process. Diagnostics are available through
 `compiler::run(source)` compiles and executes source in a bounded child XVM and
 returns the program's captured output. It shares the calling VM's private virtual
 filesystem root and OS preference state, uses non-blocking empty input, does not
-present a graphics framebuffer, and caps output at 8192 characters. Child dispatch
+present a graphics framebuffer or native audio output, has no backend request
+handler, and caps output at 8192 characters. Child dispatch
 stops after 500,000 instructions and checks a two-second execution deadline between
 instructions; sleeps are clamped to the remaining deadline. Source is capped at
 32,768 characters, NUL output is escaped as `\0`, and all returned diagnostics obey
 the same output bound. Compile and runtime failures are returned as readable text;
 nested `compiler::run` calls are rejected.
+
+`compiler::check_workspace(entry_path)` and `compiler::run_workspace(entry_path)`
+link a deterministic private-drive workspace. The entry file contributes executable
+top-level statements; `.xe` files recursively beneath the entry file's parent folder
+contribute declarations. Paths are sorted canonically, in-memory documents loaded
+with `load_document` override their saved versions, unrelated projects elsewhere in
+the private drive are ignored, and traversal never leaves the Xenon virtual drive.
+A workspace is bounded to 128 Xe files and 131,072 source characters. Missing
+entries, executable non-entry statements, nonportable paths, and duplicate logical
+paths produce normal compiler diagnostics instead of silently falling back to
+active-file execution.
 
 The original line-atom API remains available: `load_visual`, `atom_count`,
 `atom_text`, `atom_kind`, `atom_line`, `atom_enabled`, `set_atom_enabled`, and
@@ -351,6 +463,58 @@ Use `document_script_count`, `document_script_name`, `document_script_shell`,
 `document_script_line`, `document_script_enabled`, and `document_source`. The
 single-document `script_*` calls describe the most recent `load_visual` result.
 
+## `audio`
+
+`audio::Track` is a first-class handle to a checked XMusic word stream. The portable
+sequencer API is `load`, `play`, `pause`, `stop`, `seek`, `position`, `duration`,
+`is_playing`, `update`, and `active_pitch`:
+
+```xe
+var disc: audio::Track
+disc = audio::load("music/demo.xmusic")
+if (audio::play(disc)) {
+	call audio::update(disc, 16)
+	out << audio::active_pitch(disc)
+}
+```
+
+XMusic stores tempo, ticks per beat, loop points, and sorted MIDI-range note events
+in a length- and CRC-checked 32-bit stream. `seek`, `position`, and `duration` use
+XMusic timeline ticks; only `update(track, delta)` takes milliseconds. `update`
+clamps delta to `0-50 ms` so native and Scratch hosts advance identically after a
+delayed frame. When Qt exposes a compatible Int16 stereo output, the Python IDE
+renders active notes through a lazy native synthesizer honoring the combined master
+and music volumes; otherwise sequencing remains deterministic and silent. Scratch can map the same portable events to its
+sound blocks without changing Xe application state; the bundled legacy profile does
+not claim that backend until it is implemented and differentially tested.
+
+## Host Image Studio and Scratch export
+
+The Python IDE contains host-level `Xe → SB3`, `Image Studio`, and `Help` tabs; these
+are workbench tools, not Xe windows. Image Studio edits an RGBA project with tools,
+layers, frames, durations, onion-skin preview, undo/redo, and deterministic exports.
+`.xip` is the editable canonical ZIP container (sorted members, canonical JSON, fixed
+timestamps); `.ximg` is the compact 16-color runtime form. PNG/GIF/sprite-sheet
+exports preserve host artwork, while the Xe preview makes palette quantization and
+transparency explicit before export.
+
+The Xe-to-SB3 converter compiles through the same side-effect-free compiler service
+as Run. It injects XBN into a checksum-pinned Scratch VM template only after an exact
+compatibility gate verifies the address model, static budget, every syscall, and
+literal asset requirements. ZIP member names, duplicate project members, template
+shape/hash, output overwrite, canonical JSON, member order, timestamps, and atomic
+replacement are validated. The optional fallback stages both files and attempts to
+restore the complete previous pair if either replacement fails, preserving any
+backup that cannot be restored automatically. It is clearly labeled
+`.xbn + .compatibility.json` and is never presented as an SB3.
+
+The bundled Template 7.0.1 profile remains a pinned legacy-core profile with 65,536
+addresses and no high-level app or asset-ROM syscalls. Consequently it intentionally
+blocks exact export for all current Xe builds against the XVM's 200,000-address
+contract. This is a safeguard, not a degraded translation. The profile must gain verified 200k memory,
+heap/static parity, the required app syscalls, and an asset ROM before the converter
+can claim those programs are exact in vanilla Scratch.
+
 ## XVM syscall ABI
 
 `xe_lang/syscall_abi.py` is the single source of truth for numeric syscall IDs.
@@ -364,7 +528,7 @@ assembly programs and compiled `graphics::`/`os::` calls cannot collide.
   deterministic `OS_RAND32`/`OS_RANDF`/`OS_RSEED`, and hour/minute queries). The
   former unprefixed enum names remain aliases so existing assembled projects keep
   their numeric ABI.
-- Raw graphics: `30-56` (buffer operations, clipping, primitives,
+- Raw graphics: `30-58` (buffer operations, clipping, primitives,
   image/text/window/button drawing). Raw taskbar `52` and TaskAtom `53` remain
   available to assembly programs, but Calculator and Settings do not call them.
 - Raw input: `60-64` (mouse polling, previous event, keyboard polling, key state,
@@ -375,22 +539,26 @@ assembly programs and compiled `graphics::`/`os::` calls cannot collide.
   `APP_GRAPHICS_SCROLL_DELTA`), `142-146`, `208-209`, `246-249`, and `254`, OS
   settings/utilities `130-141` and `180-196`, `Window` methods `150-152`, files
   `160-164` and `210-217`, mutable string append operations `170-171`, currency
-  `200-207`, compiler services `220-245` and `255`, calendar date components
-  `250-252`, and compact palette-icon drawing `253`.
+  `200-207`, compiler services `220-245`, `255`, and `290-291`, calendar date
+  components `250-252`, compact palette-icon drawing `253`, portable VFS helpers
+  `260-266`, portable images `270-275`, checked graphics command streams `276`, and
+  XMusic sequencing `280-289`.
 
 Compiled Screen resource references set bit 31 and retain the static address in bits
 `0-30`. The runtime strips that tag before bounds checks. Static resources remain in
 the 16-bit XAssembly address range, so existing Window references and bytecode are
-unchanged and the representation is exact in the Scratch VM.
+unchanged. The representation is designed for the eventual Scratch VM update; the
+bundled legacy template still lacks the Screen/high-level handlers.
 
-IDs absent from those ranges are reserved, including `13-19` and `57-59`;
+IDs absent from those ranges are reserved, including `13-19` and `59`;
 invoking one reports `Unknown system call` rather than silently doing the wrong
 operation.
 
 ## VM address space
 
 The default XVM data space is exactly `200,000` addresses, numbered `0..199,999`.
-This is also the hard maximum so the same program remains representable in Scratch.
+This is also the hard target ceiling chosen for an eventual vanilla-Scratch
+implementation; the bundled legacy template currently remains at 65,536 addresses.
 The direct `LOAD`/`STORE` XAssembly encoding remains 16-bit for binary compatibility;
 the expanded heap is reached through 32-bit pointers and indirect loads/stores.
 Embedders may request `65,536..200,000` addresses with
@@ -435,7 +603,7 @@ come from `SyscallID`, so compiler lowering and VM dispatch cannot drift apart.
 2. Implement the operation in the matching modular device under `xe_lang/devices/`.
 3. Register its syscall and add compiler plus runtime coverage.
 
-Run `python tests/render_app_preview.py` to render nearest-neighbor PNG previews of
-all six apps in normal, dragging, resizing, resized, minimum-size, and maximized
-states into `%TEMP%\xe-app-previews`. Additional `visual`, `multiview`, `currency`,
-and `menu` states cover the richer overlays.
+Run `python -W error -m pytest -q` for compiler, VM, app-contract, interaction,
+format, exporter, and offscreen host-UI coverage. Graphical smoke tests run against
+the complete `480x360` Scratch stage and cancel after bounded frames instead of
+requiring an interactive desktop session.

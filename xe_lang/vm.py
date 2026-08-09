@@ -60,6 +60,7 @@ class VM:
 		filesystem_root=None,
 		input_handler=None,
 		request_handler=None,
+		audio_handler=None,
 		memory_words: int = DEFAULT_DATA_WORDS,
 	):
 		if len(program) < 4:
@@ -123,7 +124,10 @@ class VM:
 		self._last_snapshot: FrameSnapshot | None = None
 
 		self.devices = DeviceRuntime(
-			os_device, self._frame_presented, filesystem_root=filesystem_root
+			os_device,
+			self._frame_presented,
+			filesystem_root=filesystem_root,
+			audio_handler=audio_handler,
 		)
 		self.exit_code = 0
 		self.halt_requested = False
@@ -538,7 +542,7 @@ class VM:
 					self.max_sp = self.sp
 
 				# process window events if the window is alive
-				if self.ip % 200 == 0 and self.root:
+				if self.root and self.ip % 200 == 0:
 					try:
 						self.root.update()
 					except Exception:
@@ -547,6 +551,7 @@ class VM:
 			return res.success(self.stack[:self.sp])
 		finally:
 			self.execution_deadline = None
+			self.devices.audio.stop_all()
 			self.close_graphics_window()
 			self.devices.files.close_all()
 
@@ -1283,4 +1288,5 @@ class VM:
 						return res.fail(self._error("Program memory out of bounds"))
 					self.program_memory[dst:dst + ins_arg] = self.data_memory[src:src + ins_arg]
 
-		return res.success(True)
+		res.value = True
+		return res

@@ -665,6 +665,23 @@ class WindowManager:
 			opaque_slots,
 		)
 
+	def clear_content(self, handle: int, color: int) -> None:
+		"""Clear an app surface while preserving the configured window translucency."""
+
+		record = self._record(handle)
+		if not record or record.state in (WindowState.CLOSED, WindowState.MINIMIZED):
+			return
+		self._fill_window_rect(
+			Rect(
+				self.content_x(handle),
+				self.content_y(handle),
+				self.content_width(handle),
+				self.content_height(handle),
+			),
+			color,
+			self._appearance_value("window_transparency", 0),
+		)
+
 	def draw(self, handle: int) -> None:
 		record = self._windows.get(handle)
 		if not record or record.state == WindowState.CLOSED:

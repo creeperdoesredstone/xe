@@ -1,0 +1,26 @@
+{
+  "address_limit": 65536,
+  "capabilities": [
+    "core.graphics",
+    "core.input",
+    "core.io",
+    "core.os",
+    "core.request"
+  ],
+  "mem_data_list": "MEM_DATA",
+  "mem_program_list": "MEM_PROGRAM",
+  "mem_program_target": "Stage",
+  "name": "Xenon-131 VM Template 7.0.1 (legacy-core)",
+  "static_limit": 65536,
+  "supported_syscalls": [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+    20, 21, 22, 23, 24,
+    30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+    40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+    50, 51, 52, 53, 55,
+    60, 61, 62, 63, 64,
+    80
+  ],
+  "template_sha256": "69595617bb84a183b12208fee070d1270222bd57c4e861fb5013f0ff9b9e4f5e",
+  "version": "7.0.1-legacy-core"
+}

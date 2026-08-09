@@ -3,13 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
-from xe_lang.assembler import assemble
-from xe_lang.codegen import compile_ast, format_instructions
-from xe_lang.ir_optimize import DEFAULT_PASSES, optimize
-from xe_lang.lexer import lex
-from xe_lang.optimizer import Optimizer
-from xe_lang.parser import parse
-from xe_lang.semantic import SemanticAnalyzer
+from xe_lang.compiler_service import CompileArtifact, compile_source, compile_workspace as compile_workspace_artifact
 
 
 @dataclass(frozen=True)
@@ -65,11 +59,17 @@ class CompilerDevice:
 		self.atoms: list[VisualAtom] = []
 		self.scripts: list[VisualScript] = []
 		self.documents: list[VisualDocument] = [VisualDocument("", "", ()) for _ in range(16)]
+		self._compile_key: object | None = None
 
 	def compile(self, source: str, filename: str = "workspace.xe") -> bool:
+		key = (filename, source)
+		if key == self._compile_key:
+			return self.snapshot.success
 		self.bytecode = ()
 		try:
-			return self._compile(source, filename)
+			success = self._compile(source, filename)
+			self._compile_key = key
+			return success
 		except Exception as error:
 			self.snapshot = CompileSnapshot(
 				False,
@@ -77,36 +77,48 @@ class CompilerDevice:
 				1,
 				1,
 			)
+			self._compile_key = key
 			return False
 
 	def _compile(self, source: str, filename: str) -> bool:
-		tokens, error = lex(filename, source)
-		if error is not None:
-			self._set_error(error)
+		artifact = compile_source(source, filename)
+		return self._store_artifact(artifact)
+
+	def compile_workspace(self, sources: dict[str, str], entry_path: str = "workspace.xe") -> bool:
+		key = (
+			"workspace",
+			str(entry_path).replace("\\", "/"),
+			tuple(sorted(((str(path).replace("\\", "/"), source) for path, source in sources.items()), key=lambda item: (item[0].casefold(), item[0]))),
+		)
+		if key == self._compile_key:
+			return self.snapshot.success
+		self.bytecode = ()
+		try:
+			artifact = compile_workspace_artifact(sources, entry_path)
+			success = self._store_artifact(artifact)
+		except Exception as error:
+			self.snapshot = CompileSnapshot(False, f"Compiler error: {error}", 1, 1)
+			success = False
+		self._compile_key = key
+		return success
+
+	def _store_artifact(self, artifact: CompileArtifact) -> bool:
+		if not artifact.success:
+			diagnostic = artifact.diagnostics[0] if artifact.diagnostics else None
+			if diagnostic is None:
+				self.snapshot = CompileSnapshot(False, "Compilation failed", 1, 1)
+			else:
+				message = diagnostic.message
+				if len(artifact.units) > 1 and diagnostic.path:
+					message = f"{diagnostic.path}: {message}"
+				self.snapshot = CompileSnapshot(False, message, diagnostic.line, diagnostic.column)
 			return False
-		ast = parse(tokens)
-		if ast.error is not None:
-			self._set_error(ast.error)
-			return False
-		semantic = SemanticAnalyzer().analyze(ast.value)
-		if semantic.error is not None:
-			self._set_error(semantic.error)
-			return False
-		optimized_ast = Optimizer().optimize(ast.value)
-		assembly = compile_ast(optimized_ast, filename)
-		if assembly.error is not None:
-			self._set_error(assembly.error)
-			return False
-		formatted = format_instructions(optimize(assembly.value, DEFAULT_PASSES))
-		bytecode = assemble(filename, formatted, emit_file=False)
-		if bytecode.error is not None:
-			self._set_error(bytecode.error)
-			return False
-		self.bytecode = tuple(bytecode.value)
-		self.snapshot = CompileSnapshot(True, assembly=formatted, bytecode_size=len(self.bytecode))
+		self.bytecode = artifact.program
+		self.snapshot = CompileSnapshot(True, assembly=artifact.assembly, bytecode_size=len(self.bytecode))
 		return True
 
 	def set_runtime_error(self, message: str) -> None:
+		self._compile_key = None
 		self.snapshot = CompileSnapshot(
 			False,
 			message,
@@ -328,12 +340,13 @@ class CompilerDevice:
 			if left_root != right_root:
 				parents[right_root] = left_root
 
+		name_indices = {name: index for index, name in enumerate(names)}
+		call_pattern = re.compile(r"\b(?:call\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 		for source_index, section in enumerate(sections):
 			body = "\n".join(item[1] for item in section["lines"])
-			for target_index, name in enumerate(names):
-				if source_index == target_index:
-					continue
-				if re.search(rf"\b(?:call\s+)?{re.escape(name)}\s*\(", body):
+			for called_name in set(call_pattern.findall(body)):
+				target_index = name_indices.get(called_name)
+				if target_index is not None and source_index != target_index:
 					union(source_index, target_index)
 
 		shell_by_root: dict[int, int] = {}

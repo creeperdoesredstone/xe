@@ -192,13 +192,18 @@ def make_library(name: str, members: dict[str, BaseSymbol]) -> LibrarySymbol:
 	return LibrarySymbol(name, Type("library"), members=members)
 
 
+def _declared_type(name: str) -> Type:
+	pointer_layers = len(name) - len(name.rstrip("*"))
+	return Type(name[:-pointer_layers] if pointer_layers else name, pointer_layers)
+
+
 def make_declared_library(spec) -> LibrarySymbol:
 	members = {
 		builtin.name: BuiltInSubroutineSymbol(
 			builtin.name,
 			Type("procedure" if builtin.is_proc else "function"),
-			parameters=[Type(parameter) for parameter in builtin.parameters],
-			return_type=(Type(builtin.return_type) if builtin.return_type else None),
+			parameters=[_declared_type(parameter) for parameter in builtin.parameters],
+			return_type=(_declared_type(builtin.return_type) if builtin.return_type else None),
 			is_proc=builtin.is_proc,
 			builtin_id=builtin.builtin_id,
 			reference_parameters=builtin.reference_parameters,
@@ -355,6 +360,13 @@ def init_libraries(scope: Scope):
 				size=2,
 				methods={},
 			)
+	graphics_library.members["Image"] = ClassSymbol(
+		"Image",
+		Type("Image"),
+		fields={"_handle": VariableSymbol("_handle", Type("int"), address=0)},
+		size=1,
+		methods={},
+	)
 	os_library = declared_libraries["os"]
 	os_library.members["File"] = ClassSymbol(
 		"File",
@@ -365,6 +377,15 @@ def init_libraries(scope: Scope):
 	)
 	scope.symbols["graphics"] = graphics_library
 	scope.symbols["os"] = os_library
+	audio_library = declared_libraries["audio"]
+	audio_library.members["Track"] = ClassSymbol(
+		"Track",
+		Type("Track"),
+		fields={"_handle": VariableSymbol("_handle", Type("int"), address=0)},
+		size=1,
+		methods={},
+	)
+	scope.symbols["audio"] = audio_library
 
 	scope.symbols["xestring"] = make_library(
 		"xestring",

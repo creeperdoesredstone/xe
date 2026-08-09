@@ -15,6 +15,7 @@ array shell_incremental_layout: int[8]
 array entry_render_x: int[64]
 array entry_render_y: int[64]
 array entry_render_depth: int[64]
+array entry_depth_order: int[64]
 array entry_node_radius: int[64]
 array entry_slot_start_x: int[64]
 array entry_slot_start_y: int[64]
@@ -23,10 +24,18 @@ array entry_slot_progress: int[64]
 array entry_slot_elapsed: int[64]
 array entry_slot_duration: int[64]
 array entry_name_cache: string[64]
+array entry_label_short_cache: string[64]
+array entry_label_short_width: int[64]
+array entry_label_full_width: int[64]
+array entry_name_length: int[64]
 array entry_directory_cache: int[64]
 array entry_child_count_cache: int[64]
 array entry_position_cache: int[64]
 array shell_population_cache: int[8]
+array shell_slot_cosine: float[64]
+array shell_slot_sine: float[64]
+array shell_render_radius: int[8]
+array orbit_command_stream: int[768]
 array entry_selected: int[64]
 array entry_delete_mark: int[64]
 array entry_preserved_angle: int[64]
@@ -138,6 +147,12 @@ var view_roll: int
 var shell_add_follows_rotation: bool
 var deletion_ghost_count: int
 var deletion_ghost_duration: int
+var depth_order_count: int
+var orbit_stream_dirty: bool
+var orbit_stream_words: int
+var orbit_stream_result: int
+var orbit_native_drawn: bool
+var slot_animation_active: bool
 
 # Placeholder visual tokens. Future asset work only needs to replace the five
 # draw_placeholder_* procedures below; filesystem and interaction code stays
@@ -156,6 +171,7 @@ var projection_roll_cos: float
 var projection_roll_sin: float
 var projection_rotation_cos: float
 var projection_rotation_sin: float
+var projection_depth_scale: float
 
 fn transition_ease(progress: int) int {
 	if (progress < 0) { progress = 0 }
@@ -213,6 +229,12 @@ proc prepare_orbit_projection(shell_tilt: int, roll: int, orientation: int) {
 	projection_roll_sin = math::sin((float)roll)
 	projection_rotation_cos = math::cos((float)orientation)
 	projection_rotation_sin = math::sin((float)orientation)
+	# The projected ellipse is identical for +tilt and -tilt because cosine is
+	# even. Depth therefore uses the same unsigned tilt magnitude; otherwise a
+	# vertical drag through zero visually keeps the same ellipse but swaps its
+	# foreground and background.
+	projection_depth_scale = math::sin((float)shell_tilt)
+	if (projection_depth_scale < 0.0) { projection_depth_scale = -projection_depth_scale }
 }
 
 proc orbit_project_components(radius: int, cosine: float, sine: float) {
@@ -222,7 +244,7 @@ proc orbit_project_components(radius: int, cosine: float, sine: float) {
 	plane_y = sine * (float)radius * projection_tilt_cos
 	projected_x = (int)(plane_x * projection_roll_cos - plane_y * projection_roll_sin)
 	projected_y = (int)(plane_x * projection_roll_sin + plane_y * projection_roll_cos)
-	projected_depth = (int)(-sine * (float)radius * projection_tilt_sin * 100.0)
+	projected_depth = (int)(-sine * (float)radius * projection_depth_scale * 100.0)
 }
 
 proc orbit_project(radius: int, angle: float) {
@@ -278,13 +300,12 @@ proc draw_placeholder_filled_circle(x: int, y: int, radius: int, color: int) {
 }
 
 proc draw_placeholder_nucleus(x: int, y: int, radius: int) {
-	var highlight_radius: int
 	call draw_placeholder_filled_circle(x, y, radius, visual_surface)
 	call draw_placeholder_circle(x, y, radius, visual_outline)
 	call draw_placeholder_circle(x, y, radius - 2, visual_accent)
-	highlight_radius = radius / 2
-	call orbit_project_rotation_offset(highlight_radius, -0.7071068, -0.7071068)
-	call draw_placeholder_pixel(x + projected_x, y + projected_y, visual_highlight)
+	# The highlight is screen-space lighting, not an orbiting decoration. Keeping
+	# it fixed prevents the nucleus from reading as a stale or rotating sprite.
+	call draw_placeholder_pixel(x - radius / 2, y - radius / 2, visual_highlight)
 }
 
 proc draw_placeholder_folder(x: int, y: int, radius: int, child_count: int, orbit_phase: int) {
@@ -299,8 +320,21 @@ proc draw_placeholder_folder(x: int, y: int, radius: int, child_count: int, orbi
 	var next_cosine: float
 	var step_cosine: float
 	var step_sine: float
-	call draw_placeholder_orb(x, y, radius)
-	call draw_placeholder_circle(x, y, radius - 2, visual_accent)
+	# The normal-size placeholder is the exact result of the primitive operations
+	# below, packed into one indexed sprite syscall. Zoom and fades retain the
+	# scalable primitive path.
+	if (radius == 4 && (visual_force_opaque || visual_fade >= 75)) {
+		if (visual_surface == graphics::COLOR_1) {
+			call graphics::draw_icon(explorer_window, x - 4, y - 4, 9, 9, "...888....88...88..8FAAA18.8.A111A.88.A111A.88.A111A.8.81AAA18..88...88....888...")
+		}
+		else {
+			call graphics::draw_icon(explorer_window, x - 4, y - 4, 9, 9, "...777....77...77..7FAAA87.7.A888A.77.A888A.77.A888A.7.78AAA87..77...77....777...")
+		}
+	}
+	else {
+		call draw_placeholder_orb(x, y, radius)
+		call draw_placeholder_circle(x, y, radius - 2, visual_accent)
+	}
 	dot_count = child_count
 	if (dot_count < 0) { dot_count = 0 }
 	if (dot_count > 8) { dot_count = 8 }
@@ -325,7 +359,15 @@ proc draw_placeholder_folder(x: int, y: int, radius: int, child_count: int, orbi
 }
 
 proc draw_placeholder_file(x: int, y: int, radius: int) {
-	if (visual_force_opaque || placeholder_pixel_visible(x, y)) {
+	if (radius == 3 && (visual_force_opaque || visual_fade >= 75)) {
+		if (visual_surface == graphics::COLOR_1) {
+			call graphics::draw_icon(explorer_window, x - 3, y - 4, 7, 9, "88888A0811111A8111118811111881111188111118811111881111188888888")
+		}
+		else {
+			call graphics::draw_icon(explorer_window, x - 3, y - 4, 7, 9, "77777A0788888A7888887788888778888877888887788888778888877777777")
+		}
+	}
+	elseif (visual_force_opaque || placeholder_pixel_visible(x, y)) {
 		call graphics::fill_rect(explorer_window, x - radius, y - radius - 1, radius * 2 + 1, radius * 2 + 3, placeholder_faded_color(visual_surface))
 		call graphics::draw_rect(explorer_window, x - radius, y - radius - 1, radius * 2 + 1, radius * 2 + 3, placeholder_faded_color(visual_outline))
 		call graphics::set_pixel(explorer_window, x + radius, y - radius - 1, graphics::COLOR_0)
@@ -347,8 +389,8 @@ proc draw_placeholder_shell(center_x: int, center_y: int, radius: int, shell_til
 	var plane_y: float
 	cosine = projection_rotation_cos
 	sine = projection_rotation_sin
-	step_cosine = math::cos(18.0)
-	step_sine = math::sin(18.0)
+	step_cosine = 0.95105652
+	step_sine = 0.3090170
 	point = 0
 	while (point < 20) {
 		plane_x = cosine * (float)radius
@@ -637,6 +679,29 @@ proc draw_explorer_text_centered(x: int, y: int, area_width: int, text: string, 
 		cursor_x += explorer_char_advance(text[index], font_size)
 		index += 1
 	}
+}
+
+proc refresh_entry_label_cache(index: int) {
+	var character: int
+	var length: int
+	var advance: int
+	entry_label_short_cache[index] = xestring::concat("", "")
+	entry_label_short_width[index] = 0
+	entry_label_full_width[index] = 0
+	length = xestring::strlen(entry_name_cache[index])
+	entry_name_length[index] = length
+	character = 0
+	while (character < length) {
+		advance = explorer_char_advance(entry_name_cache[index][character], graphics::FONT_SMALL)
+		entry_label_full_width[index] += advance
+		if (character < 4) {
+			call xestring::append_char(entry_label_short_cache[index], entry_name_cache[index][character])
+			entry_label_short_width[index] += advance
+		}
+		character += 1
+	}
+	if (entry_label_full_width[index] > 0) { entry_label_full_width[index] -= 1 }
+	if (entry_label_short_width[index] > 0) { entry_label_short_width[index] -= 1 }
 }
 
 fn explorer_join_path(parent: string, child: string) string {
@@ -973,6 +1038,68 @@ fn shell_slot_divisor(shell: int, population: int) int {
 	return population
 }
 
+proc prepare_shell_slot_projection() {
+	var shell: int
+	var position: int
+	var population: int
+	var divisor: int
+	var cache_index: int
+	var angle: float
+	var cosine: float
+	var sine: float
+	var next_cosine: float
+	var step_cosine: float
+	var step_sine: float
+	shell = 0
+	while (shell < shell_count) {
+		population = shell_population_cache[shell]
+		divisor = shell_slot_divisor(shell, population)
+		angle = (float)(rotation + shell_phase[shell] + shell * 17)
+		cosine = math::cos(angle)
+		sine = math::sin(angle)
+		step_cosine = math::cos(360.0 / (float)divisor)
+		step_sine = math::sin(360.0 / (float)divisor)
+		position = 0
+		while (position < population) {
+			cache_index = shell * 8 + position
+			shell_slot_cosine[cache_index] = cosine
+			shell_slot_sine[cache_index] = sine
+			next_cosine = cosine * step_cosine - sine * step_sine
+			sine = sine * step_cosine + cosine * step_sine
+			cosine = next_cosine
+			position += 1
+		}
+		shell += 1
+	}
+}
+
+proc update_incremental_depth_order(count: int) {
+	var index: int
+	var order_position: int
+	var order_entry: int
+	var order_previous: int
+	if (depth_order_count != count) {
+		index = 0
+		while (index < count) {
+			entry_depth_order[index] = index
+			index += 1
+		}
+		depth_order_count = count
+	}
+	index = 1
+	while (index < count) {
+		order_entry = entry_depth_order[index]
+		order_position = index
+		while (order_position > 0 && entry_render_depth[order_entry] < entry_render_depth[entry_depth_order[order_position - 1]]) {
+			order_previous = entry_depth_order[order_position - 1]
+			entry_depth_order[order_position] = order_previous
+			order_position -= 1
+		}
+		entry_depth_order[order_position] = order_entry
+		index += 1
+	}
+}
+
 proc rebuild_shell_layout() {
 	var shell: int
 	var index: int
@@ -990,6 +1117,7 @@ proc rebuild_shell_layout() {
 		shell_population_cache[shell] += 1
 		index += 1
 	}
+	orbit_stream_dirty = true
 }
 
 proc compact_energy_shells(entry_count: int) {
@@ -1025,6 +1153,7 @@ proc compact_energy_shells(entry_count: int) {
 
 proc begin_slot_animation_all() {
 	var index: int
+	slot_animation_active = true
 	index = 0
 	while (index < cached_entry_count) {
 		entry_slot_start_x[index] = entry_render_x[index]
@@ -1052,6 +1181,7 @@ proc align_shell_entry_to_angle(target_shell: int, target_entry: int, target_ang
 
 proc begin_slot_animation_for_shell(target_shell: int, duration: int) {
 	var index: int
+	slot_animation_active = true
 	index = 0
 	while (index < cached_entry_count) {
 		if (entry_shell[index] == target_shell) {
@@ -1093,6 +1223,7 @@ proc reset_energy_shells() {
 	index = 0
 	while (index < count) {
 		entry_name_cache[index] = os::entry_name(current_path, index)
+		call refresh_entry_label_cache(index)
 		if (os::entry_is_directory(current_path, index)) {
 			entry_directory_cache[index] = 1
 			entry_path = explorer_join_path(current_path, entry_name_cache[index])
@@ -1118,6 +1249,7 @@ proc reset_energy_shells() {
 	call rebuild_shell_layout()
 	call clear_entry_selection()
 	selection_anchor = -1
+	slot_animation_active = false
 }
 
 proc move_entry_into_folder(source_index: int, folder_index: int) {
@@ -1392,6 +1524,7 @@ proc refresh_compacted_entry_metadata() {
 	index = 0
 	while (index < cached_entry_count) {
 		entry_name_cache[index] = os::entry_name(current_path, index)
+		call refresh_entry_label_cache(index)
 		if (os::entry_is_directory(current_path, index)) {
 			entry_directory_cache[index] = 1
 			entry_path = explorer_join_path(current_path, entry_name_cache[index])
@@ -1404,6 +1537,57 @@ proc refresh_compacted_entry_metadata() {
 		}
 		index += 1
 	}
+	orbit_stream_dirty = true
+}
+
+proc rebuild_orbit_command_stream() {
+	var command: int
+	var shell_table: int
+	var item_table: int
+	var record: int
+	var shell: int
+	var index: int
+	command = graphics::COMMAND_HEADER_WORDS
+	shell_table = command + graphics::COMMAND_ORBIT_WORDS
+	item_table = shell_table + shell_count * graphics::COMMAND_ORBIT_SHELL_WORDS
+	orbit_stream_words = item_table + cached_entry_count * graphics::COMMAND_ORBIT_ITEM_WORDS
+	orbit_command_stream[graphics::COMMAND_HEADER_MAGIC_OFFSET] = graphics::COMMAND_MAGIC
+	orbit_command_stream[graphics::COMMAND_HEADER_VERSION_OFFSET] = graphics::COMMAND_VERSION
+	orbit_command_stream[graphics::COMMAND_HEADER_TOTAL_WORDS_OFFSET] = orbit_stream_words
+	orbit_command_stream[graphics::COMMAND_HEADER_COUNT_OFFSET] = 1
+	orbit_command_stream[graphics::COMMAND_HEADER_FIRST_OFFSET] = command
+	orbit_command_stream[graphics::COMMAND_HEADER_RESERVED_OFFSET] = 0
+	orbit_command_stream[graphics::COMMAND_HEADER_RESERVED_OFFSET + 1] = 0
+	orbit_command_stream[graphics::COMMAND_HEADER_RESERVED_OFFSET + 2] = 0
+	orbit_command_stream[command + graphics::COMMAND_ORBIT_OPCODE_OFFSET] = graphics::COMMAND_ORBIT_SCENE
+	orbit_command_stream[command + graphics::COMMAND_ORBIT_WORDS_OFFSET] = graphics::COMMAND_ORBIT_WORDS
+	orbit_command_stream[command + graphics::COMMAND_ORBIT_ENTRY_COUNT_OFFSET] = cached_entry_count
+	orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_COUNT_OFFSET] = shell_count
+	orbit_command_stream[command + graphics::COMMAND_ORBIT_ITEM_TABLE_OFFSET] = item_table
+	orbit_command_stream[command + graphics::COMMAND_ORBIT_ITEM_STRIDE_OFFSET] = graphics::COMMAND_ORBIT_ITEM_WORDS
+	orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_TABLE_OFFSET] = shell_table
+	orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_STRIDE_OFFSET] = graphics::COMMAND_ORBIT_SHELL_WORDS
+	orbit_command_stream[command + graphics::COMMAND_ORBIT_FLAGS_OFFSET] = graphics::COMMAND_ORBIT_DRAW_LABELS
+	orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_POINTS_OFFSET] = 20
+	shell = 0
+	while (shell < shell_count) {
+		record = shell_table + shell * graphics::COMMAND_ORBIT_SHELL_WORDS
+		orbit_command_stream[record + graphics::COMMAND_ORBIT_SHELL_PHASE_OFFSET] = shell_phase[shell]
+		orbit_command_stream[record + graphics::COMMAND_ORBIT_SHELL_POPULATION_OFFSET] = shell_population_cache[shell]
+		shell += 1
+	}
+	index = 0
+	while (index < cached_entry_count) {
+		record = item_table + index * graphics::COMMAND_ORBIT_ITEM_WORDS
+		orbit_command_stream[record + graphics::COMMAND_ORBIT_ITEM_SHELL_OFFSET] = entry_shell[index]
+		orbit_command_stream[record + graphics::COMMAND_ORBIT_ITEM_POSITION_OFFSET] = entry_position_cache[index]
+		orbit_command_stream[record + graphics::COMMAND_ORBIT_ITEM_DIRECTORY_OFFSET] = entry_directory_cache[index]
+		orbit_command_stream[record + graphics::COMMAND_ORBIT_ITEM_CHILD_COUNT_OFFSET] = entry_child_count_cache[index]
+		orbit_command_stream[record + graphics::COMMAND_ORBIT_ITEM_NAME_OFFSET] = index
+		orbit_command_stream[record + graphics::COMMAND_ORBIT_ITEM_SHORT_NAME_OFFSET] = index
+		index += 1
+	}
+	orbit_stream_dirty = false
 }
 
 proc prepare_context_delete() {
@@ -1475,6 +1659,7 @@ proc compact_deleted_entries() {
 		read_index += 1
 	}
 	cached_entry_count = write_index
+	slot_animation_active = cached_entry_count > 0
 	call compact_energy_shells(cached_entry_count)
 	shell = 0
 	while (shell < 8) {
@@ -2077,7 +2262,10 @@ proc draw_explorer_sidebar(x: int, y: int, max_height: int) {
 		if (interactive && graphics::mouse_pressed() && pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 23 && pointer_y < y + 33) {
 			drag_template = 2
 		}
-		danger_color = surface
+		# Idle trash is deliberately quieter than creation controls. It only becomes
+		# a danger target while a valid dragged selection is over it.
+		danger_color = graphics::COLOR_1
+		if (os::theme_mode == os::THEME_LIGHT) { danger_color = graphics::COLOR_8 }
 		if (drag_entry >= 0 && graphics::pointer_x(explorer_window) >= x + 3 && graphics::pointer_x(explorer_window) < x + sidebar_width - 3 && graphics::pointer_y(explorer_window) >= y + 38 && graphics::pointer_y(explorer_window) < y + 48) { danger_color = graphics::COLOR_4 }
 		call graphics::fill_rect(explorer_window, x + 3, y + 38, sidebar_width - 6, 10, danger_color)
 		call draw_explorer_text_centered(x + 3, y + 39, sidebar_width - 6, "Trash (Drag)", graphics::FONT_NORMAL, visual_outline)
@@ -2090,6 +2278,28 @@ proc draw_explorer_sidebar(x: int, y: int, max_height: int) {
 	}
 }
 
+proc draw_explorer_drag_overlay() {
+	var pointer_x: int
+	var pointer_y: int
+	pointer_x = graphics::pointer_x(explorer_window)
+	pointer_y = graphics::pointer_y(explorer_window)
+	visual_force_opaque = true
+	if (drag_entry >= 0 && graphics::mouse_down()) {
+		if (entry_directory_cache[drag_entry] != 0) {
+			call draw_placeholder_folder(pointer_x, pointer_y, 5, entry_child_count_cache[drag_entry], rotation + shell_phase[entry_shell[drag_entry]] + drag_entry * 31)
+		}
+		else { call draw_placeholder_file(pointer_x, pointer_y, 3) }
+		if (entry_selected[drag_entry] != 0 && selected_entry_count() > 1) {
+			call graphics::draw_int_small(explorer_window, pointer_x + 7, pointer_y - 8, selected_entry_count(), visual_highlight)
+		}
+	}
+	elseif (drag_template > 0 && graphics::mouse_down()) {
+		if (drag_template == 1) { call draw_placeholder_file(pointer_x, pointer_y, 3) }
+		else { call draw_placeholder_folder(pointer_x, pointer_y, 5, 0, nucleus_phase * 360 / 1200) }
+	}
+	visual_force_opaque = false
+}
+
 proc draw_cached_orbit_entry(index: int, center_x: int, center_y: int, area_width: int, transition_scale: int) {
 	var atom_x: int
 	var atom_y: int
@@ -2100,22 +2310,16 @@ proc draw_cached_orbit_entry(index: int, center_x: int, center_y: int, area_widt
 	var name_color: int
 	var label_dx: int
 	var label_dy: int
-	var label_length: float
-	var label_unit_x: float
-	var label_unit_y: float
-	var label_abs_unit_x: float
-	var label_abs_unit_y: float
-	var label_half_width: float
-	var label_half_height: float
-	var label_clearance: float
-	var label_candidate_distance: float
-	var label_cross: float
-	var label_radicand: float
-	var label_center_distance: float
 	var label_center_x: int
 	var label_center_y: int
 	var name_x: int
 	var name_y: int
+	var label_text: string
+	var label_abs_x: int
+	var label_abs_y: int
+	var label_norm: int
+	var label_offset: int
+	var clip_label: bool
 	atom_x = entry_render_x[index]
 	atom_y = entry_render_y[index]
 	node_radius = entry_node_radius[index]
@@ -2141,61 +2345,56 @@ proc draw_cached_orbit_entry(index: int, center_x: int, center_y: int, area_widt
 		}
 	}
 	if (transition_progress == 0 && drag_entry != index && (!drag_moved || !dragged_entry_in_group(index))) {
-		label_full_chars = xestring::strlen(entry_name_cache[index])
-		if (label_full_chars > (area_width - sidebar_width - 8) / 4) { label_full_chars = (area_width - sidebar_width - 8) / 4 }
-		if (label_full_chars < 1) { label_full_chars = 1 }
-		name_chars = 4
-		if (name_chars > label_full_chars) { name_chars = label_full_chars }
+		label_full_chars = entry_name_length[index]
+		clip_label = false
 		name_color = visual_shell
+		label_text = entry_label_short_cache[index]
+		name_width = entry_label_short_width[index]
 		if (camera_zoom >= 125) {
-			name_chars = label_full_chars
 			name_color = visual_outline
+			label_text = entry_name_cache[index]
+			name_width = entry_label_full_width[index]
+			name_chars = (area_width - sidebar_width - 8) / 4
+			if (name_chars < 1) { name_chars = 1 }
+			if (label_full_chars > name_chars) {
+				clip_label = true
+				name_width = explorer_text_width_clipped(label_text, name_chars, graphics::FONT_SMALL)
+			}
 		}
 		if (hovered_entry == index || entry_selected[index] != 0) {
-			name_chars = label_full_chars
 			name_color = visual_highlight
+			label_text = entry_name_cache[index]
+			name_width = entry_label_full_width[index]
+			name_chars = (area_width - sidebar_width - 8) / 4
+			if (name_chars < 1) { name_chars = 1 }
+			if (label_full_chars > name_chars) {
+				clip_label = true
+				name_width = explorer_text_width_clipped(label_text, name_chars, graphics::FONT_SMALL)
+			}
 		}
-		name_width = explorer_text_width_clipped(entry_name_cache[index], name_chars, graphics::FONT_SMALL)
 		if (name_width < 1) { name_width = 1 }
 		label_dx = atom_x - center_x
 		label_dy = atom_y - center_y
-		label_length = math::sqrt((float)(label_dx * label_dx + label_dy * label_dy))
-		if (label_length < 1.0) {
+		label_abs_x = label_dx
+		label_abs_y = label_dy
+		if (label_abs_x < 0) { label_abs_x = -label_abs_x }
+		if (label_abs_y < 0) { label_abs_y = -label_abs_y }
+		if (label_abs_x > label_abs_y) { label_norm = label_abs_x + label_abs_y * 3 / 8 }
+		else { label_norm = label_abs_y + label_abs_x * 3 / 8 }
+		if (label_norm < 1) {
 			label_dx = 0
 			label_dy = -1
-			label_length = 1.0
+			label_norm = 1
 		}
-		label_unit_x = (float)label_dx / label_length
-		label_unit_y = (float)label_dy / label_length
-		label_abs_unit_x = label_unit_x
-		label_abs_unit_y = label_unit_y
-		if (label_abs_unit_x < 0.0) { label_abs_unit_x = -label_abs_unit_x }
-		if (label_abs_unit_y < 0.0) { label_abs_unit_y = -label_abs_unit_y }
-		label_half_width = (float)name_width / 2.0
-		label_half_height = 2.5
-		label_clearance = (float)(node_radius + 3)
-		label_center_distance = 0.0
-		if (label_abs_unit_x > 0.001) {
-			label_candidate_distance = (label_clearance + label_half_width) / label_abs_unit_x
-			if (label_abs_unit_y * label_candidate_distance <= label_half_height) { label_center_distance = label_candidate_distance }
-		}
-		if (label_center_distance < 0.001 && label_abs_unit_y > 0.001) {
-			label_candidate_distance = (label_clearance + label_half_height) / label_abs_unit_y
-			if (label_abs_unit_x * label_candidate_distance <= label_half_width) { label_center_distance = label_candidate_distance }
-		}
-		if (label_center_distance < 0.001) {
-			label_cross = label_abs_unit_y * label_half_width - label_abs_unit_x * label_half_height
-			label_radicand = label_clearance * label_clearance - label_cross * label_cross
-			if (label_radicand < 0.0) { label_radicand = 0.0 }
-			label_center_distance = label_abs_unit_x * label_half_width + label_abs_unit_y * label_half_height + math::sqrt(label_radicand)
-		}
-		if (label_unit_x >= 0.0) { label_center_x = atom_x + (int)(label_unit_x * label_center_distance + 0.5) }
-		else { label_center_x = atom_x + (int)(label_unit_x * label_center_distance - 0.5) }
-		if (label_unit_y >= 0.0) { label_center_y = atom_y + (int)(label_unit_y * label_center_distance + 0.5) }
-		else { label_center_y = atom_y + (int)(label_unit_y * label_center_distance - 0.5) }
+		label_offset = node_radius + 4 + (label_abs_x * name_width / 2 + label_abs_y * 3) / label_norm
+		label_center_x = atom_x + label_dx * label_offset / label_norm
+		label_center_y = atom_y + label_dy * label_offset / label_norm
 		name_x = label_center_x - name_width / 2
 		name_y = label_center_y - 2
-		call draw_explorer_text_clipped(name_x, name_y, entry_name_cache[index], name_chars, name_color)
+		if (clip_label) {
+			call draw_explorer_text_clipped(name_x, name_y, label_text, name_chars, name_color)
+		}
+		else { call graphics::draw_text_small(explorer_window, name_x, name_y, label_text, name_color) }
 	}
 }
 
@@ -2263,8 +2462,6 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	var index: int
 	var shell: int
 	var position: int
-	var population: int
-	var angle: float
 	var radius: int
 	var atom_x: int
 	var atom_y: int
@@ -2326,6 +2523,10 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	var actual_target_shell: int
 	var target_depth: int
 	var drop_depth: int
+	var order_entry: int
+	var native_candidate: bool
+	var command: int
+	var shell_table: int
 	count = cached_entry_count
 	call prepare_orbit_projection(tilt, view_roll, rotation)
 	usable_width = area_width - sidebar_width
@@ -2428,9 +2629,14 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	shell = 0
 	while (shell < shell_count && transition_scale >= 24) {
 		radius = (30 + shell * shell_gap) * render_scale / 100
-		call draw_placeholder_shell(center_x, center_y, radius, tilt, view_roll)
+		shell_render_radius[shell] = radius
 		shell += 1
 	}
+	# All entries share a visual radius at a given viewport scale.
+	node_radius = (2 + outer_radius / 48) * render_scale / 100
+	if (node_radius < 2) { node_radius = 2 }
+	if (transition_progress == 0 && node_radius > 6) { node_radius = 6 }
+	elseif (transition_progress > 0 && node_radius > 12) { node_radius = 12 }
 	all_shells_full = true
 	shell = 0
 	while (shell < shell_count) {
@@ -2454,16 +2660,76 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		zoom_y = y + 2
 		zoom_controls_hovered = pointer_x >= zoom_minus_x - 1 && pointer_x < zoom_plus_x + 11 && pointer_y >= zoom_y - 1 && pointer_y < zoom_y + 10
 	}
+	orbit_native_drawn = false
+	native_candidate = transition_progress == 0 && !slot_animation_active && deletion_ghost_count == 0 && drag_entry < 0 && drag_template == 0 && camera_zoom == camera_zoom_target && visual_fade >= 100
+	if (native_candidate) {
+		if (orbit_stream_dirty) { call rebuild_orbit_command_stream() }
+		command = graphics::COMMAND_HEADER_WORDS
+		shell_table = command + graphics::COMMAND_ORBIT_WORDS
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_ENTRY_COUNT_OFFSET] = cached_entry_count
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_COUNT_OFFSET] = shell_count
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_SCENE_X_OFFSET] = x
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_SCENE_Y_OFFSET] = y
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_CENTER_X_OFFSET] = center_x
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_CENTER_Y_OFFSET] = center_y
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_AREA_WIDTH_OFFSET] = area_width
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_AREA_HEIGHT_OFFSET] = area_height
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_SIDEBAR_WIDTH_OFFSET] = sidebar_width
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_RENDER_SCALE_OFFSET] = render_scale
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_OUTER_RADIUS_OFFSET] = outer_radius
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_GAP_OFFSET] = shell_gap
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_CENTER_RADIUS_OFFSET] = center_radius
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_NODE_RADIUS_OFFSET] = node_radius
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_TILT_OFFSET] = tilt
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_ROLL_OFFSET] = view_roll
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_ROTATION_OFFSET] = rotation
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_SURFACE_OFFSET] = visual_surface
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_OUTLINE_OFFSET] = visual_outline
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_ACCENT_OFFSET] = visual_accent
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_COLOR_OFFSET] = visual_shell
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_HIGHLIGHT_OFFSET] = visual_highlight
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_POINTER_X_OFFSET] = pointer_x
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_POINTER_Y_OFFSET] = pointer_y
+		if (shell_button_hovered) { orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_HOVER_OFFSET] = 1 }
+		else { orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_HOVER_OFFSET] = 0 }
+		if (zoom_controls_hovered) { orbit_command_stream[command + graphics::COMMAND_ORBIT_ZOOM_HOVER_OFFSET] = 1 }
+		else { orbit_command_stream[command + graphics::COMMAND_ORBIT_ZOOM_HOVER_OFFSET] = 0 }
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_CAMERA_ZOOM_OFFSET] = camera_zoom
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_LABEL_LIMIT_OFFSET] = (area_width - sidebar_width - 8) / 4
+		shell = 0
+		while (shell < shell_count) {
+			orbit_command_stream[shell_table + shell * graphics::COMMAND_ORBIT_SHELL_WORDS + graphics::COMMAND_ORBIT_SHELL_PHASE_OFFSET] = shell_phase[shell]
+			orbit_command_stream[shell_table + shell * graphics::COMMAND_ORBIT_SHELL_WORDS + graphics::COMMAND_ORBIT_SHELL_POPULATION_OFFSET] = shell_population_cache[shell]
+			shell += 1
+		}
+		orbit_stream_result = graphics::draw_commands(explorer_window, orbit_command_stream, orbit_stream_words, entry_name_cache, entry_label_short_cache, entry_selected, entry_render_x, entry_render_y, entry_render_depth, entry_node_radius, entry_depth_order)
+		if (orbit_stream_result >= 0) {
+			orbit_native_drawn = true
+			hovered_entry = (orbit_stream_result & 255) - 1
+			hovered_shell = (orbit_stream_result / 256) % 256 - 1
+			if (hovered_entry >= 0 && interaction_allowed && graphics::mouse_pressed()) {
+				drag_entry = hovered_entry
+				drag_start_x = pointer_x
+				drag_start_y = pointer_y
+				drag_moved = false
+			}
+		}
+	}
+	if (!orbit_native_drawn) {
+		call prepare_shell_slot_projection()
+		shell = 0
+		while (shell < shell_count && transition_scale >= 24) {
+			call draw_placeholder_shell(center_x, center_y, shell_render_radius[shell], tilt, view_roll)
+			shell += 1
+		}
+		if (slot_animation_active) { slot_animation_active = false }
 	index = 0
 	while (index < count) {
 		shell = entry_shell[index]
 		if (shell >= shell_count) { shell = shell_count - 1; entry_shell[index] = shell }
-		population = shell_population_cache[shell]
 		position = entry_position_cache[index]
-		slot_divisor = shell_slot_divisor(shell, population)
-		angle = (float)(rotation + shell_phase[shell] + position * 360 / slot_divisor + shell * 17)
-		radius = (30 + shell * shell_gap) * render_scale / 100
-		call orbit_project(radius, angle)
+		radius = shell_render_radius[shell]
+		call orbit_project_components(radius, shell_slot_cosine[shell * 8 + position], shell_slot_sine[shell * 8 + position])
 		target_depth = projected_depth
 		entry_render_depth[index] = target_depth
 		if (transition_progress > 0 && transition_entry == index) { entry_render_depth[index] = 1 }
@@ -2490,13 +2756,10 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			atom_x = entry_slot_start_x[index] + (atom_x - entry_slot_start_x[index]) * slot_eased_progress / 100
 			atom_y = entry_slot_start_y[index] + (atom_y - entry_slot_start_y[index]) * slot_eased_progress / 100
 			entry_render_depth[index] = entry_slot_start_depth[index] + (target_depth - entry_slot_start_depth[index]) * slot_eased_progress / 100
+			if (entry_slot_progress[index] < 100) { slot_animation_active = true }
 		}
 		entry_render_x[index] = atom_x
 		entry_render_y[index] = atom_y
-		node_radius = (2 + outer_radius / 48) * render_scale / 100
-		if (node_radius < 2) { node_radius = 2 }
-		if (transition_progress == 0 && node_radius > 6) { node_radius = 6 }
-		elseif (transition_progress > 0 && node_radius > 12) { node_radius = 12 }
 		entry_node_radius[index] = node_radius
 		dx = pointer_x - atom_x
 		dy = pointer_y - atom_y
@@ -2517,9 +2780,14 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		}
 		index += 1
 	}
+	# Stable painter order is derived from the same projection used for hit
+	# testing and nucleus occlusion. This prevents entries on one side of a shell
+	# from popping across each other while the view is tilted.
+	call update_incremental_depth_order(count)
 	index = 0
 	while (index < count) {
-		if (entry_render_depth[index] < 0) { call draw_cached_orbit_entry(index, center_x, center_y, area_width, transition_scale) }
+		order_entry = entry_depth_order[index]
+		if (entry_render_depth[order_entry] < 0) { call draw_cached_orbit_entry(order_entry, center_x, center_y, area_width, transition_scale) }
 		index += 1
 	}
 	call draw_deletion_ghosts(false, center_x, center_y)
@@ -2528,10 +2796,12 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	visual_force_opaque = false
 	index = 0
 	while (index < count) {
-		if (entry_render_depth[index] >= 0) { call draw_cached_orbit_entry(index, center_x, center_y, area_width, transition_scale) }
+		order_entry = entry_depth_order[index]
+		if (entry_render_depth[order_entry] >= 0) { call draw_cached_orbit_entry(order_entry, center_x, center_y, area_width, transition_scale) }
 		index += 1
 	}
 	call draw_deletion_ghosts(true, center_x, center_y)
+	}
 	visual_fade = 100
 	dx = pointer_x - center_x
 	dy = pointer_y - center_y
@@ -2597,15 +2867,6 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		dx = pointer_x - drag_start_x
 		dy = pointer_y - drag_start_y
 		if (dx * dx + dy * dy > 9) { drag_moved = true }
-		if (entry_directory_cache[drag_entry] != 0) {
-			call draw_placeholder_folder(pointer_x, pointer_y, 5, entry_child_count_cache[drag_entry], rotation + shell_phase[entry_shell[drag_entry]] + drag_entry * 31)
-		}
-		else {
-			call draw_placeholder_file(pointer_x, pointer_y, 3)
-		}
-		if (entry_selected[drag_entry] != 0 && selected_entry_count() > 1) {
-			call graphics::draw_int_small(explorer_window, pointer_x + 7, pointer_y - 8, selected_entry_count(), visual_highlight)
-		}
 	}
 	if (drag_entry >= 0 && graphics::mouse_released()) {
 		if (!drag_moved) {
@@ -2680,14 +2941,6 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		}
 		drag_entry = -1
 	}
-	if (drag_template > 0 && graphics::mouse_down()) {
-		if (drag_template == 1) {
-			call draw_placeholder_file(pointer_x, pointer_y, 3)
-		}
-		else {
-			call draw_placeholder_folder(pointer_x, pointer_y, 5, 0, nucleus_phase * 360 / 1200)
-		}
-	}
 	if (drag_template > 0 && graphics::mouse_released()) {
 		target_shell = drop_target_shell
 		target_was_empty = target_shell >= 0 && shell_population_cache[target_shell] == 0
@@ -2702,6 +2955,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 				if (target_was_empty) { shell_incremental_layout[target_shell] = 1 }
 				created_entry = cached_entry_count
 				entry_name_cache[created_entry] = candidate_name
+				call refresh_entry_label_cache(created_entry)
 				if (drag_template == 2) { entry_directory_cache[created_entry] = 1 }
 				else { entry_directory_cache[created_entry] = 0 }
 				entry_child_count_cache[created_entry] = 0
@@ -2989,6 +3243,9 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 			call draw_explorer_sidebar(3, 12, height - 24)
 			if (marquee_active) { call draw_selection_marquee() }
 			call draw_explorer_text_clipped(3, height - 9, status_text, (width - 6) / 4, graphics::COLOR_7)
+			# Dragged items live above the collapsible drawer; modal panels below are
+			# rendered afterward and remain the topmost interaction layer.
+			call draw_explorer_drag_overlay()
 		}
 
 		if (width >= 104 && height >= 72 && graphics::mouse_pressed() && hovered_entry < 0 && drag_entry < 0 && drag_template == 0 && !shell_button_hovered && !zoom_controls_hovered && transition_progress == 0 && !context_open && !rename_open && !delete_confirm && !viewer_open && graphics::pointer_y(explorer_window) > 12 && graphics::pointer_x(explorer_window) > sidebar_width + 4) {
@@ -3070,5 +3327,4 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 	if (transition_progress >= 100 && !transition_committed) {
 		call commit_folder_transition()
 	}
-	call os::sleep(16)
 }

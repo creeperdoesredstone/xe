@@ -264,7 +264,7 @@ proc execute_terminal_command() {
 		call set_active_output("Previous command saved")
 	}
 	elseif (terminal_command == "about") {
-		call set_active_output("Xenon Terminal - deterministic Xe shell")
+		call set_active_output("Placeholder")
 	}
 	elseif (terminal_command == "exit") {
 		terminal_window.close()
@@ -891,5 +891,4 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 			}
 	}
 	call graphics::update(terminal_window)
-	call os::sleep(16)
 }

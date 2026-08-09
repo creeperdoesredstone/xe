@@ -10,6 +10,9 @@ var tab_3_command: string
 var tab_1_output: string
 var tab_2_output: string
 var tab_3_output: string
+var tab_1_cwd: string
+var tab_2_cwd: string
+var tab_3_cwd: string
 var history_1: string
 var history_2: string
 var history_3: string
@@ -17,10 +20,28 @@ var saved_1: string
 var saved_2: string
 var saved_3: string
 var terminal_echo: string
+var terminal_cwd: string
+var terminal_arg_0: string
+var terminal_arg_1: string
+var terminal_arg_2: string
+var terminal_arg_3: string
+var terminal_arg_4: string
+var terminal_arg_5: string
+var terminal_parse_ok: bool
+var terminal_arg_count: int
+var terminal_file: os::File
 array tab_split: int[3]
 array tab_monitor: int[3]
 array tab_text_large: int[3]
 array tab_theme: int[3]
+array tab_scroll_rows: int[3]
+array tab_follow_tail: int[3]
+array tab_new_output: int[3]
+array tab_horizontal_scroll: int[3]
+array tab_output_revision: int[3]
+array tab_layout_revision: int[3]
+array tab_layout_columns: int[3]
+array tab_layout_rows: int[3]
 var active_tab: int
 var tab_count: int
 var saved_list_open: bool
@@ -154,27 +175,253 @@ fn terminal_starts_with(text: string, prefix: string) bool {
 	return true
 }
 
+fn terminal_contains(text: string, needle: string) bool {
+	var start: int
+	var index: int
+	if (xestring::strlen(needle) == 0) { return true }
+	if (xestring::strlen(needle) > xestring::strlen(text)) { return false }
+	start = 0
+	while (start + xestring::strlen(needle) <= xestring::strlen(text)) {
+		index = 0
+		while (index < xestring::strlen(needle) && text[start + index] == needle[index]) { index += 1 }
+		if (index == xestring::strlen(needle)) { return true }
+		start += 1
+	}
+	return false
+}
+
+proc terminal_append_argument(index: int, value: char) {
+	if (index == 0) { call xestring::append_char(terminal_arg_0, value) }
+	elseif (index == 1) { call xestring::append_char(terminal_arg_1, value) }
+	elseif (index == 2) { call xestring::append_char(terminal_arg_2, value) }
+	elseif (index == 3) { call xestring::append_char(terminal_arg_3, value) }
+	elseif (index == 4) { call xestring::append_char(terminal_arg_4, value) }
+	elseif (index == 5) { call xestring::append_char(terminal_arg_5, value) }
+}
+
+fn terminal_argument(index: int) string {
+	if (index == 0) { return terminal_arg_0 }
+	if (index == 1) { return terminal_arg_1 }
+	if (index == 2) { return terminal_arg_2 }
+	if (index == 3) { return terminal_arg_3 }
+	if (index == 4) { return terminal_arg_4 }
+	return terminal_arg_5
+}
+
+proc terminal_parse_command() {
+	var index: int
+	var token: int
+	var quoted: bool
+	var escaped: bool
+	var value: int
+	call clear_terminal_text(terminal_arg_0)
+	call clear_terminal_text(terminal_arg_1)
+	call clear_terminal_text(terminal_arg_2)
+	call clear_terminal_text(terminal_arg_3)
+	call clear_terminal_text(terminal_arg_4)
+	call clear_terminal_text(terminal_arg_5)
+	terminal_arg_count = 0
+	terminal_parse_ok = true
+	index = 0
+	token = -1
+	quoted = false
+	escaped = false
+	while (index < xestring::strlen(terminal_command)) {
+		value = (int)(terminal_command[index])
+		if (escaped) {
+			if (token < 0) { token = 0 }
+			if (token < 6) { call terminal_append_argument(token, terminal_command[index]) }
+			escaped = false
+		}
+		elseif (value == 92 && quoted) {
+			escaped = true
+		}
+		elseif (value == 34) {
+			if (token < 0) { token = 0 }
+			quoted = !quoted
+		}
+		elseif (value == 32 && !quoted) {
+			if (token >= 0) {
+				if (token + 1 > terminal_arg_count) { terminal_arg_count = token + 1 }
+				token += 1
+				while (index + 1 < xestring::strlen(terminal_command) && (int)(terminal_command[index + 1]) == 32) { index += 1 }
+			}
+		}
+		else {
+			if (token < 0) { token = 0 }
+			if (token < 6) { call terminal_append_argument(token, terminal_command[index]) }
+		}
+		index += 1
+	}
+	if (escaped || quoted) { terminal_parse_ok = false }
+	if (token >= 0 && token + 1 > terminal_arg_count) { terminal_arg_count = token + 1 }
+	index = 0
+	while (index < xestring::strlen(terminal_arg_0)) {
+		value = (int)(terminal_arg_0[index])
+		if (value >= 65 && value <= 90) { terminal_arg_0[index] = (char)(value + 32) }
+		index += 1
+	}
+}
+
+proc append_terminal_number(target: string, value: int) {
+	var divisor: int
+	if (value < 0) {
+		call xestring::append_char(target, '-')
+		value = -value
+	}
+	divisor = 1
+	while (value / divisor >= 10 && divisor <= 100000000) { divisor *= 10 }
+	while (divisor > 0) {
+		call xestring::append_char(target, (char)(48 + (value / divisor) % 10))
+		divisor /= 10
+	}
+}
+
+proc terminal_join_arguments(target: string, first: int) {
+	var index: int
+	call clear_terminal_text(target)
+	index = first
+	while (index < terminal_arg_count && index < 6) {
+		if (xestring::strlen(target) > 0) { call xestring::append(target, " ") }
+		call xestring::append(target, terminal_argument(index))
+		index += 1
+	}
+}
+
+fn terminal_parse_positive(text: string, fallback: int) int {
+	var index: int
+	var value: int
+	var digit: int
+	if (xestring::strlen(text) == 0) { return fallback }
+	index = 0
+	value = 0
+	while (index < xestring::strlen(text)) {
+		digit = (int)(text[index]) - 48
+		if (digit < 0 || digit > 9) { return fallback }
+		value = value * 10 + digit
+		if (value > 9999) { return 9999 }
+		index += 1
+	}
+	return value
+}
+
+fn terminal_join_path(parent: string, child: string) string {
+	if (parent == "" || parent == ".") { return child }
+	return xestring::concat(xestring::concat(parent, "/"), child)
+}
+
+fn terminal_parent_path(path: string) string {
+	var result: string
+	var separator: int
+	var index: int
+	result = ""
+	separator = xestring::strlen(path) - 1
+	while (separator >= 0 && (int)(path[separator]) != 47 && (int)(path[separator]) != 92) { separator -= 1 }
+	if (separator < 0) { return "." }
+	index = 0
+	while (index < separator) {
+		call xestring::append_char(result, path[index])
+		index += 1
+	}
+	if (xestring::strlen(result) == 0) { call xestring::append(result, ".") }
+	return result
+}
+
+fn terminal_base_name(path: string) string {
+	var result: string
+	var index: int
+	result = ""
+	index = xestring::strlen(path) - 1
+	while (index >= 0 && (int)(path[index]) != 47 && (int)(path[index]) != 92) { index -= 1 }
+	index += 1
+	while (index < xestring::strlen(path)) {
+		call xestring::append_char(result, path[index])
+		index += 1
+	}
+	return result
+}
+
+fn terminal_resolve_path(path: string) string {
+	var result: string
+	var index: int
+	result = ""
+	if (path == "" || path == ".") { return terminal_cwd }
+	if (path == "/") { return "." }
+	if (path == "..") { return os::normalize_path(terminal_parent_path(terminal_cwd)) }
+	if ((int)(path[0]) == 47 || (int)(path[0]) == 92) {
+		index = 1
+		while (index < xestring::strlen(path)) {
+			call xestring::append_char(result, path[index])
+			index += 1
+		}
+		if (xestring::strlen(result) == 0) { call xestring::append(result, ".") }
+		return os::normalize_path(result)
+	}
+	return os::normalize_path(terminal_join_path(terminal_cwd, path))
+}
+
+fn terminal_path_is_directory(path: string) bool {
+	return os::is_directory(path)
+}
+
+proc terminal_trim_output(text: string) {
+	var begin: int
+	var source: int
+	var destination: int
+	if (xestring::strlen(text) <= 4096) { return }
+	begin = xestring::strlen(text) - 3072
+	while (begin < xestring::strlen(text) && (int)(text[begin]) != 10) { begin += 1 }
+	if (begin < xestring::strlen(text)) { begin += 1 }
+	source = begin
+	destination = 0
+	while (source < xestring::strlen(text)) {
+		text[destination] = text[source]
+		destination += 1
+		source += 1
+	}
+	text[destination] = '\0'
+	call xestring::update_length(text)
+}
+
+proc terminal_mark_output() {
+	tab_output_revision[active_tab] += 1
+	if (tab_follow_tail[active_tab] != 0) {
+		tab_scroll_rows[active_tab] = 0
+		tab_new_output[active_tab] = 0
+	}
+	else {
+		tab_new_output[active_tab] += 1
+		if (tab_new_output[active_tab] > 99) { tab_new_output[active_tab] = 99 }
+	}
+}
+
 proc save_active_command() {
 	if (active_tab == 0) {
 		call set_terminal_text(tab_1_command, terminal_command)
+		call set_terminal_text(tab_1_cwd, terminal_cwd)
 	}
 	elseif (active_tab == 1) {
 		call set_terminal_text(tab_2_command, terminal_command)
+		call set_terminal_text(tab_2_cwd, terminal_cwd)
 	}
 	else {
 		call set_terminal_text(tab_3_command, terminal_command)
+		call set_terminal_text(tab_3_cwd, terminal_cwd)
 	}
 }
 
 proc load_active_command() {
 	if (active_tab == 0) {
 		call set_terminal_text(terminal_command, tab_1_command)
+		call set_terminal_text(terminal_cwd, tab_1_cwd)
 	}
 	elseif (active_tab == 1) {
 		call set_terminal_text(terminal_command, tab_2_command)
+		call set_terminal_text(terminal_cwd, tab_2_cwd)
 	}
 	else {
 		call set_terminal_text(terminal_command, tab_3_command)
+		call set_terminal_text(terminal_cwd, tab_3_cwd)
 	}
 	terminal_selected_all = false
 }
@@ -189,6 +436,11 @@ proc clear_active_output() {
 	else {
 		call clear_terminal_text(tab_3_output)
 	}
+	tab_scroll_rows[active_tab] = 0
+	tab_follow_tail[active_tab] = 1
+	tab_new_output[active_tab] = 0
+	tab_horizontal_scroll[active_tab] = 0
+	tab_output_revision[active_tab] += 1
 }
 
 proc append_output_text(target: string, text: string) {
@@ -206,13 +458,17 @@ proc append_output_text(target: string, text: string) {
 proc set_active_output(text: string) {
 	if (active_tab == 0) {
 		call append_output_text(tab_1_output, text)
+		call terminal_trim_output(tab_1_output)
 	}
 	elseif (active_tab == 1) {
 		call append_output_text(tab_2_output, text)
+		call terminal_trim_output(tab_2_output)
 	}
 	else {
 		call append_output_text(tab_3_output, text)
+		call terminal_trim_output(tab_3_output)
 	}
+	call terminal_mark_output()
 }
 
 proc switch_terminal_tab(next_tab: int) {
@@ -241,19 +497,30 @@ proc initialize_terminal_tab(index: int) {
 	if (index == 0) {
 		call clear_terminal_text(tab_1_command)
 		call set_terminal_text(tab_1_output, "New terminal tab")
+		call set_terminal_text(tab_1_cwd, ".")
 	}
 	elseif (index == 1) {
 		call clear_terminal_text(tab_2_command)
 		call set_terminal_text(tab_2_output, "New terminal tab")
+		call set_terminal_text(tab_2_cwd, ".")
 	}
 	else {
 		call clear_terminal_text(tab_3_command)
 		call set_terminal_text(tab_3_output, "New terminal tab")
+		call set_terminal_text(tab_3_cwd, ".")
 	}
 	tab_split[index] = 0
 	tab_monitor[index] = 0
 	tab_text_large[index] = 1
 	tab_theme[index] = 0
+	tab_scroll_rows[index] = 0
+	tab_follow_tail[index] = 1
+	tab_new_output[index] = 0
+	tab_horizontal_scroll[index] = 0
+	tab_output_revision[index] += 1
+	tab_layout_revision[index] = -1
+	tab_layout_columns[index] = 0
+	tab_layout_rows[index] = 1
 }
 
 proc remove_terminal_tab(index: int) {
@@ -263,22 +530,27 @@ proc remove_terminal_tab(index: int) {
 	if (index == 0) {
 		call set_terminal_text(tab_1_command, tab_2_command)
 		call set_terminal_text(tab_1_output, tab_2_output)
+		call set_terminal_text(tab_1_cwd, tab_2_cwd)
 		if (tab_count == 3) {
 			call set_terminal_text(tab_2_command, tab_3_command)
 			call set_terminal_text(tab_2_output, tab_3_output)
+			call set_terminal_text(tab_2_cwd, tab_3_cwd)
 		}
 	}
 	elseif (index == 1 && tab_count == 3) {
 		call set_terminal_text(tab_2_command, tab_3_command)
 		call set_terminal_text(tab_2_output, tab_3_output)
+		call set_terminal_text(tab_2_cwd, tab_3_cwd)
 	}
 	if (tab_count == 3) {
 		call clear_terminal_text(tab_3_command)
 		call set_terminal_text(tab_3_output, "Third terminal tab")
+		call set_terminal_text(tab_3_cwd, ".")
 	}
 	else {
 		call clear_terminal_text(tab_2_command)
 		call set_terminal_text(tab_2_output, "Second terminal tab")
+		call set_terminal_text(tab_2_cwd, ".")
 	}
 	shift_index = index
 	while (shift_index < tab_count - 1) {
@@ -286,6 +558,14 @@ proc remove_terminal_tab(index: int) {
 		tab_monitor[shift_index] = tab_monitor[shift_index + 1]
 		tab_text_large[shift_index] = tab_text_large[shift_index + 1]
 		tab_theme[shift_index] = tab_theme[shift_index + 1]
+		tab_scroll_rows[shift_index] = tab_scroll_rows[shift_index + 1]
+		tab_follow_tail[shift_index] = tab_follow_tail[shift_index + 1]
+		tab_new_output[shift_index] = tab_new_output[shift_index + 1]
+		tab_horizontal_scroll[shift_index] = tab_horizontal_scroll[shift_index + 1]
+		tab_output_revision[shift_index] = tab_output_revision[shift_index + 1]
+		tab_layout_revision[shift_index] = tab_layout_revision[shift_index + 1]
+		tab_layout_columns[shift_index] = tab_layout_columns[shift_index + 1]
+		tab_layout_rows[shift_index] = tab_layout_rows[shift_index + 1]
 		shift_index += 1
 	}
 	if (active_tab > index) { active_tab -= 1 }
@@ -324,72 +604,334 @@ proc save_terminal_command(text: string) {
 	}
 }
 
+proc terminal_list_directory(path: string) {
+	var index: int
+	call clear_terminal_text(terminal_echo)
+	index = 0
+	while (index < os::entry_count(path) && xestring::strlen(terminal_echo) < 1800) {
+		if (xestring::strlen(terminal_echo) > 0) { call xestring::append(terminal_echo, "\n") }
+		if (os::entry_is_directory(path, index)) { call xestring::append(terminal_echo, "[D] ") }
+		else { call xestring::append(terminal_echo, "    ") }
+		call xestring::append(terminal_echo, os::entry_name(path, index))
+		index += 1
+	}
+	if (xestring::strlen(terminal_echo) == 0) { call xestring::append(terminal_echo, "Directory is empty") }
+}
+
+proc terminal_tree_directory(path: string, prefix: string, depth: int) {
+	var index: int
+	var child: string
+	var next_prefix: string
+	if (depth > 3 || xestring::strlen(terminal_echo) >= 1800) { return }
+	index = 0
+	while (index < os::entry_count(path) && xestring::strlen(terminal_echo) < 1800) {
+		if (xestring::strlen(terminal_echo) > 0) { call xestring::append(terminal_echo, "\n") }
+		call xestring::append(terminal_echo, prefix)
+		call xestring::append(terminal_echo, "|- ")
+		call xestring::append(terminal_echo, os::entry_name(path, index))
+		if (os::entry_is_directory(path, index)) {
+			child = terminal_join_path(path, os::entry_name(path, index))
+			next_prefix = xestring::concat(prefix, "   ")
+			call terminal_tree_directory(child, next_prefix, depth + 1)
+		}
+		index += 1
+	}
+}
+
+proc terminal_read_path(path: string) {
+	call clear_terminal_text(terminal_echo)
+	terminal_file = os::open_read(path)
+	call xestring::append(terminal_echo, os::read(terminal_file))
+	call os::close(path)
+}
+
+fn terminal_write_path(path: string, text: string) bool {
+	var success: bool
+	terminal_file = os::open_write(path)
+	success = os::write(terminal_file, text)
+	call os::close(path)
+	return success
+}
+
+proc terminal_append_path(path: string, text: string) {
+	var success: bool
+	terminal_file = os::open_append(path)
+	success = os::write(terminal_file, text)
+	call os::close(path)
+	if (success) { call set_active_output("Appended") }
+	else { call set_active_output("Append failed") }
+}
+
+proc terminal_head_text(text: string, line_limit: int, from_end: bool) {
+	var index: int
+	var start: int
+	var lines: int
+	call clear_terminal_text(terminal_echo)
+	if (line_limit < 1) { line_limit = 1 }
+	if (!from_end) {
+		index = 0
+		lines = 0
+		while (index < xestring::strlen(text) && lines < line_limit) {
+			call xestring::append_char(terminal_echo, text[index])
+			if ((int)(text[index]) == 10) { lines += 1 }
+			index += 1
+		}
+	}
+	else {
+		start = xestring::strlen(text)
+		lines = 0
+		while (start > 0 && lines < line_limit) {
+			start -= 1
+			if ((int)(text[start]) == 10 && start + 1 < xestring::strlen(text)) { lines += 1 }
+		}
+		if (lines == line_limit && (int)(text[start]) == 10) { start += 1 }
+		index = start
+		while (index < xestring::strlen(text)) {
+			call xestring::append_char(terminal_echo, text[index])
+			index += 1
+		}
+	}
+}
+
+proc terminal_word_count(text: string) {
+	var index: int
+	var words: int
+	var lines: int
+	var inside_word: bool
+	index = 0
+	words = 0
+	lines = 1
+	inside_word = false
+	while (index < xestring::strlen(text)) {
+		if ((int)(text[index]) == 10) { lines += 1 }
+		if ((int)(text[index]) == 32 || (int)(text[index]) == 9 || (int)(text[index]) == 10) {
+			inside_word = false
+		}
+		elseif (!inside_word) {
+			words += 1
+			inside_word = true
+		}
+		index += 1
+	}
+	call clear_terminal_text(terminal_echo)
+	call xestring::append(terminal_echo, "lines ")
+	call append_terminal_number(terminal_echo, lines)
+	call xestring::append(terminal_echo, "  words ")
+	call append_terminal_number(terminal_echo, words)
+	call xestring::append(terminal_echo, "  chars ")
+	call append_terminal_number(terminal_echo, xestring::strlen(text))
+}
+
+proc terminal_find_entries(path: string, needle: string, depth: int) {
+	var index: int
+	var name: string
+	var child: string
+	if (depth > 3 || xestring::strlen(terminal_echo) >= 1800) { return }
+	index = 0
+	while (index < os::entry_count(path) && xestring::strlen(terminal_echo) < 1800) {
+		name = os::entry_name(path, index)
+		child = terminal_join_path(path, name)
+		if (terminal_contains(name, needle)) {
+			if (xestring::strlen(terminal_echo) > 0) { call xestring::append(terminal_echo, "\n") }
+			call xestring::append(terminal_echo, child)
+		}
+		if (os::entry_is_directory(path, index)) { call terminal_find_entries(child, needle, depth + 1) }
+		index += 1
+	}
+}
+
 proc execute_terminal_command() {
-	var echo_index: int
+	var path: string
+	var destination: string
+	var text: string
+	var count: int
+	var source_text: string
+	var success: bool
+	path = ""
+	destination = ""
+	text = ""
+	source_text = ""
 	if (xestring::strlen(terminal_command) == 0) {
 		call clear_terminal_text(terminal_command)
 		terminal_selected_all = false
 		return
 	}
-	elseif (terminal_command == "help") {
-		call set_active_output("\nhelp - Shows this message\nclear/cls - Clears the terminal\necho - Echos the passed message\ndate - Shows the current date\ntime - Shows the current time\nuptime - Shows the resource monitor\nmonitor on/off - Toggles the resource monitor\npwd - Prints the working directory\ndir/ls - Lists all files in working directory\nhistory - Allows history viewing\nsaved - Toggles saved commands list\nsave - Saves previous command\nabout - View terminal info\nversion - View terminal version\nwhoami - View user\nsplit - Toggle split view\ntheme xenon/amber/mono - Change theme\ntext small/large - Change text size\nexit - Exits terminal")
+	call terminal_parse_command()
+	if (!terminal_parse_ok) {
+		call set_active_output("Syntax error: close the quote or escape it with backslash")
 	}
-	elseif (terminal_command == "clear" || terminal_command == "cls") {
+	elseif (terminal_arg_0 == "help") {
+		call set_active_output("help clear echo date time uptime pwd ls dir cd tree cat type head tail touch mkdir rm del ren mv cp write append find wc history saved save xe-check xe-run about version whoami split monitor text theme exit\nUse quotes around paths or text containing spaces. Output is sandboxed to the Xenon virtual drive.")
+	}
+	elseif (terminal_arg_0 == "clear" || terminal_arg_0 == "cls") {
 		call clear_active_output()
 	}
-	elseif (terminal_command == "date") {
+	elseif (terminal_arg_0 == "date") {
 		call format_terminal_date(terminal_echo)
 		call set_active_output(terminal_echo)
 	}
-	elseif (terminal_command == "time") {
+	elseif (terminal_arg_0 == "time") {
 		call format_terminal_time(terminal_echo)
 		call set_active_output(terminal_echo)
 	}
-	elseif (terminal_command == "uptime") {
+	elseif (terminal_arg_0 == "uptime") {
 		tab_monitor[active_tab] = 1
 		call set_active_output("Uptime monitor enabled for this tab")
 	}
-	elseif (terminal_command == "pwd") {
-		call set_active_output("/")
+	elseif (terminal_arg_0 == "pwd") {
+		if (terminal_cwd == ".") { call set_active_output("/") }
+		else { call set_active_output(xestring::concat("/", terminal_cwd)) }
 	}
-	elseif (terminal_command == "dir" || terminal_command == "ls") {
-		call clear_terminal_text(terminal_echo)
-		echo_index = 0
-		while (echo_index < os::entry_count(".")) {
-			if (xestring::strlen(terminal_echo) > 0) {
-				call xestring::append(terminal_echo, "  ")
-			}
-			if (os::entry_is_directory(".", echo_index)) {
-				call xestring::append(terminal_echo, "[")
-			}
-			call xestring::append(terminal_echo, os::entry_name(".", echo_index))
-			if (os::entry_is_directory(".", echo_index)) {
-				call xestring::append(terminal_echo, "]")
-			}
-			echo_index += 1
-		}
-		if (xestring::strlen(terminal_echo) == 0) {
-			call xestring::append(terminal_echo, "Directory is empty")
-		}
+	elseif (terminal_arg_0 == "dir" || terminal_arg_0 == "ls") {
+		path = terminal_resolve_path(terminal_arg_1)
+		call terminal_list_directory(path)
 		call set_active_output(terminal_echo)
 	}
-	elseif (terminal_command == "split on") {
+	elseif (terminal_arg_0 == "cd") {
+		path = terminal_resolve_path(terminal_arg_1)
+		if (terminal_path_is_directory(path)) {
+			call set_terminal_text(terminal_cwd, path)
+			call save_active_command()
+			if (terminal_cwd == ".") { call set_active_output("/") }
+			else { call set_active_output(xestring::concat("/", terminal_cwd)) }
+		}
+		else { call set_active_output("cd: directory not found") }
+	}
+	elseif (terminal_arg_0 == "tree") {
+		path = terminal_resolve_path(terminal_arg_1)
+		call clear_terminal_text(terminal_echo)
+		call xestring::append(terminal_echo, terminal_base_name(path))
+		call terminal_tree_directory(path, "", 0)
+		call set_active_output(terminal_echo)
+	}
+	elseif (terminal_arg_0 == "cat" || terminal_arg_0 == "type") {
+		if (xestring::strlen(terminal_arg_1) == 0) { call set_active_output("Usage: cat <file>") }
+		else {
+			path = terminal_resolve_path(terminal_arg_1)
+			if (!os::path_exists(path) || terminal_path_is_directory(path)) { call set_active_output("cat: file not found") }
+			else {
+				call terminal_read_path(path)
+				call set_active_output(terminal_echo)
+			}
+		}
+	}
+	elseif (terminal_arg_0 == "head" || terminal_arg_0 == "tail") {
+		if (xestring::strlen(terminal_arg_1) == 0) { call set_active_output("Usage: head <file> [lines]") }
+		else {
+			path = terminal_resolve_path(terminal_arg_1)
+			if (!os::path_exists(path) || terminal_path_is_directory(path)) { call set_active_output("File not found") }
+			else {
+				call terminal_read_path(path)
+				count = terminal_parse_positive(terminal_arg_2, 10)
+				source_text = xestring::concat("", terminal_echo)
+				call terminal_head_text(source_text, count, terminal_arg_0 == "tail")
+				call set_active_output(terminal_echo)
+			}
+		}
+	}
+	elseif (terminal_arg_0 == "touch") {
+		path = terminal_resolve_path(terminal_arg_1)
+		if (xestring::strlen(terminal_arg_1) == 0) { call set_active_output("Usage: touch <file>") }
+		elseif (os::path_exists(path)) { call set_active_output("File already exists") }
+		elseif (os::make_file(path)) { call set_active_output("File created") }
+		else { call set_active_output("Create failed") }
+	}
+	elseif (terminal_arg_0 == "mkdir") {
+		path = terminal_resolve_path(terminal_arg_1)
+		if (xestring::strlen(terminal_arg_1) == 0) { call set_active_output("Usage: mkdir <folder>") }
+		elseif (os::make_directory(path)) { call set_active_output("Directory created") }
+		else { call set_active_output("Create failed") }
+	}
+	elseif (terminal_arg_0 == "rm" || terminal_arg_0 == "del") {
+		path = terminal_resolve_path(terminal_arg_1)
+		if (xestring::strlen(terminal_arg_1) == 0) { call set_active_output("Usage: rm <path>") }
+		elseif (os::delete(path)) { call set_active_output("Moved to virtual trash") }
+		else { call set_active_output("Delete failed") }
+	}
+	elseif (terminal_arg_0 == "ren" || terminal_arg_0 == "mv") {
+		path = terminal_resolve_path(terminal_arg_1)
+		destination = terminal_resolve_path(terminal_arg_2)
+		if (xestring::strlen(terminal_arg_1) == 0 || xestring::strlen(terminal_arg_2) == 0) { call set_active_output("Usage: mv <source> <destination>") }
+		elseif (os::rename(path, destination)) { call set_active_output("Moved") }
+		else { call set_active_output("Move failed") }
+	}
+	elseif (terminal_arg_0 == "cp") {
+		path = terminal_resolve_path(terminal_arg_1)
+		destination = terminal_resolve_path(terminal_arg_2)
+		if (xestring::strlen(terminal_arg_1) == 0 || xestring::strlen(terminal_arg_2) == 0) { call set_active_output("Usage: cp <source> <destination>") }
+		elseif (!os::path_exists(path)) { call set_active_output("Copy source not found") }
+		elseif (os::path_exists(destination)) { call set_active_output("Copy destination already exists") }
+		elseif (os::copy(path, destination)) { call set_active_output("Copied") }
+		else { call set_active_output("Copy failed") }
+	}
+	elseif (terminal_arg_0 == "write") {
+		path = terminal_resolve_path(terminal_arg_1)
+		call terminal_join_arguments(text, 2)
+		if (xestring::strlen(terminal_arg_1) == 0) { call set_active_output("Usage: write <file> <text>") }
+		elseif (terminal_write_path(path, text)) { call set_active_output("Written") }
+		else { call set_active_output("Write failed") }
+	}
+	elseif (terminal_arg_0 == "append") {
+		path = terminal_resolve_path(terminal_arg_1)
+		call terminal_join_arguments(text, 2)
+		if (xestring::strlen(terminal_arg_1) == 0) { call set_active_output("Usage: append <file> <text>") }
+		else { call terminal_append_path(path, text) }
+	}
+	elseif (terminal_arg_0 == "find") {
+		call clear_terminal_text(terminal_echo)
+		if (xestring::strlen(terminal_arg_1) == 0) { call set_active_output("Usage: find <name> [path]") }
+		else {
+			path = terminal_resolve_path(terminal_arg_2)
+			call terminal_find_entries(path, terminal_arg_1, 0)
+			if (xestring::strlen(terminal_echo) == 0) { call xestring::append(terminal_echo, "No matches") }
+			call set_active_output(terminal_echo)
+		}
+	}
+	elseif (terminal_arg_0 == "wc") {
+		path = terminal_resolve_path(terminal_arg_1)
+		if (xestring::strlen(terminal_arg_1) == 0 || !os::path_exists(path)) { call set_active_output("Usage: wc <file>") }
+		else {
+			call terminal_read_path(path)
+			source_text = xestring::concat("", terminal_echo)
+			call terminal_word_count(source_text)
+			call set_active_output(terminal_echo)
+		}
+	}
+	elseif (terminal_arg_0 == "xe-check") {
+		path = terminal_resolve_path(terminal_arg_1)
+		if (xestring::strlen(terminal_arg_1) == 0 || !os::path_exists(path)) { call set_active_output("Usage: xe-check <file.xe>") }
+		else {
+			call terminal_read_path(path)
+			if (compiler::check(terminal_echo)) { call set_active_output("Xe check passed") }
+			else { call set_active_output("Xe check failed") }
+		}
+	}
+	elseif (terminal_arg_0 == "xe-run") {
+		path = terminal_resolve_path(terminal_arg_1)
+		if (xestring::strlen(terminal_arg_1) == 0 || !os::path_exists(path)) { call set_active_output("Usage: xe-run <file.xe>") }
+		else {
+			call terminal_read_path(path)
+			source_text = compiler::run(terminal_echo)
+			call set_active_output(source_text)
+		}
+	}
+	elseif (terminal_arg_0 == "split" && terminal_arg_1 == "on") {
 		tab_split[active_tab] = 1
 		call set_active_output("Split view enabled")
 	}
-	elseif (terminal_command == "split off") {
+	elseif (terminal_arg_0 == "split" && terminal_arg_1 == "off") {
 		tab_split[active_tab] = 0
 		call set_active_output("Split view disabled")
 	}
-	elseif (terminal_command == "monitor on") {
+	elseif (terminal_arg_0 == "monitor" && terminal_arg_1 == "on") {
 		tab_monitor[active_tab] = 1
 		call set_active_output("Resource monitor enabled")
 	}
-	elseif (terminal_command == "monitor off") {
+	elseif (terminal_arg_0 == "monitor" && terminal_arg_1 == "off") {
 		tab_monitor[active_tab] = 0
 		call set_active_output("Resource monitor disabled")
 	}
-	elseif (terminal_command == "split") {
+	elseif (terminal_arg_0 == "split") {
 		if (active_terminal_split()) {
 			tab_split[active_tab] = 0
 			call set_active_output("Split view disabled")
@@ -399,7 +941,7 @@ proc execute_terminal_command() {
 			call set_active_output("Split view enabled")
 		}
 	}
-	elseif (terminal_command == "monitor") {
+	elseif (terminal_arg_0 == "monitor") {
 		if (active_terminal_monitor()) {
 			tab_monitor[active_tab] = 0
 			call set_active_output("Resource monitor disabled")
@@ -409,15 +951,15 @@ proc execute_terminal_command() {
 			call set_active_output("Resource monitor enabled")
 		}
 	}
-	elseif (terminal_command == "text large") {
+	elseif (terminal_arg_0 == "text" && terminal_arg_1 == "large") {
 		tab_text_large[active_tab] = 1
 		call set_active_output("Terminal text set to large")
 	}
-	elseif (terminal_command == "text small") {
+	elseif (terminal_arg_0 == "text" && terminal_arg_1 == "small") {
 		tab_text_large[active_tab] = 0
 		call set_active_output("Terminal text set to small")
 	}
-	elseif (terminal_command == "text") {
+	elseif (terminal_arg_0 == "text") {
 		if (active_terminal_text_large()) {
 			tab_text_large[active_tab] = 0
 			call set_active_output("Terminal text set to small")
@@ -427,41 +969,43 @@ proc execute_terminal_command() {
 			call set_active_output("Terminal text set to large")
 		}
 	}
-	elseif (terminal_command == "theme") {
+	elseif (terminal_arg_0 == "theme") {
 		tab_theme[active_tab] += 1
 		if (tab_theme[active_tab] > 2) { tab_theme[active_tab] = 0 }
 		call set_active_output("Terminal theme changed for this tab")
 	}
-	elseif (terminal_command == "history") {
-		call set_active_output("Up/Down recalls: 1 newest, then 2 and 3")
+	elseif (terminal_arg_0 == "history") {
+		call clear_terminal_text(terminal_echo)
+		call xestring::append(terminal_echo, "1  ")
+		call xestring::append(terminal_echo, history_1)
+		call xestring::append(terminal_echo, "\n2  ")
+		call xestring::append(terminal_echo, history_2)
+		call xestring::append(terminal_echo, "\n3  ")
+		call xestring::append(terminal_echo, history_3)
+		call set_active_output(terminal_echo)
 	}
-	elseif (terminal_command == "saved") {
+	elseif (terminal_arg_0 == "saved") {
 		saved_list_open = !saved_list_open
 		call set_active_output("Saved command list toggled")
 	}
-	elseif (terminal_command == "save") {
+	elseif (terminal_arg_0 == "save") {
 		call save_terminal_command(history_1)
 		call set_active_output("Previous command saved")
 	}
-	elseif (terminal_command == "about") {
+	elseif (terminal_arg_0 == "about") {
 		call set_active_output("Placeholder")
 	}
-	elseif (terminal_command == "version") {
+	elseif (terminal_arg_0 == "version") {
 		call set_active_output("Xenon Terminal 1.0 / Xe current")
 	}
-	elseif (terminal_command == "whoami") {
+	elseif (terminal_arg_0 == "whoami") {
 		call set_active_output("xenon")
 	}
-	elseif (terminal_command == "exit") {
+	elseif (terminal_arg_0 == "exit") {
 		terminal_window.close()
 	}
-	elseif (terminal_starts_with(terminal_command, "echo ")) {
-		call clear_terminal_text(terminal_echo)
-		echo_index = 5
-		while (echo_index < xestring::strlen(terminal_command)) {
-			call xestring::append_char(terminal_echo, terminal_command[echo_index])
-			echo_index += 1
-		}
+	elseif (terminal_arg_0 == "echo") {
+		call terminal_join_arguments(terminal_echo, 1)
 		call set_active_output(terminal_echo)
 	}
 	else {
@@ -484,6 +1028,22 @@ proc autocomplete_terminal_command() {
 	elseif (terminal_starts_with(terminal_command, "ti")) {
 		call set_terminal_text(terminal_command, "time")
 	}
+	elseif (terminal_starts_with(terminal_command, "pw")) { call set_terminal_text(terminal_command, "pwd") }
+	elseif (terminal_starts_with(terminal_command, "ls")) { call set_terminal_text(terminal_command, "ls") }
+	elseif (terminal_starts_with(terminal_command, "di")) { call set_terminal_text(terminal_command, "dir") }
+	elseif (terminal_starts_with(terminal_command, "cd")) { call set_terminal_text(terminal_command, "cd ") }
+	elseif (terminal_starts_with(terminal_command, "tr")) { call set_terminal_text(terminal_command, "tree") }
+	elseif (terminal_starts_with(terminal_command, "ca")) { call set_terminal_text(terminal_command, "cat ") }
+	elseif (terminal_starts_with(terminal_command, "to")) { call set_terminal_text(terminal_command, "touch ") }
+	elseif (terminal_starts_with(terminal_command, "mk")) { call set_terminal_text(terminal_command, "mkdir ") }
+	elseif (terminal_starts_with(terminal_command, "rm")) { call set_terminal_text(terminal_command, "rm ") }
+	elseif (terminal_starts_with(terminal_command, "cp")) { call set_terminal_text(terminal_command, "cp ") }
+	elseif (terminal_starts_with(terminal_command, "wr")) { call set_terminal_text(terminal_command, "write ") }
+	elseif (terminal_starts_with(terminal_command, "ap")) { call set_terminal_text(terminal_command, "append ") }
+	elseif (terminal_starts_with(terminal_command, "fi")) { call set_terminal_text(terminal_command, "find ") }
+	elseif (terminal_starts_with(terminal_command, "wc")) { call set_terminal_text(terminal_command, "wc ") }
+	elseif (terminal_starts_with(terminal_command, "xe-c")) { call set_terminal_text(terminal_command, "xe-check ") }
+	elseif (terminal_starts_with(terminal_command, "xe-r")) { call set_terminal_text(terminal_command, "xe-run ") }
 	elseif (terminal_starts_with(terminal_command, "sp")) {
 		call set_terminal_text(terminal_command, "split")
 	}
@@ -564,8 +1124,7 @@ proc draw_terminal_line(x: int, y: int, width: int, text: string) {
 		call graphics::draw_char(terminal_window, draw_x, y, text[index], color)
 		index += 1
 		draw_x += 6
-		
-		if (text[index] == ' ') { color = command_color }
+		if (index < length && text[index] == ' ') { color = command_color }
 	}
 }
 
@@ -589,8 +1148,7 @@ proc draw_terminal_line_small(x: int, y: int, width: int, text: string) {
 		call graphics::draw_char_small(terminal_window, draw_x, y, text[index], color)
 		index += 1
 		draw_x += 4
-		
-		if (text[index] == ' ') { color = command_color }
+		if (index < length && text[index] == ' ') { color = command_color }
 	}
 }
 
@@ -620,10 +1178,7 @@ fn terminal_wrapped_rows(text: string, columns: int) int {
 				rows += 1
 				column = 0
 			}
-			if (word_length > columns) {
-				rows += 1
-				column = 0
-			}
+			if (word_length > columns) { column = columns }
 			else {
 				if (column > 0) { column += 1 }
 				column += word_length
@@ -634,7 +1189,7 @@ fn terminal_wrapped_rows(text: string, columns: int) int {
 	return rows
 }
 
-proc draw_terminal_wrapped(x: int, y: int, width: int, height: int, text: string, color: int, large: bool) {
+proc draw_terminal_wrapped(x: int, y: int, width: int, height: int, text: string, color: int, large: bool, scroll_rows: int, horizontal_scroll: int, known_total_rows: int) {
 	var columns: int
 	var rows: int
 	var character_width: int
@@ -645,6 +1200,7 @@ proc draw_terminal_wrapped(x: int, y: int, width: int, height: int, text: string
 	var word_end: int
 	var word_length: int
 	var word_index: int
+	var word_scroll: int
 	var column: int
 	var row: int
 	character_width = 4
@@ -657,8 +1213,9 @@ proc draw_terminal_wrapped(x: int, y: int, width: int, height: int, text: string
 	rows = (height - 4) / row_height
 	if (columns < 1) { columns = 1 }
 	if (rows < 1) { rows = 1 }
-	total_rows = terminal_wrapped_rows(text, columns)
-	first_row = total_rows - rows
+	total_rows = known_total_rows
+	if (total_rows < 1) { total_rows = terminal_wrapped_rows(text, columns) }
+	first_row = total_rows - rows - scroll_rows
 	if (first_row < 0) { first_row = 0 }
 	index = 0
 	column = 0
@@ -682,20 +1239,27 @@ proc draw_terminal_wrapped(x: int, y: int, width: int, height: int, text: string
 			}
 			if (column > 0) { column += 1 }
 			word_index = 0
-			while (word_index < word_length && word_index < columns) {
+			word_scroll = 0
+			if (word_length > columns) {
+				word_scroll = horizontal_scroll
+				word_index = word_scroll
+				if (word_index > word_length - columns) { word_index = word_length - columns }
+				if (word_index < 0) { word_index = 0 }
+				word_scroll = word_index
+			}
+			while (word_index < word_length && word_index < word_scroll + columns) {
 				if (row >= first_row && row < first_row + rows) {
 					if (large) {
-						call graphics::draw_char(terminal_window, x + 2 + (column + word_index) * character_width, y + (row - first_row) * row_height, text[index + word_index], color)
+						call graphics::draw_char(terminal_window, x + 2 + (column + word_index - word_scroll) * character_width, y + (row - first_row) * row_height, text[index + word_index], color)
 					}
 					else {
-						call graphics::draw_char_small(terminal_window, x + 2 + (column + word_index) * character_width, y + (row - first_row) * row_height, text[index + word_index], color)
+						call graphics::draw_char_small(terminal_window, x + 2 + (column + word_index - word_scroll) * character_width, y + (row - first_row) * row_height, text[index + word_index], color)
 					}
 				}
 				word_index += 1
 			}
 			if (word_length > columns) {
-				row += 1
-				column = 0
+				column = columns
 			}
 			else {
 				column += word_length
@@ -798,14 +1362,54 @@ proc draw_terminal_sparkle(x: int, frames: int) {
 }
 
 proc draw_active_terminal_output(x: int, y: int, width: int, height: int, color: int) {
+	var output: string
+	var character_width: int
+	var row_height: int
+	var columns: int
+	var visible_rows: int
+	var total_rows: int
+	var maximum_scroll: int
+	var track_height: int
+	var thumb_height: int
+	var thumb_y: int
 	if (active_tab == 0) {
-		call draw_terminal_wrapped(x, y, width, height, tab_1_output, color, tab_text_large[0] != 0)
+		output = tab_1_output
 	}
 	elseif (active_tab == 1) {
-		call draw_terminal_wrapped(x, y, width, height, tab_2_output, color, tab_text_large[1] != 0)
+		output = tab_2_output
 	}
 	else {
-		call draw_terminal_wrapped(x, y, width, height, tab_3_output, color, tab_text_large[2] != 0)
+		output = tab_3_output
+	}
+	character_width = 4
+	row_height = 6
+	if (active_terminal_text_large()) {
+		character_width = 6
+		row_height = 8
+	}
+	columns = (width - 7) / character_width
+	visible_rows = (height - 4) / row_height
+	if (columns < 1) { columns = 1 }
+	if (visible_rows < 1) { visible_rows = 1 }
+	if (tab_layout_revision[active_tab] != tab_output_revision[active_tab] || tab_layout_columns[active_tab] != columns) {
+		tab_layout_rows[active_tab] = terminal_wrapped_rows(output, columns)
+		tab_layout_revision[active_tab] = tab_output_revision[active_tab]
+		tab_layout_columns[active_tab] = columns
+	}
+	total_rows = tab_layout_rows[active_tab]
+	maximum_scroll = total_rows - visible_rows
+	if (maximum_scroll < 0) { maximum_scroll = 0 }
+	if (tab_scroll_rows[active_tab] > maximum_scroll) { tab_scroll_rows[active_tab] = maximum_scroll }
+	if (tab_scroll_rows[active_tab] < 0) { tab_scroll_rows[active_tab] = 0 }
+	call draw_terminal_wrapped(x, y, width - 3, height, output, color, active_terminal_text_large(), tab_scroll_rows[active_tab], tab_horizontal_scroll[active_tab], total_rows)
+	if (maximum_scroll > 0 && height >= 8) {
+		track_height = height - 4
+		call graphics::draw_line(terminal_window, x + width - 2, y + 1, x + width - 2, y + height - 3, graphics::COLOR_5)
+		thumb_height = track_height * visible_rows / total_rows
+		if (thumb_height < 2) { thumb_height = 2 }
+		if (thumb_height > track_height) { thumb_height = track_height }
+		thumb_y = y + 1 + (maximum_scroll - tab_scroll_rows[active_tab]) * (track_height - thumb_height) / maximum_scroll
+		call graphics::fill_rect(terminal_window, x + width - 3, thumb_y, 3, thumb_height, graphics::COLOR_8)
 	}
 }
 
@@ -814,11 +1418,32 @@ proc draw_secondary_terminal_output(x: int, y: int, width: int, height: int, col
 		call graphics::draw_text_small(terminal_window, x, y, "Open another tab", graphics::COLOR_7)
 	}
 	elseif (active_tab == 0) {
-		call draw_terminal_wrapped(x, y, width, height, tab_2_output, color, tab_text_large[1] != 0)
+		call draw_terminal_wrapped(x, y, width, height, tab_2_output, color, tab_text_large[1] != 0, tab_scroll_rows[1], tab_horizontal_scroll[1], 0)
 	}
 	else {
-		call draw_terminal_wrapped(x, y, width, height, tab_1_output, color, tab_text_large[0] != 0)
+		call draw_terminal_wrapped(x, y, width, height, tab_1_output, color, tab_text_large[0] != 0, tab_scroll_rows[0], tab_horizontal_scroll[0], 0)
 	}
+}
+
+proc terminal_scroll_output(amount: int) {
+	if (amount > 0) {
+		tab_scroll_rows[active_tab] += amount
+		tab_follow_tail[active_tab] = 0
+	}
+	elseif (amount < 0) {
+		tab_scroll_rows[active_tab] += amount
+		if (tab_scroll_rows[active_tab] <= 0) {
+			tab_scroll_rows[active_tab] = 0
+			tab_follow_tail[active_tab] = 1
+			tab_new_output[active_tab] = 0
+		}
+	}
+}
+
+proc terminal_follow_latest() {
+	tab_scroll_rows[active_tab] = 0
+	tab_follow_tail[active_tab] = 1
+	tab_new_output[active_tab] = 0
 }
 
 proc set_and_execute_command(text: string) {
@@ -835,6 +1460,9 @@ tab_3_command = ""
 tab_1_output = "Ready - type help"
 tab_2_output = "Second terminal tab"
 tab_3_output = "Third terminal tab"
+tab_1_cwd = "."
+tab_2_cwd = "."
+tab_3_cwd = "."
 history_1 = ""
 history_2 = ""
 history_3 = ""
@@ -842,6 +1470,15 @@ saved_1 = "help"
 saved_2 = "monitor on"
 saved_3 = "dir"
 terminal_echo = ""
+terminal_cwd = "."
+terminal_arg_0 = ""
+terminal_arg_1 = ""
+terminal_arg_2 = ""
+terminal_arg_3 = ""
+terminal_arg_4 = ""
+terminal_arg_5 = ""
+terminal_parse_ok = true
+terminal_arg_count = 0
 active_tab = 0
 tab_count = 1
 tab_split[0] = 0
@@ -856,6 +1493,30 @@ tab_text_large[2] = 1
 tab_theme[0] = 0
 tab_theme[1] = 0
 tab_theme[2] = 0
+tab_scroll_rows[0] = 0
+tab_scroll_rows[1] = 0
+tab_scroll_rows[2] = 0
+tab_follow_tail[0] = 1
+tab_follow_tail[1] = 1
+tab_follow_tail[2] = 1
+tab_new_output[0] = 0
+tab_new_output[1] = 0
+tab_new_output[2] = 0
+tab_horizontal_scroll[0] = 0
+tab_horizontal_scroll[1] = 0
+tab_horizontal_scroll[2] = 0
+tab_output_revision[0] = 1
+tab_output_revision[1] = 1
+tab_output_revision[2] = 1
+tab_layout_revision[0] = -1
+tab_layout_revision[1] = -1
+tab_layout_revision[2] = -1
+tab_layout_columns[0] = 0
+tab_layout_columns[1] = 0
+tab_layout_columns[2] = 0
+tab_layout_rows[0] = 1
+tab_layout_rows[1] = 1
+tab_layout_rows[2] = 1
 saved_list_open = false
 history_position = 0
 plus_x = 44
@@ -899,6 +1560,10 @@ var delta_ms: int
 var visible_command_chars: int
 var maximum_command_chars: int
 var command_color: int
+var output_width: int
+var output_page_rows: int
+var wheel_delta: int
+var latest_label: string
 
 terminal_window.x = 44
 terminal_window.y = 34
@@ -1068,14 +1733,39 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 		call graphics::draw_rect(terminal_window, 4, body_y, main_width, body_height, graphics::COLOR_8)
 
 		if (body_height >= 8) {
+			output_width = main_width - 4
+			if (main_width >= 54) { output_width = main_width - 22 }
+			output_page_rows = (body_height - 4) / 7
+			if (output_page_rows < 1) { output_page_rows = 1 }
+			wheel_delta = graphics::scroll_delta()
+			if (wheel_delta != 0 && terminal_pointer_inside(4, body_y, main_width, body_height)) {
+				if ((graphics::modifiers() & graphics::MOD_SHIFT) != 0) {
+					tab_horizontal_scroll[active_tab] -= wheel_delta
+					if (tab_horizontal_scroll[active_tab] < 0) { tab_horizontal_scroll[active_tab] = 0 }
+				}
+				else { call terminal_scroll_output(wheel_delta * 3) }
+			}
 			if (active_terminal_split() && body_height >= 30) {
 				split_height = body_height / 2
-				call draw_active_terminal_output(6, body_y + 3, main_width - 4, split_height - 4, output_color)
+				call draw_active_terminal_output(6, body_y + 3, output_width, split_height - 4, output_color)
 				call graphics::draw_line(terminal_window, 4, body_y + split_height, 4 + main_width, body_y + split_height, graphics::COLOR_8)
-				call draw_secondary_terminal_output(6, body_y + split_height + 3, main_width - 4, body_height - split_height - 4, output_color)
+				call draw_secondary_terminal_output(6, body_y + split_height + 3, output_width, body_height - split_height - 4, output_color)
 			}
 			else {
-				call draw_active_terminal_output(6, body_y + 3, main_width - 4, body_height - 4, output_color)
+				call draw_active_terminal_output(6, body_y + 3, output_width, body_height - 4, output_color)
+			}
+			if (main_width >= 54 && body_height >= 24) {
+				if (graphics::button_flat(terminal_window, 5 + main_width - 18, body_y + 2, 14, 6, "^", graphics::COLOR_5)) {
+					call terminal_scroll_output(output_page_rows)
+				}
+				if (graphics::button_flat(terminal_window, 5 + main_width - 18, body_y + 9, 14, 6, "v", graphics::COLOR_5)) {
+					call terminal_scroll_output(-output_page_rows)
+				}
+				latest_label = "End"
+				if (tab_new_output[active_tab] > 0) { latest_label = "New" }
+				if (graphics::button_flat(terminal_window, 5 + main_width - 18, body_y + 16, 14, 6, latest_label, graphics::COLOR_8)) {
+					call terminal_follow_latest()
+				}
 			}
 			if (active_terminal_monitor() && body_height >= 22) {
 				call graphics::draw_text_small(terminal_window, 7, body_y + body_height - 12, "ms", graphics::COLOR_8)
@@ -1151,7 +1841,14 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 			key = graphics::read_key()
 			while (key != 0) {
 				if ((graphics::modifiers() & graphics::MOD_CTRL) != 0) {
-					call handle_terminal_control_shortcut(key)
+					if (key == graphics::KEY_UP) { call terminal_scroll_output(output_page_rows) }
+					elseif (key == graphics::KEY_DOWN) { call terminal_scroll_output(-output_page_rows) }
+					elseif (key == graphics::KEY_LEFT) {
+						tab_horizontal_scroll[active_tab] -= 4
+						if (tab_horizontal_scroll[active_tab] < 0) { tab_horizontal_scroll[active_tab] = 0 }
+					}
+					elseif (key == graphics::KEY_RIGHT) { tab_horizontal_scroll[active_tab] += 4 }
+					else { call handle_terminal_control_shortcut(key) }
 				}
 				elseif (key == graphics::KEY_BACKSPACE) {
 					call erase_terminal_character()
@@ -1175,5 +1872,4 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 			}
 	}
 	call graphics::update(terminal_window)
-	call os::sleep(16)
 }

@@ -292,6 +292,52 @@ class GraphicsDevice:
 		for py in range(y0, y1):
 			self.back_buffer[py][x0:x1] = row
 
+	def draw_indexed_pixels(
+		self,
+		x: int,
+		y: int,
+		width: int,
+		height: int,
+		pixels: tuple[int, ...] | list[int],
+		scale: int = 1,
+		transparent: int = 16,
+	) -> None:
+		"""Blit an indexed sprite with deterministic clipping and transparency."""
+
+		width = int(width)
+		height = int(height)
+		scale = max(1, int(scale))
+		if width <= 0 or height <= 0 or len(pixels) < width * height:
+			return
+		clip_x0, clip_y0, clip_x1, clip_y1 = self.clip_rect
+		for source_y in range(height):
+			destination_y = int(y) + source_y * scale
+			if destination_y >= clip_y1 or destination_y + scale <= clip_y0:
+				continue
+			row_start = source_y * width
+			source_x = 0
+			while source_x < width:
+				while source_x < width and int(pixels[row_start + source_x]) == transparent:
+					source_x += 1
+				run_start = source_x
+				while source_x < width and int(pixels[row_start + source_x]) != transparent:
+					source_x += 1
+				if run_start == source_x:
+					continue
+				destination_x = int(x) + run_start * scale
+				run = bytes(
+					int(pixels[row_start + index]) % 16
+					for index in range(run_start, source_x)
+					for _ in range(scale)
+				)
+				left = max(clip_x0, destination_x)
+				right = min(clip_x1, destination_x + len(run))
+				if left >= right:
+					continue
+				visible = run[left - destination_x:right - destination_x]
+				for destination_row in range(max(clip_y0, destination_y), min(clip_y1, destination_y + scale)):
+					self.back_buffer[destination_row][left:right] = visible
+
 	def fill_dithered_rect(
 		self,
 		x: int,

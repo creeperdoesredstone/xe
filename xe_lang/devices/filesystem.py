@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import shutil
 import stat
 from threading import RLock
 import time
@@ -21,6 +22,14 @@ class FileRecord:
 class FileEntry:
 	name: str
 	is_directory: bool
+
+
+@dataclass(frozen=True)
+class FileStat:
+	size: int
+	modified_ns: int
+	is_directory: bool
+	revision: int
 
 
 VIRTUAL_DRIVE_DIRECTORY = "XenonOS/VirtualDrive"
@@ -51,9 +60,20 @@ class FileSystemDevice:
 		self._next_handle = 1
 		self._lock = RLock()
 		self._entry_cache: dict[Path, tuple[int, tuple[FileEntry, ...]]] = {}
+		self._revision = 0
+
+	@property
+	def revision(self) -> int:
+		with self._lock:
+			return self._revision
+
+	def _changed(self) -> None:
+		with self._lock:
+			self._entry_cache.clear()
+			self._revision = (self._revision + 1) & 0x7FFFFFFF
 
 	def _resolve(self, name: str) -> Path | None:
-		candidate = Path(name)
+		candidate = Path(str(name).replace("\\", "/"))
 		if not name or candidate.is_absolute():
 			return None
 		if candidate.parts and candidate.parts[0] in INTERNAL_NAMES:
@@ -65,16 +85,27 @@ class FileSystemDevice:
 			return None
 		return resolved
 
+	def normalize(self, name: str) -> str:
+		path = self._resolve(name)
+		if path is None:
+			return ""
+		try:
+			relative = path.relative_to(self.root)
+		except ValueError:
+			return ""
+		value = relative.as_posix()
+		return "." if value in {"", "."} else value
+
 	def _open(self, name: str, mode: str) -> int:
 		path = self._resolve(name)
 		if path is None:
 			return 0
 		try:
-			if mode == "w":
+			if mode in {"w", "a"}:
 				path.parent.mkdir(parents=True, exist_ok=True)
-				with self._lock:
-					self._entry_cache.clear()
 			stream = path.open(mode, encoding="utf-8", newline="")
+			if mode == "w":
+				self._changed()
 		except (OSError, UnicodeError):
 			return 0
 		with self._lock:
@@ -89,6 +120,9 @@ class FileSystemDevice:
 	def open_write(self, name: str) -> int:
 		return self._open(name, "w")
 
+	def open_append(self, name: str) -> int:
+		return self._open(name, "a")
+
 	def read(self, handle: int) -> str:
 		with self._lock:
 			record = self._records.get(int(handle))
@@ -99,14 +133,25 @@ class FileSystemDevice:
 			except (OSError, UnicodeError):
 				return ""
 
+	def read_text(self, name: str) -> str | None:
+		path = self._resolve(name)
+		if path is None or not path.is_file():
+			return None
+		try:
+			return path.read_text(encoding="utf-8")
+		except (OSError, UnicodeError):
+			return None
+
 	def write(self, handle: int, text: str) -> bool:
 		with self._lock:
 			record = self._records.get(int(handle))
-			if not record or record.mode != "w":
+			if not record or record.mode not in {"w", "a"}:
 				return False
 			try:
 				record.stream.write(text)
 				record.stream.flush()
+				self._entry_cache.clear()
+				self._revision = (self._revision + 1) & 0x7FFFFFFF
 				return True
 			except (OSError, UnicodeError):
 				return False
@@ -169,6 +214,28 @@ class FileSystemDevice:
 		path = self._resolve(name)
 		return bool(path and path.exists())
 
+	def is_directory(self, name: str) -> bool:
+		path = self._resolve(name)
+		try:
+			return bool(path and path.is_dir())
+		except OSError:
+			return False
+
+	def stat(self, name: str) -> FileStat | None:
+		path = self._resolve(name)
+		if path is None:
+			return None
+		try:
+			status = path.stat()
+		except OSError:
+			return None
+		return FileStat(
+			0 if stat.S_ISDIR(status.st_mode) else int(status.st_size),
+			int(status.st_mtime_ns),
+			stat.S_ISDIR(status.st_mode),
+			self.revision,
+		)
+
 	def make_file(self, name: str) -> bool:
 		path = self._resolve(name)
 		if path is None or path.exists():
@@ -176,8 +243,7 @@ class FileSystemDevice:
 		try:
 			path.parent.mkdir(parents=True, exist_ok=True)
 			path.touch(exist_ok=False)
-			with self._lock:
-				self._entry_cache.clear()
+			self._changed()
 			return True
 		except OSError:
 			return False
@@ -188,8 +254,7 @@ class FileSystemDevice:
 			return False
 		try:
 			path.mkdir(parents=True, exist_ok=False)
-			with self._lock:
-				self._entry_cache.clear()
+			self._changed()
 			return True
 		except OSError:
 			return False
@@ -202,8 +267,30 @@ class FileSystemDevice:
 		try:
 			destination.parent.mkdir(parents=True, exist_ok=True)
 			path.rename(destination)
-			with self._lock:
-				self._entry_cache.clear()
+			self._changed()
+			return True
+		except OSError:
+			return False
+
+	def copy(self, name: str, destination_name: str) -> bool:
+		path = self._resolve(name)
+		destination = self._resolve(destination_name)
+		if (
+			path is None
+			or destination is None
+			or not path.exists()
+			or destination.exists()
+			or path == self.root
+			or (path.is_dir() and path in destination.parents)
+		):
+			return False
+		try:
+			destination.parent.mkdir(parents=True, exist_ok=True)
+			if path.is_dir():
+				shutil.copytree(path, destination)
+			else:
+				shutil.copy2(path, destination)
+			self._changed()
 			return True
 		except OSError:
 			return False
@@ -222,8 +309,7 @@ class FileSystemDevice:
 				stamp += 1
 				destination = self._trash / f"{stamp}-{path.name}"
 			path.replace(destination)
-			with self._lock:
-				self._entry_cache.clear()
+			self._changed()
 			return True
 		except OSError:
 			return False

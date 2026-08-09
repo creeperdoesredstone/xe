@@ -58,6 +58,8 @@ var delete_confirm: bool
 var terminal_open: bool
 var ide_font_large: bool
 var edit_menu_open: bool
+var run_menu_open: bool
+var run_menu_guard: int
 var editor_focus: int
 var selected_all: bool
 var clipboard_text: string
@@ -68,6 +70,8 @@ var selection_start: int
 var selection_end: int
 var selection_dragging: bool
 var compile_ok: bool
+var compile_pending: bool
+var compile_due: int
 var dirty: bool
 var running: bool
 var run_started: int
@@ -109,6 +113,12 @@ var main_pointer_y: int
 var ide_scroll_delta: int
 array view_path: string[16]
 array view_is_folder: int[16]
+array view_source: string[16]
+array view_dirty: int[16]
+array view_cursor: int[16]
+array view_selection_start: int[16]
+array view_selection_end: int[16]
+array view_compile_ok: int[16]
 array view_rotation: int[16]
 array view_tilt: int[16]
 array view_rotation_target: int[16]
@@ -118,10 +128,26 @@ array view_orbit_speed: int[16]
 array view_orbit_target: int[16]
 array view_relationships: int[4096]
 array explorer_expanded: int[64]
+array explorer_nested_expanded: int[4096]
+var explorer_cache_valid: bool
+var explorer_cache_revision: int
+var explorer_cache_start: int
+var explorer_cache_limit: int
+var explorer_cache_count: int
+var explorer_cache_total: int
+array explorer_cache_name: string[64]
+array explorer_cache_path: string[64]
+array explorer_cache_is_folder: int[64]
+array explorer_cache_depth: int[64]
+array explorer_cache_root_slot: int[64]
+array explorer_cache_child_slot: int[64]
 var view_count: int
 var active_view: int
 var tab_scroll: int
 var ide_camera_bank: int
+var close_prompt_open: bool
+var close_prompt_slot: int
+var help_scroll: int
 
 proc ide_clear(target: string) {
 	if (xestring::strlen(target) > 0) {
@@ -365,6 +391,15 @@ proc ide_replace_selection(value: string) {
 	cursor_index = begin_index + xestring::strlen(value)
 	call ide_clear_selection()
 	dirty = true
+	compile_pending = true
+	compile_due = current_ticks + 180
+	if (active_view >= 0 && active_view < view_count && view_is_folder[active_view] == 0) {
+		view_source[active_view] = xestring::concat("", source)
+		view_dirty[active_view] = 1
+		view_cursor[active_view] = cursor_index
+		view_selection_start[active_view] = selection_start
+		view_selection_end[active_view] = selection_end
+	}
 }
 
 proc ide_insert_character(value: char) {
@@ -460,6 +495,12 @@ fn ide_add_view(name: string, is_folder: bool) int {
 	view_path[slot] = name
 	if (is_folder) { view_is_folder[slot] = 1 }
 	else { view_is_folder[slot] = 0 }
+	view_source[slot] = ""
+	view_dirty[slot] = 0
+	view_cursor[slot] = 0
+	view_selection_start[slot] = 0
+	view_selection_end[slot] = 0
+	view_compile_ok[slot] = 1
 	view_rotation[slot] = 0
 	view_tilt[slot] = 28
 	view_rotation_target[slot] = 0
@@ -625,6 +666,41 @@ proc ide_refresh_relationships(slot: int) {
 	}
 }
 
+proc ide_store_active_document() {
+	if (active_view < 0 || active_view >= view_count || view_is_folder[active_view] != 0) { return }
+	view_source[active_view] = xestring::concat("", source)
+	if (dirty) { view_dirty[active_view] = 1 }
+	else { view_dirty[active_view] = 0 }
+	view_cursor[active_view] = cursor_index
+	view_selection_start[active_view] = selection_start
+	view_selection_end[active_view] = selection_end
+	if (compile_ok) { view_compile_ok[active_view] = 1 }
+	else { view_compile_ok[active_view] = 0 }
+	visual_atom_count = compiler::load_document(active_view, view_path[active_view], view_source[active_view])
+	call ide_refresh_relationships(active_view)
+}
+
+proc ide_restore_document(slot: int) {
+	if (slot < 0 || slot >= view_count || view_is_folder[slot] != 0) { return }
+	call ide_set(source_path, view_path[slot])
+	call ide_set(source, view_source[slot])
+	dirty = view_dirty[slot] != 0
+	cursor_index = view_cursor[slot]
+	if (cursor_index < 0) { cursor_index = 0 }
+	if (cursor_index > xestring::strlen(source)) { cursor_index = xestring::strlen(source) }
+	selection_start = view_selection_start[slot]
+	selection_end = view_selection_end[slot]
+	if (selection_start < 0 || selection_start > xestring::strlen(source)) { selection_start = cursor_index }
+	if (selection_end < 0 || selection_end > xestring::strlen(source)) { selection_end = cursor_index }
+	selected_all = selection_start == 0 && selection_end == xestring::strlen(source) && xestring::strlen(source) > 0
+	compile_ok = compiler::check(source)
+	compile_pending = false
+	if (compile_ok) { view_compile_ok[slot] = 1 }
+	else { view_compile_ok[slot] = 0 }
+	visual_atom_count = compiler::load_visual(source)
+	visual_atom_count = compiler::load_document(slot, source_path, source)
+}
+
 proc ide_close_view(slot: int) {
 	var index: int
 	var old_active: int
@@ -635,8 +711,11 @@ proc ide_close_view(slot: int) {
 		call ide_report("Keep one tab open", false)
 		return
 	}
-	if (dirty) {
-		call ide_report("Save before closing a tab", true)
+	call ide_store_active_document()
+	if (view_is_folder[slot] == 0 && view_dirty[slot] != 0) {
+		close_prompt_slot = slot
+		close_prompt_open = true
+		call ide_report("Save changes before closing?", false)
 		return
 	}
 	old_active = active_view
@@ -644,6 +723,12 @@ proc ide_close_view(slot: int) {
 	while (index < view_count - 1) {
 		view_path[index] = view_path[index + 1]
 		view_is_folder[index] = view_is_folder[index + 1]
+		view_source[index] = view_source[index + 1]
+		view_dirty[index] = view_dirty[index + 1]
+		view_cursor[index] = view_cursor[index + 1]
+		view_selection_start[index] = view_selection_start[index + 1]
+		view_selection_end[index] = view_selection_end[index + 1]
+		view_compile_ok[index] = view_compile_ok[index + 1]
 		view_rotation[index] = view_rotation[index + 1]
 		view_tilt[index] = view_tilt[index + 1]
 		view_rotation_target[index] = view_rotation_target[index + 1]
@@ -652,7 +737,7 @@ proc ide_close_view(slot: int) {
 		view_orbit_speed[index] = view_orbit_speed[index + 1]
 		view_orbit_target[index] = view_orbit_target[index + 1]
 		if (view_is_folder[index] == 0) {
-			visual_atom_count = compiler::load_document(index, view_path[index], compiler::document_source(index + 1))
+			visual_atom_count = compiler::load_document(index, view_path[index], view_source[index])
 			call ide_refresh_relationships(index)
 		}
 		index += 1
@@ -660,6 +745,8 @@ proc ide_close_view(slot: int) {
 	view_count -= 1
 	view_path[view_count] = ""
 	view_is_folder[view_count] = 0
+	view_source[view_count] = ""
+	view_dirty[view_count] = 0
 	if (old_active > slot) { active_view = old_active - 1 }
 	elseif (old_active == slot) {
 		active_view = slot
@@ -672,12 +759,8 @@ proc ide_close_view(slot: int) {
 		editor_focus = 2
 	}
 	else {
-		source_path = xestring::concat("", view_path[active_view])
-		call ide_set(source, compiler::document_source(active_view))
-		compile_ok = compiler::check(source)
-		visual_atom_count = compiler::load_visual(source)
-		cursor_index = xestring::strlen(source)
-		call ide_clear_selection()
+		call ide_restore_document(active_view)
+		call ide_refresh_relationships(active_view)
 		if (visual_mode) { editor_focus = 2 }
 		else { editor_focus = 0 }
 	}
@@ -686,20 +769,26 @@ proc ide_close_view(slot: int) {
 }
 
 proc ide_open_folder(name: string) {
-	var slot: int
-	slot = ide_add_view(name, true)
-	if (slot < 0) {
-		return
-	}
-	active_view = slot
-	visual_mode = false
-	editor_focus = 2
-	selection_dragging = false
-	call ide_report(xestring::concat("Folder opened: ", name), false)
+	# Folders are navigation containers in the explorer, never editor tabs.
+	call ide_report(xestring::concat("Folder selected: ", name), false)
 }
 
 proc ide_open_file(name: string) {
 	var slot: int
+	slot = ide_find_view(name)
+	if (slot >= 0) {
+		call ide_store_active_document()
+		active_view = slot
+		tab_scroll = slot
+		call ide_restore_document(slot)
+		call ide_refresh_relationships(slot)
+		visual_mode = false
+		editor_focus = 0
+		selection_dragging = false
+		call ide_report(xestring::concat("Active: ", name), false)
+		return
+	}
+	call ide_store_active_document()
 	slot = ide_add_view(name, false)
 	if (slot < 0) {
 		return
@@ -713,6 +802,13 @@ proc ide_open_file(name: string) {
 	visual_atom_count = compiler::load_document(slot, source_path, source)
 	call ide_refresh_relationships(slot)
 	dirty = false
+	view_source[slot] = xestring::concat("", source)
+	view_dirty[slot] = 0
+	view_cursor[slot] = xestring::strlen(source)
+	view_selection_start[slot] = view_cursor[slot]
+	view_selection_end[slot] = view_cursor[slot]
+	if (compile_ok) { view_compile_ok[slot] = 1 }
+	else { view_compile_ok[slot] = 0 }
 	visual_mode = false
 	editor_focus = 0
 	cursor_index = xestring::strlen(source)
@@ -725,28 +821,19 @@ proc ide_activate_view(slot: int) {
 	if (slot < 0 || slot >= view_count || slot == active_view) {
 		return
 	}
-	if (dirty && view_is_folder[active_view] == 0) {
-		call ide_report("Save before switching views", true)
-		return
-	}
+	call ide_store_active_document()
 	active_view = slot
 	tab_scroll = slot
 	if (view_is_folder[slot] != 0) {
 		visual_mode = false
 		editor_focus = 2
 		selection_dragging = false
-		call ide_report("Folder active", false)
+		if (view_is_folder[slot] == 2) { call ide_report("Xe Help", false) }
+		else { call ide_report("Folder active", false) }
 		return
 	}
-	source_path = xestring::concat("", view_path[slot])
-	call ide_set(source, compiler::document_source(slot))
-	compile_ok = compiler::check(source)
-	visual_atom_count = compiler::load_visual(source)
-	visual_atom_count = compiler::load_document(slot, source_path, source)
+	call ide_restore_document(slot)
 	call ide_refresh_relationships(slot)
-	dirty = false
-	cursor_index = xestring::strlen(source)
-	call ide_clear_selection()
 	selection_dragging = false
 	if (!visual_mode) { editor_focus = 0 }
 	call ide_report(xestring::concat("Active: ", view_path[slot]), false)
@@ -756,6 +843,8 @@ proc ide_save() {
 	file_handle = os::open_write(source_path)
 	if (os::write(file_handle, source)) {
 		dirty = false
+		view_source[active_view] = xestring::concat("", source)
+		view_dirty[active_view] = 0
 		call ide_report("Saved", false)
 	}
 	else {
@@ -764,13 +853,30 @@ proc ide_save() {
 	call os::close(source_path)
 }
 
-proc ide_check_and_run() {
+fn ide_save_view(slot: int) bool {
+	var handle: os::File
+	var saved: bool
+	if (slot < 0 || slot >= view_count || view_is_folder[slot] != 0) { return false }
+	if (slot == active_view) { call ide_store_active_document() }
+	handle = os::open_write(view_path[slot])
+	saved = os::write(handle, view_source[slot])
+	call os::close(view_path[slot])
+	if (saved) {
+		view_dirty[slot] = 0
+		if (slot == active_view) { dirty = false }
+		call ide_report("Saved", false)
+	}
+	else { call ide_report("Save failed", true) }
+	return saved
+}
+
+proc ide_run_text(text: string, reaction: bool) {
 	terminal_open = true
-	compile_ok = compiler::check(source)
+	compile_ok = compiler::check(text)
 	if (compile_ok) {
 		running = true
 		run_started = current_ticks
-		if (visual_mode) {
+		if (reaction) {
 			call ide_report("Reaction started", false)
 			call ide_terminal_append("Reaction started")
 		}
@@ -778,7 +884,7 @@ proc ide_check_and_run() {
 			call ide_report("Program started", false)
 			call ide_terminal_append("Program started")
 		}
-		call ide_set(run_output, compiler::run(source))
+		call ide_set(run_output, compiler::run(text))
 		if (xestring::strlen(compiler::error()) > 0) {
 			running = false
 			compile_ok = false
@@ -793,7 +899,7 @@ proc ide_check_and_run() {
 				call ide_terminal_append("(no output)")
 			}
 			running = false
-			if (visual_mode) { call ide_report("Reaction finished", false) }
+			if (reaction) { call ide_report("Reaction finished", false) }
 			else { call ide_report("Program finished", false) }
 		}
 	}
@@ -803,6 +909,45 @@ proc ide_check_and_run() {
 		call ide_terminal_append("Build failed")
 		call ide_terminal_append(compiler::error())
 	}
+}
+
+proc ide_check_and_run() {
+	call ide_store_active_document()
+	terminal_open = true
+	call ide_terminal_append("Run workspace: workspace.xe")
+	compile_ok = compiler::check_workspace("workspace.xe")
+	if (!compile_ok) {
+		running = false
+		call ide_report(compiler::error(), true)
+		call ide_terminal_append("Workspace build failed")
+		call ide_terminal_append(compiler::error())
+		return
+	}
+	running = true
+	run_started = current_ticks
+	call ide_report("Workspace started", false)
+	call ide_terminal_append("Workspace started")
+	call ide_set(run_output, compiler::run_workspace("workspace.xe"))
+	if (xestring::strlen(compiler::error()) > 0) {
+		running = false
+		compile_ok = false
+		call ide_terminal_append(compiler::error())
+		call ide_report(compiler::error(), true)
+		return
+	}
+	if (xestring::strlen(run_output) > 0) { call ide_terminal_append(run_output) }
+	else { call ide_terminal_append("(no output)") }
+	running = false
+	call ide_report("Workspace finished", false)
+}
+
+proc ide_run_active_file() {
+	if (view_is_folder[active_view] != 0) {
+		call ide_report("Select a code file to run", true)
+		return
+	}
+	call ide_terminal_append(xestring::concat("Run active: ", source_path))
+	call ide_run_text(source, visual_mode)
 }
 
 proc ide_enter_code_mode() {
@@ -931,7 +1076,6 @@ proc ide_handle_key(value: int, target: int) {
 		elseif (value >= 32 && value <= 126) {
 			call ide_insert_character((char)value)
 		}
-		if (dirty) { compile_ok = compiler::check(source) }
 	}
 }
 
@@ -1433,10 +1577,6 @@ proc ide_open_picker_entry(index: int) {
 		call ide_report("Folder opened", false)
 		return
 	}
-	if (dirty) {
-		call ide_report("Save before opening another file", true)
-		return
-	}
 	if (!os::path_exists(path)) {
 		call ide_report("File no longer exists", true)
 		open_picker_selected = -1
@@ -1678,6 +1818,10 @@ fn ide_tree_drop_allowed(parent: string) bool {
 	return true
 }
 
+proc ide_invalidate_explorer_cache() {
+	explorer_cache_valid = false
+}
+
 proc ide_reset_explorer_expansion() {
 	var index: int
 	index = 0
@@ -1685,7 +1829,13 @@ proc ide_reset_explorer_expansion() {
 		explorer_expanded[index] = 0
 		index += 1
 	}
+	index = 0
+	while (index < 4096) {
+		explorer_nested_expanded[index] = 0
+		index += 1
+	}
 	explorer_scroll = 0
+	call ide_invalidate_explorer_cache()
 }
 
 proc ide_confirm_file_delete() {
@@ -1861,30 +2011,97 @@ proc ide_handle_rename_key(value: int) {
 	}
 }
 
-fn ide_explorer_row_count() int {
-	var count: int
-	var index: int
-	var total: int
-	count = os::entry_count(".")
-	if (count > 64) { count = 64 }
-	total = count
-	index = 0
-	while (index < count) {
-		if (explorer_expanded[index] != 0 && os::entry_is_directory(".", index)) {
-			total += os::entry_count(os::entry_name(".", index))
-		}
-		index += 1
+proc ide_cache_explorer_entry(name: string, path: string, is_folder: bool, depth: int, root_slot: int, child_slot: int) {
+	var slot: int
+	if (explorer_cache_total >= explorer_cache_start && explorer_cache_count < explorer_cache_limit) {
+		slot = explorer_cache_count
+		explorer_cache_name[slot] = xestring::concat("", name)
+		explorer_cache_path[slot] = xestring::concat("", path)
+		if (is_folder) { explorer_cache_is_folder[slot] = 1 }
+		else { explorer_cache_is_folder[slot] = 0 }
+		explorer_cache_depth[slot] = depth
+		explorer_cache_root_slot[slot] = root_slot
+		explorer_cache_child_slot[slot] = child_slot
+		explorer_cache_count += 1
 	}
-	return total
+	explorer_cache_total += 1
+}
+
+proc ide_rebuild_explorer_cache(start: int, limit: int) {
+	var root_count: int
+	var child_count: int
+	var grandchild_count: int
+	var root_index: int
+	var child_index: int
+	var grandchild_index: int
+	var nested_slot: int
+	var root_name: string
+	var child_name: string
+	var child_path: string
+	var grandchild_name: string
+	var grandchild_path: string
+	var root_is_folder: bool
+	var child_is_folder: bool
+	var grandchild_is_folder: bool
+	if (start < 0) { start = 0 }
+	if (limit < 1) { limit = 1 }
+	if (limit > 64) { limit = 64 }
+	explorer_cache_start = start
+	explorer_cache_limit = limit
+	explorer_cache_count = 0
+	explorer_cache_total = 0
+	root_count = os::entry_count(".")
+	if (root_count > 64) { root_count = 64 }
+	root_index = 0
+	while (root_index < root_count) {
+		root_name = os::entry_name(".", root_index)
+		root_is_folder = os::entry_is_directory(".", root_index)
+		call ide_cache_explorer_entry(root_name, root_name, root_is_folder, 0, root_index, -1)
+		if (root_is_folder && explorer_expanded[root_index] != 0) {
+			child_count = os::entry_count(root_name)
+			child_index = 0
+			while (child_index < child_count) {
+				child_name = os::entry_name(root_name, child_index)
+				child_path = ide_join_path(root_name, child_name)
+				child_is_folder = os::entry_is_directory(root_name, child_index)
+				nested_slot = -1
+				if (child_index < 64) { nested_slot = root_index * 64 + child_index }
+				call ide_cache_explorer_entry(child_name, child_path, child_is_folder, 1, root_index, nested_slot)
+				if (child_is_folder && nested_slot >= 0 && explorer_nested_expanded[nested_slot] != 0) {
+					grandchild_count = os::entry_count(child_path)
+					grandchild_index = 0
+					while (grandchild_index < grandchild_count) {
+						grandchild_name = os::entry_name(child_path, grandchild_index)
+						grandchild_path = ide_join_path(child_path, grandchild_name)
+						grandchild_is_folder = os::entry_is_directory(child_path, grandchild_index)
+						call ide_cache_explorer_entry(grandchild_name, grandchild_path, grandchild_is_folder, 2, root_index, nested_slot)
+						grandchild_index += 1
+					}
+				}
+				child_index += 1
+			}
+		}
+		root_index += 1
+	}
+	explorer_cache_revision = os::revision()
+	explorer_cache_valid = true
+}
+
+proc ide_ensure_explorer_cache(start: int, limit: int) {
+	if (!explorer_cache_valid || explorer_cache_revision != os::revision() || explorer_cache_start != start || explorer_cache_limit != limit) {
+		call ide_rebuild_explorer_cache(start, limit)
+	}
+}
+
+fn ide_explorer_row_count() int {
+	return explorer_cache_total
 }
 
 proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int, interactive: bool) {
-	var count: int
 	var total: int
 	var rows: int
 	var root_index: int
-	var child_index: int
-	var flat_row: int
+	var nested_slot: int
 	var visible_row: int
 	var row_y: int
 	var pointer_x: int
@@ -1895,10 +2112,8 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 	var popup_open: bool
 	var rows_interactive: bool
 	var root_name: string
-	var child_name: string
 	var child_path: string
 	var root_is_folder: bool
-	var child_is_folder: bool
 	var row_clicked: bool
 	var arrow_clicked: bool
 	var folder_direction: int
@@ -1906,11 +2121,16 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 	var menu_block_clicked: bool
 	var drag_ghost_x: int
 	var drag_ghost_y: int
-	count = os::entry_count(".")
-	if (count > 64) { count = 64 }
-	total = ide_explorer_row_count()
+	var cache_row: int
+	var depth: int
+	var row_x: int
+	var arrow_x: int
+	var body_x: int
+	var label_x: int
+	var row_width: int
 	rows = (panel_height - 22) / 8
 	if (rows < 1) { rows = 1 }
+	if (rows > 64) { rows = 64 }
 	call graphics::fill_rect(ide_window, x, y, panel_width, panel_height, graphics::COLOR_1)
 	pointer_x = graphics::pointer_x(ide_window)
 	pointer_y = graphics::pointer_y(ide_window)
@@ -1924,8 +2144,12 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 	if (interactive && !popup_open && pointer_x >= x && pointer_x < x + panel_width && pointer_y >= y + 9 && pointer_y < y + panel_height - 8) {
 		explorer_scroll -= ide_scroll_delta
 	}
+	if (explorer_scroll < 0) { explorer_scroll = 0 }
+	call ide_ensure_explorer_cache(explorer_scroll, rows)
+	total = ide_explorer_row_count()
 	if (explorer_scroll > total - rows) { explorer_scroll = total - rows }
 	if (explorer_scroll < 0) { explorer_scroll = 0 }
+	call ide_ensure_explorer_cache(explorer_scroll, rows)
 	if (rename_active) {
 		popup_pointer_inside = rename_field_x >= 0 && pointer_x >= rename_field_x && pointer_x < rename_field_x + rename_field_width && pointer_y >= rename_field_y && pointer_y < rename_field_y + 7
 	}
@@ -1981,139 +2205,92 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 		call graphics::fill_rect(ide_window, x + panel_width - 14, y + 1, 12, 7, graphics::COLOR_8)
 		call draw_ide_chevron(x + panel_width - 14, y + 1, 12, 7, 1)
 	}
-	flat_row = 0
 	visible_row = 0
-	root_index = 0
-	while (root_index < count && visible_row < rows) {
-		root_name = os::entry_name(".", root_index)
-		root_is_folder = os::entry_is_directory(".", root_index)
-		if (flat_row >= explorer_scroll) {
-			row_y = y + 11 + visible_row * 8
-			row_clicked = false
-			if (root_is_folder) {
-				row_tone = graphics::COLOR_1
-				if (ide_tree_drop_allowed(root_name) && pointer_x >= x + 12 && pointer_x < x + panel_width - 14 && pointer_y >= row_y && pointer_y < row_y + 7) {
-					row_tone = graphics::COLOR_5
-					call ide_set(tree_drop_path, root_name)
-					tree_drop_valid = true
-				}
-				folder_direction = 0
-				if (explorer_expanded[root_index] != 0) { folder_direction = 2 }
+	cache_row = 0
+	while (cache_row < explorer_cache_count && visible_row < rows) {
+		root_name = explorer_cache_name[cache_row]
+		child_path = explorer_cache_path[cache_row]
+		root_is_folder = explorer_cache_is_folder[cache_row] != 0
+		depth = explorer_cache_depth[cache_row]
+		root_index = explorer_cache_root_slot[cache_row]
+		nested_slot = explorer_cache_child_slot[cache_row]
+		row_y = y + 11 + visible_row * 8
+		row_clicked = false
+		row_tone = graphics::COLOR_1
+		row_x = x + 2
+		if (depth == 1) { row_x = x + 10 }
+		elseif (depth >= 2) { row_x = x + 20 }
+		if (root_is_folder && ide_tree_drop_allowed(child_path) && pointer_x >= row_x && pointer_x < x + panel_width - 14 && pointer_y >= row_y && pointer_y < row_y + 7) {
+			row_tone = graphics::COLOR_5
+			call ide_set(tree_drop_path, child_path)
+			tree_drop_valid = true
+		}
+		if (root_is_folder) {
+			folder_direction = 0
+			if (depth == 0 && explorer_expanded[root_index] != 0) { folder_direction = 2 }
+			elseif (depth == 1 && nested_slot >= 0 && explorer_nested_expanded[nested_slot] != 0) { folder_direction = 2 }
+			if (depth < 2) {
+				arrow_x = x + 2 + depth * 8
 				arrow_clicked = false
-				if (rows_interactive) { arrow_clicked = ide_chevron_button(x + 2, row_y, 10, 7, folder_direction, graphics::COLOR_1) }
-				if (rows_interactive && !explorer_toggle_lock && (arrow_clicked || (graphics::mouse_pressed() && pointer_x >= x + 2 && pointer_x < x + 12 && pointer_y >= row_y && pointer_y < row_y + 7))) {
-					explorer_expanded[root_index] = 1 - explorer_expanded[root_index]
+				if (rows_interactive) { arrow_clicked = ide_chevron_button(arrow_x, row_y, 10, 7, folder_direction, graphics::COLOR_1) }
+				else { call draw_ide_chevron(arrow_x, row_y, 10, 7, folder_direction) }
+				if (rows_interactive && !explorer_toggle_lock && arrow_clicked) {
+					if (depth == 0) { explorer_expanded[root_index] = 1 - explorer_expanded[root_index] }
+					elseif (nested_slot >= 0) { explorer_nested_expanded[nested_slot] = 1 - explorer_nested_expanded[nested_slot] }
 					explorer_toggle_lock = true
-				}
-				elseif (!rows_interactive) {
-					call draw_ide_chevron(x + 2, row_y, 10, 7, folder_direction)
-				}
-				if (rows_interactive) { row_clicked = graphics::button_flat(ide_window, x + 12, row_y, panel_width - 28, 7, " ", row_tone) }
-				else {
-					call graphics::fill_rect(ide_window, x + 12, row_y, panel_width - 28, 7, row_tone)
-				}
-				if (rename_active && ide_strings_equal(rename_path, root_name)) {
-					call draw_ide_inline_rename(x + 13, row_y, panel_width - 17)
-				}
-				else {
-					call draw_ide_text_clipped(x + 14, row_y + 1, root_name, (panel_width - 20) / 4, graphics::COLOR_7)
+					call ide_invalidate_explorer_cache()
 				}
 			}
 			else {
-				if (rows_interactive) { row_clicked = graphics::button_flat(ide_window, x + 2, row_y, panel_width - 16, 7, " ", graphics::COLOR_1) }
-				else {
-					call graphics::fill_rect(ide_window, x + 2, row_y, panel_width - 16, 7, graphics::COLOR_1)
-				}
-				call graphics::draw_text_small(ide_window, x + 4, row_y + 1, "F", graphics::COLOR_10)
-				if (rename_active && ide_strings_equal(rename_path, root_name)) {
-					call draw_ide_inline_rename(x + 9, row_y, panel_width - 13)
-				}
-				else {
-					call draw_ide_text_clipped(x + 10, row_y + 1, root_name, (panel_width - 16) / 4, graphics::COLOR_7)
-				}
+				call draw_ide_chevron(x + 21, row_y, 8, 7, 0)
 			}
-			if (rows_interactive && graphics::mouse_pressed() && pointer_x >= x + 12 && pointer_x < x + panel_width - 14 && pointer_y >= row_y && pointer_y < row_y + 7) {
-				call ide_arm_tree_drag(root_name, root_is_folder, pointer_x, pointer_y)
+			body_x = x + 12
+			label_x = x + 14
+			if (depth == 1) {
+				body_x = x + 20
+				label_x = x + 20
 			}
-			elseif (rows_interactive && graphics::mouse_pressed() && !root_is_folder && pointer_x >= x + 2 && pointer_x < x + panel_width - 14 && pointer_y >= row_y && pointer_y < row_y + 7) {
-				call ide_arm_tree_drag(root_name, false, pointer_x, pointer_y)
+			elseif (depth >= 2) {
+				body_x = x + 20
+				label_x = x + 30
 			}
-			if (row_clicked && !tree_dragging) {
-				if (root_is_folder) {
-					call ide_open_folder(root_name)
-				}
-				else {
-					call ide_open_file(root_name)
-				}
-			}
-			if (pointer_x >= x + 2 && pointer_x < x + panel_width - 2 && pointer_y >= row_y && pointer_y < row_y + 7 && rows_interactive) {
-				if (graphics::button_flat(ide_window, x + panel_width - 14, row_y, 12, 7, "...", graphics::COLOR_8)) {
-					file_menu_open = true
-					file_menu_guard = 2
-					plus_menu_open = false
-					call ide_set(file_menu_path, root_name)
-				}
-			}
-			visible_row += 1
+			row_width = x + panel_width - 14 - body_x
+			if (rows_interactive) { row_clicked = graphics::button_flat(ide_window, body_x, row_y, row_width, 7, " ", row_tone) }
+			else { call graphics::fill_rect(ide_window, body_x, row_y, row_width, 7, row_tone) }
 		}
-		flat_row += 1
-		if (explorer_expanded[root_index] != 0 && root_is_folder) {
-			child_index = 0
-			while (child_index < os::entry_count(root_name) && visible_row < rows) {
-				child_name = os::entry_name(root_name, child_index)
-				child_path = ide_join_path(root_name, child_name)
-				child_is_folder = os::entry_is_directory(root_name, child_index)
-				if (flat_row >= explorer_scroll) {
-					row_y = y + 11 + visible_row * 8
-					row_clicked = false
-					row_tone = graphics::COLOR_1
-					if (child_is_folder && ide_tree_drop_allowed(child_path) && pointer_x >= x + 10 && pointer_x < x + panel_width - 14 && pointer_y >= row_y && pointer_y < row_y + 7) {
-						row_tone = graphics::COLOR_5
-						call ide_set(tree_drop_path, child_path)
-						tree_drop_valid = true
-					}
-					if (rows_interactive) { row_clicked = graphics::button_flat(ide_window, x + 10, row_y, panel_width - 24, 7, " ", row_tone) }
-					else {
-						call graphics::fill_rect(ide_window, x + 10, row_y, panel_width - 24, 7, row_tone)
-					}
-					if (child_is_folder) {
-						call draw_ide_chevron(x + 11, row_y, 8, 7, 0)
-					}
-					else {
-						call graphics::draw_text_small(ide_window, x + 13, row_y + 1, "F", graphics::COLOR_10)
-					}
-					if (rename_active && ide_strings_equal(rename_path, child_path)) {
-						call draw_ide_inline_rename(x + 19, row_y, panel_width - 23)
-					}
-					else {
-						call draw_ide_text_clipped(x + 20, row_y + 1, child_name, (panel_width - 26) / 4, graphics::COLOR_7)
-					}
-					if (rows_interactive && graphics::mouse_pressed() && pointer_x >= x + 10 && pointer_x < x + panel_width - 14 && pointer_y >= row_y && pointer_y < row_y + 7) {
-						call ide_arm_tree_drag(child_path, child_is_folder, pointer_x, pointer_y)
-					}
-					if (row_clicked && !tree_dragging) {
-						if (child_is_folder) {
-							call ide_open_folder(child_path)
-						}
-						else {
-							call ide_open_file(child_path)
-						}
-					}
-					if (pointer_x >= x + 10 && pointer_x < x + panel_width - 2 && pointer_y >= row_y && pointer_y < row_y + 7 && rows_interactive) {
-						if (graphics::button_flat(ide_window, x + panel_width - 14, row_y, 12, 7, "...", graphics::COLOR_8)) {
-							file_menu_open = true
-							file_menu_guard = 2
-							plus_menu_open = false
-							call ide_set(file_menu_path, child_path)
-						}
-					}
-					visible_row += 1
-				}
-				flat_row += 1
-				child_index += 1
+		else {
+			body_x = row_x
+			label_x = x + 10
+			if (depth == 1) { label_x = x + 20 }
+			elseif (depth >= 2) { label_x = x + 30 }
+			row_width = x + panel_width - 14 - body_x
+			if (rows_interactive) { row_clicked = graphics::button_flat(ide_window, body_x, row_y, row_width, 7, " ", row_tone) }
+			else { call graphics::fill_rect(ide_window, body_x, row_y, row_width, 7, row_tone) }
+			call graphics::draw_text_small(ide_window, label_x - 6, row_y + 1, "F", graphics::COLOR_10)
+		}
+		if (rename_active && ide_strings_equal(rename_path, child_path)) {
+			call draw_ide_inline_rename(label_x - 1, row_y, x + panel_width - label_x - 3)
+		}
+		else {
+			call draw_ide_text_clipped(label_x, row_y + 1, root_name, (x + panel_width - label_x - 6) / 4, graphics::COLOR_7)
+		}
+		if (rows_interactive && graphics::mouse_pressed() && pointer_x >= row_x && pointer_x < x + panel_width - 14 && pointer_y >= row_y && pointer_y < row_y + 7) {
+			call ide_arm_tree_drag(child_path, root_is_folder, pointer_x, pointer_y)
+		}
+		if (row_clicked && !tree_dragging) {
+			if (root_is_folder) { call ide_open_folder(child_path) }
+			else { call ide_open_file(child_path) }
+		}
+		if (pointer_x >= row_x && pointer_x < x + panel_width - 2 && pointer_y >= row_y && pointer_y < row_y + 7 && rows_interactive) {
+			if (graphics::button_flat(ide_window, x + panel_width - 14, row_y, 12, 7, "...", graphics::COLOR_8)) {
+				file_menu_open = true
+				file_menu_guard = 2
+				plus_menu_open = false
+				call ide_set(file_menu_path, child_path)
 			}
 		}
-		root_index += 1
+		visible_row += 1
+		cache_row += 1
 	}
 	if (interactive && !popup_open) {
 		if (ide_chevron_button(x + 2, y + panel_height - 8, 12, 7, 1, graphics::COLOR_8)) {
@@ -2291,7 +2468,7 @@ fn document_shell_population(slot: int, shell: int, count: int) int {
 	index = 0
 	population = 0
 	while (index < count) {
-		if (compiler::document_script_shell(slot, index) == shell) { population += 1 }
+		if (compiler::document_script_name(slot, index) != "main" && compiler::document_script_shell(slot, index) == shell) { population += 1 }
 		index += 1
 	}
 	return population
@@ -2308,7 +2485,7 @@ fn ide_script_orbit_angle(slot: int, script: int, count: int, orbit_phase: int) 
 	position = 0
 	scan = 0
 	while (scan < script) {
-		if (compiler::document_script_shell(slot, scan) == shell) { position += 1 }
+		if (compiler::document_script_name(slot, scan) != "main" && compiler::document_script_shell(slot, scan) == shell) { position += 1 }
 		scan += 1
 	}
 	return view_rotation[slot] + orbit_phase + position * 360 / population + shell * 31
@@ -2336,6 +2513,7 @@ proc draw_ide_script_relationship(slot: int, caller: int, callee: int, count: in
 	var callee_radius: int
 	var caller_angle: float
 	var callee_angle: float
+	if (compiler::document_script_name(slot, caller) == "main" || compiler::document_script_name(slot, callee) == "main") { return }
 	caller_radius = ide_script_orbit_radius(slot, caller, outer_radius, inner_radius, shell_gap, shell_count)
 	callee_radius = ide_script_orbit_radius(slot, callee, outer_radius, inner_radius, shell_gap, shell_count)
 	caller_angle = (float)(ide_script_orbit_angle(slot, caller, count, orbit_phase))
@@ -2386,6 +2564,12 @@ proc draw_file_nucleus_view(slot: int, x: int, y: int, area_width: int, area_hei
 	var caller: int
 	var callee: int
 	var relation_slot: int
+	var hover_plane_x: float
+	var hover_plane_y: float
+	var hover_tilt_cosine: float
+	var hover_distance: int
+	var hover_delta: int
+	var hover_tilt_value: int
 	call graphics::fill_rect(ide_window, x, y, area_width, area_height, graphics::COLOR_1)
 	if (is_active) {
 		call graphics::draw_rect(ide_window, x, y, area_width, area_height, graphics::COLOR_13)
@@ -2433,6 +2617,25 @@ proc draw_file_nucleus_view(slot: int, x: int, y: int, area_width: int, area_hei
 		call draw_visual_orbit(center_x, center_y, radius, view_tilt[slot], graphics::COLOR_8)
 		shell += 1
 	}
+	pointer_x = graphics::pointer_x(ide_window)
+	pointer_y = graphics::pointer_y(ide_window)
+	dx = pointer_x - center_x
+	dy = pointer_y - center_y
+	hover_plane_x = (float)dx
+	hover_tilt_value = view_tilt[slot]
+	hover_tilt_cosine = math::cos((float)hover_tilt_value)
+	if (hover_tilt_cosine < 0.25 && hover_tilt_cosine > -0.25) { hover_tilt_cosine = 0.25 }
+	hover_plane_y = (float)dy / hover_tilt_cosine
+	hover_distance = (int)math::sqrt(hover_plane_x * hover_plane_x + hover_plane_y * hover_plane_y)
+	shell = 0
+	while (shell < shell_count) {
+		radius = outer_radius
+		if (shell_count > 1) { radius = inner_radius + shell * shell_gap }
+		hover_delta = hover_distance - radius
+		if (hover_delta < 0) { hover_delta = -hover_delta }
+		if (hover_delta <= 8) { hovered_view = slot }
+		shell += 1
+	}
 	caller = 0
 	while (caller < count && caller < ide_max_shells * ide_max_shell_items) {
 		callee = 0
@@ -2446,13 +2649,11 @@ proc draw_file_nucleus_view(slot: int, x: int, y: int, area_width: int, area_hei
 		caller += 1
 	}
 	call draw_ide_file_nucleus_asset(center_x, center_y, 8, is_active, orbit_phase)
-	call graphics::draw_text_small(ide_window, center_x - 4, center_y - 2, "Xe", graphics::WHITE)
-	pointer_x = graphics::pointer_x(ide_window)
-	pointer_y = graphics::pointer_y(ide_window)
+	call graphics::draw_text_small(ide_window, center_x - 8, center_y - 2, "main", graphics::WHITE)
 	index = 0
 	while (index < count && index < ide_max_shells * ide_max_shell_items) {
 		shell = compiler::document_script_shell(slot, index)
-		if (shell < ide_max_shells) {
+		if (compiler::document_script_name(slot, index) != "main" && shell < ide_max_shells) {
 			population = document_shell_population(slot, shell, count)
 			position = 0
 			scan = 0
@@ -2615,7 +2816,7 @@ proc draw_visual_workspace(x: int, y: int, area_width: int, area_height: int, in
 		call draw_ide_text_clipped(x + 6, y + 6, "Open a code file for Visual mode", (area_width - 12) / 4, graphics::COLOR_7)
 		return
 	}
-	shown_count = view_count
+	shown_count = file_count
 	first_view = 0
 	if (area_width < 180 || area_height < 120) {
 		shown_count = 1
@@ -2633,17 +2834,12 @@ proc draw_visual_workspace(x: int, y: int, area_width: int, area_height: int, in
 	item = 0
 	while (item < shown_count) {
 		slot = first_view + item
-		if (shown_count > 1) { slot = item }
+		if (shown_count > 1) { slot = ide_file_view_at(item) }
 		column = item % columns
 		row = item / columns
 		cell_x = x + column * (cell_width + 3)
 		cell_y = y + row * (cell_height + 3)
-		if (view_is_folder[slot] != 0) {
-			call draw_visual_folder_placeholder(slot, cell_x, cell_y, cell_width, cell_height, slot == active_view)
-		}
-		else {
-			call draw_file_nucleus_view(slot, cell_x, cell_y, cell_width, cell_height, slot == active_view)
-		}
+		call draw_file_nucleus_view(slot, cell_x, cell_y, cell_width, cell_height, slot == active_view)
 		if (interactive && graphics::mouse_pressed() && pointer_x >= cell_x && pointer_x < cell_x + cell_width && pointer_y >= cell_y && pointer_y < cell_y + cell_height) {
 			call ide_activate_view(slot)
 			if (active_view == slot) {
@@ -2682,10 +2878,122 @@ proc draw_visual_workspace(x: int, y: int, area_width: int, area_height: int, in
 	}
 	if (!interactive) { rotating_view = -1; rotation_dragging = false }
 	if (graphics::mouse_released()) { rotating_view = -1; rotation_dragging = false }
-	if (shown_count == 1 && view_count > 1) {
-		call graphics::draw_int_small(ide_window, x + area_width - 18, y + 3, active_view + 1, graphics::COLOR_7)
+	if (shown_count == 1 && file_count > 1) {
+		call graphics::draw_int_small(ide_window, x + area_width - 18, y + 3, 1, graphics::COLOR_7)
 		call graphics::draw_text_small(ide_window, x + area_width - 12, y + 3, "/", graphics::COLOR_7)
-		call graphics::draw_int_small(ide_window, x + area_width - 7, y + 3, view_count, graphics::COLOR_7)
+		call graphics::draw_int_small(ide_window, x + area_width - 7, y + 3, file_count, graphics::COLOR_7)
+	}
+}
+
+proc draw_ide_help_line(x: int, y: int, maximum: int, index: int, first: int, visible: int, text: string, color: int) {
+	var relative: int
+	relative = index - first
+	if (relative >= 0 && relative < visible) {
+		call draw_ide_text_clipped(x, y + relative * 8, text, maximum, color)
+	}
+}
+
+proc draw_ide_help_view(x: int, y: int, area_width: int, area_height: int) {
+	var maximum: int
+	var visible: int
+	var maximum_scroll: int
+	var thumb_y: int
+	var thumb_height: int
+	call graphics::fill_rect(ide_window, x, y, area_width, area_height, graphics::COLOR_1)
+	maximum = (area_width - 14) / 4
+	if (maximum < 1) { maximum = 1 }
+	visible = (area_height - 19) / 8
+	if (visible < 1) { visible = 1 }
+	maximum_scroll = 40 - visible
+	if (maximum_scroll < 0) { maximum_scroll = 0 }
+	if (graphics::pointer_x(ide_window) >= x && graphics::pointer_x(ide_window) < x + area_width && graphics::pointer_y(ide_window) >= y && graphics::pointer_y(ide_window) < y + area_height) {
+		help_scroll -= ide_scroll_delta
+	}
+	if (area_width >= 54 && area_height >= 20) {
+		if (graphics::button_flat(ide_window, x + area_width - 21, y + 3, 9, 9, "^", graphics::COLOR_8)) { help_scroll -= 1 }
+		if (graphics::button_flat(ide_window, x + area_width - 11, y + 3, 9, 9, "v", graphics::COLOR_8)) { help_scroll += 1 }
+	}
+	if (help_scroll < 0) { help_scroll = 0 }
+	if (help_scroll > maximum_scroll) { help_scroll = maximum_scroll }
+	call draw_ide_text_clipped(x + 6, y + 5, "Xe Help", maximum, graphics::WHITE)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 0, help_scroll, visible, "Using Xenon IDE", graphics::WHITE)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 1, help_scroll, visible, "Open .xe files from Explorer.", graphics::COLOR_10)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 2, help_scroll, visible, "Ctrl+S saves. Ctrl+R opens Run.", graphics::COLOR_10)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 3, help_scroll, visible, "Run Workspace uses workspace.xe.", graphics::COLOR_10)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 4, help_scroll, visible, "Run Active executes the current tab.", graphics::COLOR_10)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 5, help_scroll, visible, "Code edits text; Visual shows scripts.", graphics::COLOR_10)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 6, help_scroll, visible, "Terminal shows commands and output.", graphics::COLOR_10)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 7, help_scroll, visible, "", graphics::COLOR_7)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 8, help_scroll, visible, "Xe source basics", graphics::WHITE)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 9, help_scroll, visible, "var total: int", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 10, help_scroll, visible, "total = 2 + 3", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 11, help_scroll, visible, "out << total", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 12, help_scroll, visible, "# starts a comment", graphics::COLOR_7)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 13, help_scroll, visible, "", graphics::COLOR_7)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 14, help_scroll, visible, "Control flow", graphics::WHITE)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 15, help_scroll, visible, "if (total > 0) {", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 16, help_scroll, visible, "  out << total", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 17, help_scroll, visible, "}", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 18, help_scroll, visible, "while (total < 10) { total += 1 }", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 19, help_scroll, visible, "", graphics::COLOR_7)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 20, help_scroll, visible, "Functions and procedures", graphics::WHITE)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 21, help_scroll, visible, "fn square(v: int) int {", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 22, help_scroll, visible, "  return v * v", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 23, help_scroll, visible, "}", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 24, help_scroll, visible, "proc greet(name: string) { ... }", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 25, help_scroll, visible, "", graphics::COLOR_7)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 26, help_scroll, visible, "Standard libraries", graphics::WHITE)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 27, help_scroll, visible, "math::sqrt(81.0)", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 28, help_scroll, visible, "graphics::begin_draw(win)", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 29, help_scroll, visible, "graphics::update(win)", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 30, help_scroll, visible, "compiler::check(source)", graphics::COLOR_13)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 31, help_scroll, visible, "", graphics::COLOR_7)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 32, help_scroll, visible, "Scratch-ready habits", graphics::WHITE)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 33, help_scroll, visible, "Stage size is 480x360.", graphics::COLOR_10)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 34, help_scroll, visible, "Keep memory within 200000 words.", graphics::COLOR_10)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 35, help_scroll, visible, "Use virtual files and portable assets.", graphics::COLOR_10)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 36, help_scroll, visible, "Xe -> SB3 lists exact blockers.", graphics::COLOR_10)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 37, help_scroll, visible, "", graphics::COLOR_7)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 38, help_scroll, visible, "Official full reference", graphics::WHITE)
+	call draw_ide_help_line(x + 6, y + 17, maximum, 39, help_scroll, visible, "creeperdoesredstone.github.io/xe-docs/", graphics::COLOR_13)
+	if (maximum_scroll > 0 && area_height >= 27) {
+		thumb_height = (area_height - 21) * visible / 40
+		if (thumb_height < 5) { thumb_height = 5 }
+		thumb_y = y + 17 + (area_height - 21 - thumb_height) * help_scroll / maximum_scroll
+		call graphics::fill_rect(ide_window, x + area_width - 2, thumb_y, 1, thumb_height, graphics::COLOR_10)
+	}
+}
+
+proc draw_ide_close_prompt(window_width: int, window_height: int) {
+	var panel_width: int
+	var panel_x: int
+	var panel_y: int
+	var closing_slot: int
+	closing_slot = close_prompt_slot
+	panel_width = window_width - 16
+	if (panel_width > 210) { panel_width = 210 }
+	if (panel_width < 112) { panel_width = 112 }
+	panel_x = (window_width - panel_width) / 2
+	panel_y = window_height / 2 - 18
+	call graphics::fill_rect(ide_window, panel_x, panel_y, panel_width, 36, graphics::COLOR_8)
+	call graphics::draw_rect(ide_window, panel_x, panel_y, panel_width, 36, graphics::COLOR_10)
+	call draw_ide_text_clipped(panel_x + 5, panel_y + 5, "Save changes before closing?", (panel_width - 10) / 4, graphics::WHITE)
+	if (graphics::button_flat(ide_window, panel_x + 5, panel_y + 21, 38, 9, "Save", graphics::COLOR_10)) {
+		if (ide_save_view(closing_slot)) {
+			close_prompt_open = false
+			call ide_close_view(closing_slot)
+		}
+	}
+	if (graphics::button_flat(ide_window, panel_x + 46, panel_y + 21, 54, 9, "Don't save", graphics::COLOR_1)) {
+		view_dirty[closing_slot] = 0
+		if (closing_slot == active_view) { dirty = false }
+		close_prompt_open = false
+		call ide_close_view(closing_slot)
+	}
+	if (graphics::button_flat(ide_window, panel_x + panel_width - 48, panel_y + 21, 43, 9, "Cancel", graphics::COLOR_1)) {
+		close_prompt_open = false
+		close_prompt_slot = -1
+		call ide_report("Close canceled", false)
 	}
 }
 
@@ -2772,9 +3080,21 @@ proc draw_ribbon_file_menu(window_width: int) {
 	}
 }
 
-source = "proc double(value: int) {\n\tout << value * 2\n}\nproc react() {\n\tcall double(21)\n}\nproc separate() {\n\tout << 7\n}\ncall react()"
+proc draw_ide_run_menu() {
+	call graphics::fill_rect(ide_window, 92, 10, 86, 19, graphics::COLOR_8)
+	if (run_menu_guard == 0 && graphics::button_flat(ide_window, 94, 12, 82, 7, "Run workspace", graphics::COLOR_8)) {
+		run_menu_open = false
+		call ide_check_and_run()
+	}
+	if (run_menu_guard == 0 && graphics::button_flat(ide_window, 94, 20, 82, 7, "Run active file", graphics::COLOR_8)) {
+		run_menu_open = false
+		call ide_run_active_file()
+	}
+}
+
+source = ""
 source_path = "workspace.xe"
-status_text = "Ready"
+status_text = "Blank workspace - open Help for Xe guidance"
 terminal_text = "IDE terminal ready"
 terminal_command = ""
 visual_mode = false
@@ -2821,6 +3141,8 @@ delete_confirm = false
 terminal_open = false
 ide_font_large = true
 edit_menu_open = false
+run_menu_open = false
+run_menu_guard = 0
 editor_focus = 0
 selected_all = false
 clipboard_text = ""
@@ -2830,7 +3152,9 @@ cursor_index = xestring::strlen(source)
 selection_start = cursor_index
 selection_end = cursor_index
 selection_dragging = false
-dirty = false
+dirty = true
+compile_pending = false
+compile_due = 0
 running = false
 run_output = ""
 rotating_view = -1
@@ -2842,14 +3166,26 @@ hovered_view = -1
 selected_atom = -1
 explorer_scroll = 0
 explorer_toggle_lock = false
+explorer_cache_valid = false
+explorer_cache_revision = -1
+explorer_cache_start = 0
+explorer_cache_limit = 0
+explorer_cache_count = 0
+explorer_cache_total = 0
 status_is_error = false
 status_expires = 0
-view_count = 1
+view_count = 2
 active_view = 0
 tab_scroll = 0
 ide_scroll_delta = 0
 view_path[0] = xestring::concat("", source_path)
 view_is_folder[0] = 0
+view_source[0] = ""
+view_dirty[0] = 1
+view_cursor[0] = 0
+view_selection_start[0] = 0
+view_selection_end[0] = 0
+view_compile_ok[0] = 1
 view_rotation[0] = 0
 view_tilt[0] = 28
 view_rotation_target[0] = 0
@@ -2857,8 +3193,25 @@ view_tilt_target[0] = 28
 view_orbit_phase[0] = 0
 view_orbit_speed[0] = 24
 view_orbit_target[0] = 24
+view_path[1] = "Help"
+view_is_folder[1] = 2
+view_source[1] = ""
+view_dirty[1] = 0
+view_cursor[1] = 0
+view_selection_start[1] = 0
+view_selection_end[1] = 0
+view_compile_ok[1] = 1
+view_rotation[1] = 0
+view_tilt[1] = 28
+view_rotation_target[1] = 0
+view_tilt_target[1] = 28
+view_orbit_phase[1] = 0
+view_orbit_speed[1] = 24
+view_orbit_target[1] = 24
 ide_camera_bank = -10
 ribbon_file_pointer_inside = false
+close_prompt_open = false
+close_prompt_slot = -1
 compile_ok = compiler::check(source)
 visual_atom_count = compiler::load_visual(source)
 visual_atom_count = compiler::load_document(0, source_path, source)
@@ -2884,8 +3237,15 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		status_is_error = false
 		status_expires = 0
 	}
+	if (compile_pending && current_ticks >= compile_due && active_view >= 0 && active_view < view_count && view_is_folder[active_view] == 0) {
+		compile_ok = compiler::check(source)
+		if (compile_ok) { view_compile_ok[active_view] = 1 }
+		else { view_compile_ok[active_view] = 0 }
+		compile_pending = false
+	}
 	if (file_menu_guard > 0) { file_menu_guard -= 1 }
 	if (ribbon_file_menu_guard > 0) { ribbon_file_menu_guard -= 1 }
+	if (run_menu_guard > 0) { run_menu_guard -= 1 }
 	if (open_picker_guard > 0) { open_picker_guard -= 1 }
 	if (rename_pointer_guard > 0) { rename_pointer_guard -= 1 }
 	animation_step = delta_ms * 100 / 220
@@ -2907,6 +3267,7 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		view_tilt[view_update] += view_tilt_step
 		view_orbit_target[view_update] = 24
 		if (hovered_view == view_update) { view_orbit_target[view_update] = 6 }
+		if (hovered_view == view_update && hovered_atom >= 0) { view_orbit_target[view_update] = 0 }
 		if (rotation_dragging && rotating_view == view_update) { view_orbit_target[view_update] = 0 }
 		view_orbit_step = (view_orbit_target[view_update] - view_orbit_speed[view_update]) * animation_step / 100
 		if (view_orbit_step == 0 && view_orbit_target[view_update] > view_orbit_speed[view_update]) { view_orbit_step = 1 }
@@ -2930,11 +3291,14 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		main_pointer_y = graphics::pointer_y(ide_window)
 		edit_pointer_inside = main_pointer_x >= 32 && main_pointer_x < 108 && main_pointer_y >= 10 && main_pointer_y < 61
 		ribbon_file_pointer_inside = main_pointer_x >= 2 && main_pointer_x < 82 && main_pointer_x < width - 2 && main_pointer_y >= 2 && main_pointer_y < 53
+		if (run_menu_open && run_menu_guard == 0 && graphics::mouse_pressed() && !(main_pointer_x >= 92 && main_pointer_x < 178 && main_pointer_y >= 2 && main_pointer_y < 29)) {
+			run_menu_open = false
+		}
 		if (ribbon_file_menu_open && ribbon_file_menu_guard == 0 && graphics::mouse_pressed() && !ribbon_file_pointer_inside) {
 			ribbon_file_menu_open = false
 			ribbon_file_menu_guard = 1
 		}
-		ui_input_blocked = rename_active || delete_confirm || open_picker_open || ribbon_file_menu_open || ribbon_file_menu_guard > 0 || (edit_menu_open && (edit_pointer_inside || graphics::mouse_pressed()))
+		ui_input_blocked = rename_active || delete_confirm || close_prompt_open || open_picker_open || ribbon_file_menu_open || run_menu_open || ribbon_file_menu_guard > 0 || (edit_menu_open && (edit_pointer_inside || graphics::mouse_pressed()))
 		explorer_popup_active = plus_menu_open || file_menu_open || rename_active || open_picker_open || ribbon_file_menu_open
 		if (edit_menu_open && graphics::mouse_pressed() && !edit_pointer_inside) {
 			edit_menu_open = false
@@ -2951,7 +3315,9 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 			if (graphics::button_flat(ide_window, 32, 2, 28, 7, "Edit", graphics::COLOR_8)) { edit_menu_open = !edit_menu_open; plus_menu_open = false; file_menu_open = false }
 			if (graphics::button_flat(ide_window, 62, 2, 28, 7, "View", graphics::COLOR_8)) { explorer_open = !explorer_open; edit_menu_open = false }
 			if (graphics::button_flat(ide_window, 92, 2, 28, 7, "Run", graphics::COLOR_8)) {
-				call ide_check_and_run()
+				run_menu_open = true
+				run_menu_guard = 2
+				edit_menu_open = false
 			}
 			if (width >= 176 && graphics::button_flat(ide_window, 122, 2, 48, 7, "Terminal", graphics::COLOR_8)) {
 				terminal_open = !terminal_open
@@ -2994,6 +3360,7 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		var maximum_tab_scroll: int
 		var tabs_overflow: bool
 		var tab_clicked: bool
+		var tab_label: string
 		var mode_x: int
 		var displayed_tabs: int
 		var show_modes: int
@@ -3109,7 +3476,10 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 			else {
 				call graphics::fill_rect(ide_window, tab_x, 12, tab_width, 7, tab_tone)
 			}
-			call draw_ide_text_clipped(tab_x + 2, 13, view_path[tab_slot], (tab_body_width - 4) / 4, graphics::WHITE)
+			if (view_is_folder[tab_slot] == 2) { tab_label = "Help" }
+			else { tab_label = ide_base_name(view_path[tab_slot]) }
+			if (view_dirty[tab_slot] != 0) { tab_label = xestring::concat(tab_label, "*") }
+			call draw_ide_text_clipped(tab_x + 2, 13, tab_label, (tab_body_width - 4) / 4, graphics::WHITE)
 			if (tab_clicked) {
 				call ide_activate_view(tab_slot)
 			}
@@ -3168,7 +3538,10 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 			call draw_visual_workspace(editor_x, 22, width - editor_x - 2, editor_height - 2, !ui_input_blocked && !explorer_popup_active)
 		}
 		elseif (!visual_mode && editor_height >= 16) {
-			if (view_is_folder[active_view] != 0) {
+			if (view_is_folder[active_view] == 2) {
+				call draw_ide_help_view(editor_x, 22, width - editor_x - 2, editor_height - 2)
+			}
+			elseif (view_is_folder[active_view] != 0) {
 				call graphics::draw_text(ide_window, editor_x + 8, 30, "Folder view", graphics::COLOR_7)
 				call graphics::draw_text_small(ide_window, editor_x + 8, 40, "Open a file to edit or visualize", graphics::COLOR_10)
 			}
@@ -3212,9 +3585,11 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		if (ribbon_file_menu_open && !delete_confirm && !open_picker_open) {
 			call draw_ribbon_file_menu(width)
 		}
+		if (run_menu_open && !delete_confirm && !open_picker_open && !close_prompt_open) { call draw_ide_run_menu() }
 		if (open_picker_open && !delete_confirm) {
 			call draw_ide_open_picker(width, height)
 		}
+		if (close_prompt_open) { call draw_ide_close_prompt(width, height) }
 
 		if (delete_confirm) {
 			call graphics::fill_rect(ide_window, width / 2 - 62, height / 2 - 18, 124, 36, graphics::COLOR_8)
@@ -3227,19 +3602,27 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 
 		key = graphics::read_key()
 		while (key != 0) {
-			if (open_picker_open) {
+			if (close_prompt_open) {
+				if (key == graphics::KEY_ESCAPE) {
+					close_prompt_open = false
+					close_prompt_slot = -1
+					call ide_report("Close canceled", false)
+				}
+			}
+			elseif (open_picker_open) {
 				call ide_handle_open_picker_key(key)
 			}
 			elseif (rename_active) {
 				call ide_handle_rename_key(key)
 			}
-			elseif (edit_menu_open || delete_confirm || plus_menu_open || file_menu_open || ribbon_file_menu_open) {
+			elseif (edit_menu_open || delete_confirm || plus_menu_open || file_menu_open || ribbon_file_menu_open || run_menu_open) {
 				if (key == graphics::KEY_ESCAPE) {
 					edit_menu_open = false
 					delete_confirm = false
 					plus_menu_open = false
 					file_menu_open = false
 					ribbon_file_menu_open = false
+					run_menu_open = false
 				}
 			}
 			else {
@@ -3249,5 +3632,4 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		}
 	}
 	call graphics::update(ide_window)
-	call os::sleep(16)
 }

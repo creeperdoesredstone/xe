@@ -1,8 +1,10 @@
 import sys
 import re
 import time
+import math
 import threading
 import traceback
+from array import array
 from pathlib import Path
 from typing import Optional
 
@@ -24,6 +26,7 @@ from PyQt6.QtWidgets import (
 	QCheckBox,
 	QInputDialog,
 	QSizePolicy,
+	QTabWidget,
 )
 from PyQt6.QtGui import (
 	QSyntaxHighlighter,
@@ -41,9 +44,29 @@ from PyQt6.QtGui import (
 	QMouseEvent,
 	QWheelEvent,
 	QFont,
+	QFontDatabase,
 	QTextOption,
 )
-from PyQt6.QtCore import QEvent, Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QRect, QSize, QPoint
+from PyQt6.QtCore import (
+	QEvent,
+	QIODevice,
+	QObject,
+	Qt,
+	QThread,
+	pyqtSignal,
+	pyqtSlot,
+	QTimer,
+	QRect,
+	QSize,
+	QPoint,
+)
+
+try:
+	from PyQt6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
+except (ImportError, OSError):
+	QAudioFormat = None
+	QAudioSink = None
+	QMediaDevices = None
 
 from xe_lang.lexer import lex
 from xe_lang.parser import parse
@@ -61,14 +84,62 @@ from xe_lang.nodes import (
 )
 from runtime import run, RuntimeContext
 from ide_themes import THEMES
+from xe_lang.devices.assets import AudioState, AudioVoice
 from xe_lang.devices import (
 	DEFAULT_PALETTE,
 	SCREEN_HEIGHT,
 	SCREEN_WIDTH,
 	FrameSnapshot,
 	OSDevice,
+	default_settings_path,
 )
 from xe_lang.devices.keymap import normalize_key_code
+from xe_lang.host_tools import ConverterPane, HelpPane, ImageStudioPane
+from xe_lang.host_tools.services import ConversionRequest
+
+
+PREFERRED_MONOSPACE_FAMILIES = (
+	"Fira Code",
+	"Cascadia Code",
+	"JetBrains Mono",
+	"Consolas",
+)
+
+
+def _host_monospace_font(
+	point_size: float = 11.0,
+	*,
+	available_families: tuple[str, ...] | None = None,
+	fixed_font: QFont | None = None,
+) -> QFont:
+	"""Return a readable fixed-width host font with installed-family fallbacks."""
+	if available_families is None:
+		available_families = tuple(QFontDatabase.families())
+	installed = {family.casefold(): family for family in available_families}
+	preferred = next(
+		(
+			installed[name.casefold()]
+			for name in PREFERRED_MONOSPACE_FAMILIES
+			if name.casefold() in installed
+		),
+		None,
+	)
+	system_fixed = QFont(fixed_font) if fixed_font is not None else QFontDatabase.systemFont(
+		QFontDatabase.SystemFont.FixedFont
+	)
+	families: list[str] = []
+	seen: set[str] = set()
+	for family in (preferred, system_fixed.family(), "monospace"):
+		key = family.casefold() if family else ""
+		if key and key not in seen:
+			families.append(family)
+			seen.add(key)
+	font = QFont(system_fixed)
+	font.setFamilies(families or ["monospace"])
+	font.setStyleHint(QFont.StyleHint.Monospace)
+	font.setFixedPitch(True)
+	font.setPointSizeF(max(8.0, float(point_size)))
+	return font
 
 
 def _find_name_token_pos(tokens: list[Token], keyword_pos: Position, name: str) -> Position:
@@ -928,7 +999,7 @@ class VMGraphicsWidget(QWidget):
 		self.render_y = 0
 		self.render_width = self.width_px // 2
 		self.render_height = self.height_px // 2
-		self.setMinimumSize(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
+		self.setMinimumSize(1, 1)
 		self.setSizePolicy(
 			QSizePolicy.Policy.Expanding,
 			QSizePolicy.Policy.Expanding,
@@ -950,13 +1021,14 @@ class VMGraphicsWidget(QWidget):
 	def _fit_stage(self) -> None:
 		available_width = max(1, self.width())
 		available_height = max(1, self.height())
+		stage_width = max(1, self.width_px)
+		stage_height = max(1, self.height_px)
 		self.scale = max(
-			0.01,
-			min(available_width / self.width_px, available_height / self.height_px),
+			1e-6,
+			min(available_width / stage_width, available_height / stage_height),
 		)
-		self.scale = round(self.scale)
-		self.render_width = max(1, round(self.width_px * self.scale))
-		self.render_height = max(1, round(self.height_px * self.scale))
+		self.render_width = max(1, round(stage_width * self.scale))
+		self.render_height = max(1, round(stage_height * self.scale))
 		self.render_x = (available_width - self.render_width) // 2
 		self.render_y = (available_height - self.render_height) // 2
 
@@ -1014,19 +1086,21 @@ class VMGraphicsWidget(QWidget):
 		painter.drawPixmap(self.render_x, self.render_y, scaled_pixmap)
 
 	def _pointer_position(self, event: QMouseEvent) -> tuple[int, int]:
+		scale_x = self.render_width / max(1, self.width_px)
+		scale_y = self.render_height / max(1, self.height_px)
 		return (
 			max(
 				0,
 				min(
 					self.width_px - 1,
-					int((event.position().x() - self.render_x) / self.scale),
+					int((event.position().x() - self.render_x) / max(scale_x, 1e-6)),
 				),
 			),
 			max(
 				0,
 				min(
 					self.height_px - 1,
-					int((event.position().y() - self.render_y) / self.scale),
+					int((event.position().y() - self.render_y) / max(scale_y, 1e-6)),
 				),
 			),
 		)
@@ -1179,12 +1253,152 @@ class VMGraphicsWidget(QWidget):
 		super().focusOutEvent(event)
 
 
+class _ToneStream(QIODevice):
+	"""Thread-safe pull stream for the host's optional note synthesizer."""
+
+	def __init__(self, sample_rate: int = 48_000, parent: QObject | None = None):
+		super().__init__(parent)
+		self._sample_rate = max(8_000, int(sample_rate))
+		self._voices: tuple[AudioVoice, ...] = ()
+		self._volume = 0.0
+		self._phases: dict[tuple[int, int], float] = {}
+		self._lock = threading.RLock()
+		self.open(QIODevice.OpenModeFlag.ReadOnly)
+
+	def set_sample_rate(self, sample_rate: int) -> None:
+		with self._lock:
+			self._sample_rate = max(8_000, int(sample_rate))
+			self._phases.clear()
+
+	def set_state(self, state: AudioState) -> None:
+		voices = tuple(state.voices)
+		keys = {(voice.pitch, voice.instrument) for voice in voices}
+		with self._lock:
+			self._voices = voices
+			self._volume = max(0.0, min(1.0, float(state.volume) / 100.0))
+			self._phases = {
+				key: phase for key, phase in self._phases.items() if key in keys
+			}
+
+	def silence(self) -> None:
+		self.set_state(AudioState((), 0, False))
+
+	def isSequential(self) -> bool:
+		return True
+
+	def bytesAvailable(self) -> int:
+		return 16_384 + super().bytesAvailable()
+
+	def readData(self, maxlen: int) -> bytes:
+		byte_count = max(0, int(maxlen))
+		frame_count = byte_count // 4
+		if frame_count == 0:
+			return b""
+
+		with self._lock:
+			voices = self._voices
+			volume = self._volume
+			sample_rate = self._sample_rate
+			phases = dict(self._phases)
+
+		if not voices or volume <= 0.0:
+			return bytes(frame_count * 4)
+
+		gain = 0.24 * volume / max(1.0, math.sqrt(len(voices)))
+		steps: list[tuple[tuple[int, int], float, float]] = []
+		for voice in voices:
+			key = (int(voice.pitch), int(voice.instrument))
+			frequency = 440.0 * 2.0 ** ((max(0, min(127, voice.pitch)) - 69) / 12.0)
+			step = math.tau * frequency / sample_rate
+			amplitude = gain * max(0, min(127, voice.velocity)) / 127.0
+			steps.append((key, step, amplitude))
+
+		output = array("h")
+		for _ in range(frame_count):
+			sample = 0.0
+			for key, step, amplitude in steps:
+				phase = phases.get(key, 0.0)
+				sample += math.sin(phase) * amplitude
+				phases[key] = (phase + step) % math.tau
+			value = max(-32_768, min(32_767, round(sample * 32_767.0)))
+			output.append(value)
+			output.append(value)
+
+		with self._lock:
+			active = {(voice.pitch, voice.instrument) for voice in self._voices}
+			for key, phase in phases.items():
+				if key in active:
+					self._phases[key] = phase
+		return output.tobytes()
+
+	def writeData(self, data: bytes) -> int:
+		return 0
+
+
+class _ToneEngine(QObject):
+	"""Lazily connects the portable note stream to a native Qt audio output."""
+
+	def __init__(self, parent: QObject | None = None):
+		super().__init__(parent)
+		self.stream = _ToneStream(parent=self)
+		self.sink = None
+		self._unavailable = QAudioSink is None
+
+	def _ensure_output(self) -> None:
+		if self.sink is not None or self._unavailable:
+			return
+		try:
+			device = QMediaDevices.defaultAudioOutput()
+			if device.isNull():
+				self._unavailable = True
+				return
+			preferred_rate = device.preferredFormat().sampleRate()
+			format_ = None
+			for sample_rate in dict.fromkeys((48_000, 44_100, preferred_rate)):
+				if sample_rate <= 0:
+					continue
+				candidate = QAudioFormat()
+				candidate.setSampleRate(sample_rate)
+				candidate.setChannelCount(2)
+				candidate.setSampleFormat(QAudioFormat.SampleFormat.Int16)
+				if device.isFormatSupported(candidate):
+					format_ = candidate
+					break
+			if format_ is None:
+				self._unavailable = True
+				return
+			self.stream.set_sample_rate(format_.sampleRate())
+			self.sink = QAudioSink(device, format_, self)
+			self.sink.setBufferSize(max(4_096, format_.sampleRate() * 4 // 10))
+			self.sink.start(self.stream)
+		except (OSError, RuntimeError):
+			self.sink = None
+			self._unavailable = True
+
+	@pyqtSlot(object)
+	def update_state(self, state: AudioState) -> None:
+		self.stream.set_state(state)
+		if state.voices and state.volume > 0:
+			self._ensure_output()
+
+	def silence(self) -> None:
+		self.stream.silence()
+
+	def shutdown(self) -> None:
+		self.silence()
+		if self.sink is not None:
+			self.sink.stop()
+			self.sink = None
+		self.stream.close()
+
+
 class VMWorkerThread(QThread):
 	execution_finished = pyqtSignal(object, object, str)
 	frame_ready = pyqtSignal(object)
 	vm_ready = pyqtSignal(object)
 	output_ready = pyqtSignal(str)
 	input_requested = pyqtSignal(object, object)
+	audio_state = pyqtSignal(object)
 
 	def __init__(self, filename: str, code: str, context: RuntimeContext):
 		super().__init__()
@@ -1219,6 +1433,7 @@ class VMWorkerThread(QThread):
 			self.context.input_handler = input_handler
 			self.context.frame_handler = frame_handler
 			self.context.vm_ready_handler = self.vm_ready.emit
+			self.context.audio_handler = self.audio_state.emit
 			result, error, asm = run(self.filename, self.code, self.context)
 
 			self.execution_finished.emit(result, error, asm or "")
@@ -1349,24 +1564,14 @@ class X26IDE(QMainWindow):
 	def __init__(self):
 		super().__init__()
 
-		font = QFont()
-		font.setFamilies(
-			[
-				"Fira Code",
-				"Cascadia Code",
-				"JetBrains Mono",
-				"Consolas",
-			]
-		)
-		font.setPointSizeF(11)
-
-		self.setFont(font)
+		self.setFont(_host_monospace_font())
 
 		self.setWindowTitle("Xenon IDE")
 		self.setGeometry(100, 100, 1200, 760)
 
 		self.current_file: Optional[Path] = None
-		self.os_device = OSDevice()
+		self.os_device = OSDevice(settings_path=default_settings_path())
+		self.audio_engine = _ToneEngine(self)
 		self.runtime_context = RuntimeContext(os_device=self.os_device)
 		self.current_theme = "Default Dark"
 		self.worker: Optional[VMWorkerThread] = None
@@ -1378,7 +1583,22 @@ class X26IDE(QMainWindow):
 
 		central_widget = QWidget()
 		self.setCentralWidget(central_widget)
-		main_layout = QVBoxLayout(central_widget)
+		root_layout = QVBoxLayout(central_widget)
+		root_layout.setContentsMargins(0, 0, 0, 0)
+		root_layout.setSpacing(0)
+
+		self.workspace_tabs = QTabWidget()
+		self.workspace_tabs.setObjectName("WorkspaceTabs")
+		self.workspace_tabs.setDocumentMode(True)
+		self.workspace_tabs.setMovable(False)
+		self.workspace_tabs.setTabsClosable(False)
+		root_layout.addWidget(self.workspace_tabs)
+
+		self.code_tab = QWidget()
+		self.code_tab.setObjectName("CodeWorkspace")
+		main_layout = QVBoxLayout(self.code_tab)
+		main_layout.setContentsMargins(10, 8, 10, 10)
+		main_layout.setSpacing(8)
 
 		toolbar_layout = QHBoxLayout()
 		for text, slot in [
@@ -1484,6 +1704,18 @@ class X26IDE(QMainWindow):
 		main_splitter.setSizes([650, 520])
 		main_layout.addWidget(main_splitter)
 
+		self.workspace_tabs.addTab(self.code_tab, "Code")
+		self.converter_view = ConverterPane(request_provider=self._converter_request)
+		self.workspace_tabs.addTab(self.converter_view, "Xe → SB3")
+		self.image_studio_view = ImageStudioPane()
+		self.workspace_tabs.addTab(self.image_studio_view, "Image Studio")
+		self.help_view = HelpPane()
+		self.workspace_tabs.addTab(self.help_view, "Help")
+		self.editor.document().modificationChanged.connect(self.update_title)
+		self.editor.document().contentsChanged.connect(
+			self.converter_view.invalidate
+		)
+
 		self.setup_menu_bar()
 		self.apply_theme()
 
@@ -1521,8 +1753,26 @@ class X26IDE(QMainWindow):
 		self.graphics_view_action = view_menu.addAction("Maximize Graphics View")
 		self.graphics_view_action.setShortcut("Ctrl+Shift+G")
 		self.graphics_view_action.triggered.connect(self.toggle_graphics_view)
+		view_menu.addSeparator()
+		for name, index, shortcut in [
+			("Code", 0, "Alt+1"),
+			("Xe to SB3", 1, "Alt+2"),
+			("Image Studio", 2, "Alt+3"),
+			("Help", 3, "Alt+4"),
+		]:
+			action = view_menu.addAction(name)
+			action.setShortcut(shortcut)
+			action.triggered.connect(
+				lambda checked=False, tab_index=index: self.workspace_tabs.setCurrentIndex(tab_index)
+			)
+
+		help_menu = menubar.addMenu("Help")
+		help_action = help_menu.addAction("Xe and IDE Help")
+		help_action.setShortcut(QKeySequence.StandardKey.HelpContents)
+		help_action.triggered.connect(self.open_help)
 
 	def toggle_graphics_view(self):
+		self.workspace_tabs.setCurrentWidget(self.code_tab)
 		self.graphics_maximized = not self.graphics_maximized
 		if self.graphics_maximized:
 			self._graphics_splitter_sizes = (
@@ -1547,16 +1797,55 @@ class X26IDE(QMainWindow):
 		theme = THEMES[self.current_theme]
 		self.editor.line_number_bg = QColor(theme["toolbar_bg"])
 		self.editor.line_number_fg = QColor(theme["comment"])
+		is_light = QColor(theme["background"]).lightness() > 145
+		warning_color = "#8a5800" if is_light else "#e8b967"
 		stylesheet = f"""
 			QMainWindow {{ background-color: {theme['background']}; color: {theme['foreground']}; }}
 			QWidget {{ background-color: {theme['background']}; color: {theme['foreground']}; }}
 			QMenuBar {{ background-color: {theme['toolbar_bg']}; color: {theme['foreground']}; border-bottom: 1px solid #555; }}
 			QMenuBar::item:selected {{ background-color: {theme['button']}; }}
-			QPushButton {{ background-color: {theme['button']}; color: white; border: none; border-radius: 3px; padding: 5px 10px; font-weight: bold; }}
-			QPushButton:hover {{ background-color: {theme['button_hover']}; }}
+			QMenu {{ background-color: {theme['toolbar_bg']}; color: {theme['foreground']}; border: 1px solid #39445a; padding: 4px; }}
+			QMenu::item {{ padding: 6px 24px 6px 10px; border-radius: 3px; }}
+			QMenu::item:selected {{ background-color: {theme['button']}; }}
+			QPushButton {{ background-color: {theme['button']}; color: {theme['foreground']}; border: 1px solid transparent; border-radius: 4px; padding: 6px 11px; font-weight: 600; }}
+			QPushButton:hover {{ background-color: {theme['button']}; border-color: {theme['keyword']}; }}
+			QPushButton:focus, QToolButton:focus, QComboBox:focus, QLineEdit:focus, QListWidget:focus {{ border: 1px solid {theme['keyword']}; }}
+			QPushButton#PrimaryButton {{ background-color: {theme['keyword']}; color: {theme['background']}; }}
+			QPushButton#PrimaryButton:hover {{ background-color: {theme['button_hover']}; }}
+			QPushButton#SecondaryButton {{ border: 1px solid #47556d; }}
+			QToolButton {{ background-color: transparent; color: {theme['foreground']}; border: 1px solid transparent; border-radius: 4px; padding: 5px 7px; }}
+			QToolButton:hover {{ background-color: {theme['button']}; }}
+			QToolButton:checked {{ background-color: {theme['button']}; border-color: {theme['keyword']}; }}
 			QPlainTextEdit {{ background-color: {theme['background']}; color: {theme['foreground']}; border: 1px solid #555; }}
-			QTextEdit {{ background-color: {theme['background']}; color: {theme['foreground']}; border: 1px solid #555; }}
-			QLabel {{ color: {theme['foreground']}; }}
+			QTextEdit, QTextBrowser {{ background-color: {theme['background']}; color: {theme['foreground']}; border: 1px solid #39445a; border-radius: 4px; }}
+			QLineEdit, QComboBox, QSpinBox {{ background-color: {theme['output_bg']}; color: {theme['foreground']}; border: 1px solid #39445a; border-radius: 4px; padding: 5px 7px; min-height: 20px; }}
+			QComboBox::drop-down {{ border: none; width: 24px; }}
+			QListWidget {{ background-color: {theme['output_bg']}; color: {theme['foreground']}; border: 1px solid #39445a; border-radius: 4px; outline: none; }}
+			QListWidget::item {{ padding: 6px; border-radius: 3px; }}
+			QListWidget::item:selected {{ background-color: {theme['button']}; color: {theme['foreground']}; }}
+			QListWidget::item:hover {{ background-color: {theme['toolbar_bg']}; }}
+			QLabel {{ color: {theme['foreground']}; background-color: transparent; }}
+			QCheckBox {{ background-color: transparent; spacing: 6px; }}
+			QLabel#ToolTitle {{ font-size: 18px; font-weight: 650; }}
+			QLabel#SectionTitle {{ font-size: 13px; font-weight: 650; }}
+			QLabel#MutedText {{ color: {theme['comment']}; }}
+			QLabel#WarningText {{ color: {warning_color}; }}
+			QLabel#StatusChip {{ border-radius: 10px; padding: 4px 10px; background-color: {theme['button']}; }}
+			QLabel#StatusChip[status="success"] {{ background-color: #153f32; color: #70e1b6; }}
+			QLabel#StatusChip[status="warning"] {{ background-color: #4a3514; color: #ffd37a; }}
+			QLabel#StatusChip[status="error"] {{ background-color: #4a2028; color: #ff9ca8; }}
+			QFrame#ToolCard, QFrame#ToolBarCard {{ background-color: {theme['toolbar_bg']}; border: 1px solid #313b4d; border-radius: 6px; }}
+			QLabel#ImagePreview {{ background-color: {theme['output_bg']}; border: 1px solid #313b4d; border-radius: 5px; }}
+			QTabWidget#WorkspaceTabs::pane {{ border: none; }}
+			QTabBar::tab {{ background-color: {theme['toolbar_bg']}; color: {theme['comment']}; border: none; border-bottom: 2px solid transparent; min-width: 96px; padding: 9px 14px; }}
+			QTabBar::tab:hover {{ color: {theme['foreground']}; background-color: {theme['button']}; }}
+			QTabBar::tab:selected {{ color: {theme['foreground']}; border-bottom-color: {theme['keyword']}; }}
+			QScrollBar:vertical {{ background: {theme['output_bg']}; width: 10px; margin: 0; }}
+			QScrollBar::handle:vertical {{ background: #526078; min-height: 24px; border-radius: 4px; }}
+			QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+			QSlider::groove:horizontal {{ background-color: {theme['output_bg']}; border: 1px solid #39445a; height: 4px; border-radius: 2px; }}
+			QSlider::sub-page:horizontal {{ background-color: {theme['keyword']}; border-radius: 2px; }}
+			QSlider::handle:horizontal {{ background-color: {theme['foreground']}; border: 1px solid {theme['keyword']}; width: 12px; margin: -5px 0; border-radius: 6px; }}
 			QSplitter::handle {{ background-color: #555; }}
 			QToolTip {{
                 background-color: {theme['toolbar_bg']};
@@ -1578,6 +1867,10 @@ class X26IDE(QMainWindow):
 		if name in THEMES:
 			self.current_theme = name
 			self.apply_theme()
+
+	def open_help(self):
+		self.workspace_tabs.setCurrentWidget(self.help_view)
+		self.help_view.focus_search()
 
 	def show_find_bar(self, replace: bool):
 		self.find_replace_bar.set_replace_mode(replace)
@@ -1714,9 +2007,11 @@ class X26IDE(QMainWindow):
 		self.editor.setFocus()
 
 	def new_file(self):
+		self.workspace_tabs.setCurrentWidget(self.code_tab)
 		self.editor.clear()
 		self.output.clear()
 		self.current_file = None
+		self.editor.document().setModified(False)
 		self.update_title()
 
 	def open_file(self):
@@ -1727,6 +2022,7 @@ class X26IDE(QMainWindow):
 			self.load_file(Path(path))
 
 	def load_file(self, path: Path) -> None:
+		self.workspace_tabs.setCurrentWidget(self.code_tab)
 		self.current_file = path.resolve()
 		self.editor.setPlainText(self.current_file.read_text(encoding="utf-8"))
 		self.editor.document().setModified(False)
@@ -1748,9 +2044,47 @@ class X26IDE(QMainWindow):
 			self.current_file = Path(path)
 			self.save_file()
 
-	def update_title(self):
+	def update_title(self, *args):
+		modified = self.editor.document().isModified()
+		marker = " *" if modified else ""
+		name = self.current_file.name if self.current_file else "Untitled"
 		self.setWindowTitle(
-			f"Xenon IDE - {self.current_file.name if self.current_file else 'Untitled'}"
+			f"Xenon IDE - {name}{marker}"
+		)
+		if hasattr(self, "workspace_tabs"):
+			self.workspace_tabs.setTabText(
+				self.workspace_tabs.indexOf(self.code_tab),
+				"Code *" if modified else "Code",
+			)
+
+	def _converter_request(self, scope: str) -> ConversionRequest:
+		active_path = self.current_file.resolve() if self.current_file else None
+		workspace_root = active_path.parent if active_path else Path.cwd().resolve()
+		if active_path is not None:
+			for candidate in active_path.parents:
+				if (candidate / "workspace.xe").is_file():
+					workspace_root = candidate
+					break
+		if scope == "workspace":
+			entry_path = workspace_root / "workspace.xe"
+			if active_path == entry_path.resolve():
+				source = self.editor.toPlainText()
+			elif entry_path.is_file():
+				source = entry_path.read_text(encoding="utf-8")
+			else:
+				source = self.editor.toPlainText()
+				entry_path = active_path
+			return ConversionRequest(
+				scope="workspace",
+				source_text=source,
+				source_path=entry_path,
+				workspace_root=workspace_root,
+			)
+		return ConversionRequest(
+			scope="active",
+			source_text=self.editor.toPlainText(),
+			source_path=active_path,
+			workspace_root=workspace_root,
 		)
 
 	@pyqtSlot(str)
@@ -1798,6 +2132,7 @@ class X26IDE(QMainWindow):
 		self.input_line.hide()
 
 	def run_code(self):
+		self.workspace_tabs.setCurrentWidget(self.code_tab)
 		code = self.editor.toPlainText()
 		if not code.strip():
 			return
@@ -1812,6 +2147,7 @@ class X26IDE(QMainWindow):
 				return
 
 		self.output.setHtml("")
+		self.audio_engine.silence()
 		self.runtime_context = RuntimeContext(os_device=self.os_device)
 		filename = str(self.current_file) if self.current_file else "<editor>"
 
@@ -1820,6 +2156,7 @@ class X26IDE(QMainWindow):
 		self.worker.vm_ready.connect(self.graphics_view.set_active_vm)
 		self.worker.output_ready.connect(self.append_output)
 		self.worker.input_requested.connect(self.request_program_input)
+		self.worker.audio_state.connect(self.audio_engine.update_state)
 		self.worker.execution_finished.connect(self.handle_execution_finished)
 
 		self.graphics_view.active_vm = None
@@ -1835,9 +2172,12 @@ class X26IDE(QMainWindow):
 	def handle_execution_finished(self, result, error, assembly):
 		self.refresh_timer.stop()
 		self.cancel_program_input()
+		self.audio_engine.silence()
 		if error:
 			self.output.append(ansi_to_html(f"{error}"))
 		else:
+			if self.output.toPlainText() and not self.output.toPlainText().endswith("\n"):
+				self.append_output("\n")
 			self.append_output(f"Execution finished successfully.\n\nStack: {result[:16]}")
 
 		if hasattr(self.runtime_context, "vm") and self.runtime_context.vm:
@@ -1851,6 +2191,7 @@ class X26IDE(QMainWindow):
 			self.cancel_program_input()
 			self.runtime_context.cancel()
 			self.worker.wait(2000)
+		self.audio_engine.shutdown()
 		event.accept()
 
 	def keyPressEvent(self, event: QKeyEvent):
@@ -1861,19 +2202,7 @@ class X26IDE(QMainWindow):
 
 def main():
 	app = QApplication(sys.argv)
-
-	font = QFont()
-	font.setFamilies(
-		[
-			"Fira Code",
-			"Cascadia Code",
-			"JetBrains Mono",
-			"Consolas",
-		]
-	)
-	font.setPointSizeF(11)
-
-	app.setFont(font)
+	app.setFont(_host_monospace_font())
 
 	ide = X26IDE()
 	arguments = sys.argv[1:]
