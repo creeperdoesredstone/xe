@@ -41,22 +41,22 @@ fn draw_step_button(x: int, y: int, right: bool) bool {
 	var clicked: bool
 	var center_x: int
 	var center_y: int
-	clicked = graphics::button(settings_window, x, y, 14, 11, " ")
+	clicked = graphics::button(settings_window, x, y, 15, 11, " ")
 	center_x = x + 7
 	center_y = y + 5
 	if (right) {
-		call graphics::set_pixel(settings_window, center_x - 2, center_y - 2, graphics::WHITE)
-		call graphics::set_pixel(settings_window, center_x - 1, center_y - 1, graphics::WHITE)
-		call graphics::set_pixel(settings_window, center_x, center_y, graphics::WHITE)
-		call graphics::set_pixel(settings_window, center_x - 1, center_y + 1, graphics::WHITE)
-		call graphics::set_pixel(settings_window, center_x - 2, center_y + 2, graphics::WHITE)
+		call graphics::set_pixel(settings_window, center_x - 1, center_y - 2, graphics::WHITE)
+		call graphics::set_pixel(settings_window, center_x - 0, center_y - 1, graphics::WHITE)
+		call graphics::set_pixel(settings_window, center_x + 1, center_y, graphics::WHITE)
+		call graphics::set_pixel(settings_window, center_x - 0, center_y + 1, graphics::WHITE)
+		call graphics::set_pixel(settings_window, center_x - 1, center_y + 2, graphics::WHITE)
 	}
 	else {
-		call graphics::set_pixel(settings_window, center_x + 2, center_y - 2, graphics::WHITE)
-		call graphics::set_pixel(settings_window, center_x + 1, center_y - 1, graphics::WHITE)
-		call graphics::set_pixel(settings_window, center_x, center_y, graphics::WHITE)
-		call graphics::set_pixel(settings_window, center_x + 1, center_y + 1, graphics::WHITE)
-		call graphics::set_pixel(settings_window, center_x + 2, center_y + 2, graphics::WHITE)
+		call graphics::set_pixel(settings_window, center_x + 1, center_y - 2, graphics::WHITE)
+		call graphics::set_pixel(settings_window, center_x - 0, center_y - 1, graphics::WHITE)
+		call graphics::set_pixel(settings_window, center_x - 1, center_y, graphics::WHITE)
+		call graphics::set_pixel(settings_window, center_x - 0, center_y + 1, graphics::WHITE)
+		call graphics::set_pixel(settings_window, center_x + 1, center_y + 2, graphics::WHITE)
 	}
 	return clicked
 }
@@ -225,10 +225,10 @@ proc draw_window_preview(x: int, y: int, width: int, height: int) {
 	if (preview_width >= 54) {
 		call graphics::draw_text_small(settings_window, preview_x + 4, preview_y + 2, "Window", graphics::WHITE)
 	}
-	call graphics::draw_line(settings_window, preview_x + preview_width - 14, preview_y + 4, preview_x + preview_width - 11, preview_y + 4, graphics::WHITE)
-	call graphics::draw_rect(settings_window, preview_x + preview_width - 9, preview_y + 2, 4, 4, graphics::WHITE)
-	call graphics::draw_line(settings_window, preview_x + preview_width - 3, preview_y + 2, preview_x + preview_width - 1, preview_y + 4, graphics::WHITE)
-	call graphics::draw_line(settings_window, preview_x + preview_width - 1, preview_y + 2, preview_x + preview_width - 3, preview_y + 4, graphics::WHITE)
+	call graphics::draw_line(settings_window, preview_x + preview_width - 18, preview_y + 4, preview_x + preview_width - 14, preview_y + 4, graphics::WHITE)
+	call graphics::draw_rect(settings_window, preview_x + preview_width - 12, preview_y + 2, 5, 5, graphics::WHITE)
+	call graphics::draw_line(settings_window, preview_x + preview_width - 6, preview_y + 2, preview_x + preview_width - 2, preview_y + 6, graphics::WHITE)
+	call graphics::draw_line(settings_window, preview_x + preview_width - 2, preview_y + 2, preview_x + preview_width - 6, preview_y + 6, graphics::WHITE)
 }
 
 proc draw_palette_background_preview(x: int, y: int, width: int, height: int) {
@@ -281,8 +281,8 @@ proc draw_palette_background_preview(x: int, y: int, width: int, height: int) {
 	if (width >= 92 && height >= 40) {
 		call graphics::draw_text_small(settings_window, x + 4, y + 3, "BG", graphics::COLOR_7)
 		call graphics::draw_int_small(settings_window, x + 14, y + 3, staged_background, graphics::COLOR_14)
-		call graphics::draw_text_small(settings_window, x + width - 31, y + 3, "PAL", graphics::COLOR_7)
-		call graphics::draw_int_small(settings_window, x + width - 12, y + 3, staged_palette, graphics::COLOR_14)
+		call graphics::draw_text_small(settings_window, x + width - 21, y + 3, "PAL", graphics::COLOR_7)
+		call graphics::draw_int_small(settings_window, x + width - 7, y + 3, staged_palette, graphics::COLOR_14)
 	}
 }
 
@@ -434,6 +434,26 @@ proc draw_icons_time_preview(x: int, y: int, width: int, height: int) {
 	call draw_clock_preview(clock_x, clock_y, clock_width, clock_height, accent)
 }
 
+proc draw_settings_icon(x: int, y: int, active_tab: int) {
+	switch (active_tab) {
+		case 0 {
+			call graphics::draw_icon(settings_window, x, y, 8, 8, "....B..." + "...B3.F." + "BBB33.8F" + "33333..F" + "33333..F" + "88833.F8" + "...83.8." + "....8...")
+		}
+		case 1 {
+			
+		}
+		case 2 {
+			
+		}
+		case 3 {
+			
+		}
+		case 4 {
+			call graphics::draw_icon(settings_window, x, y, 8, 8, "BB.BB.BB" + "83.33.38" + ".833338." + "33388333" + "88333388" + ".383383." + "33.33.33" + "88.88.88")
+		}
+	}
+}
+
 var staged_master: int
 var staged_music: int
 var staged_effects: int
@@ -558,18 +578,20 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 			call graphics::draw_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_8)
 			action_y = content_height - 16
 			action_width = (panel_width - 10) / 2
+			
+			call draw_settings_icon(panel_x + 4, 8, active_tab)
 
 			if (active_tab == 0) {
-				call graphics::draw_text(settings_window, panel_x + 4, 8, "Sound", graphics::WHITE)
-				call draw_value_line("Master", 21, staged_master, panel_x + 4, panel_width - 8)
-				staged_master = graphics::slider(settings_window, control_x, 29, control_width, staged_master, 0, 100)
-				call draw_value_line("Music", 45, staged_music, panel_x + 4, panel_width - 8)
-				staged_music = graphics::slider(settings_window, control_x, 53, control_width, staged_music, 0, 100)
-				call draw_value_line("Effects", 69, staged_effects, panel_x + 4, panel_width - 8)
-				staged_effects = graphics::slider(settings_window, control_x, 77, control_width, staged_effects, 0, 100)
+				call graphics::draw_text(settings_window, panel_x + 20, 8, "Sound", graphics::COLOR_3)
+				call draw_value_line("Master", 31, staged_master, panel_x + 4, panel_width - 8)
+				staged_master = graphics::slider(settings_window, control_x, 39, control_width, staged_master, 0, 100)
+				call draw_value_line("Music", 55, staged_music, panel_x + 4, panel_width - 8)
+				staged_music = graphics::slider(settings_window, control_x, 63, control_width, staged_music, 0, 100)
+				call draw_value_line("Effects", 79, staged_effects, panel_x + 4, panel_width - 8)
+				staged_effects = graphics::slider(settings_window, control_x, 87, control_width, staged_effects, 0, 100)
 			}
 			elseif (active_tab == 1) {
-				call graphics::draw_text(settings_window, panel_x + 4, 8, "Personalization", graphics::WHITE)
+				call graphics::draw_text(settings_window, panel_x + 4, 8, "Personalization", graphics::COLOR_3)
 				call graphics::draw_text(settings_window, panel_x + 4, 23, "Theme", graphics::COLOR_7)
 				if (staged_theme == os::THEME_DARK) {
 					if (settings_button_aligned(panel_x + panel_width - 50, 19, 46, 11, "Dark", graphics::COLOR_5)) {
@@ -586,21 +608,21 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 
 				call graphics::draw_text(settings_window, panel_x + 4, 43, "Background", graphics::COLOR_7)
 				call graphics::draw_int(settings_window, panel_x + panel_width - 55, 43, staged_background, graphics::COLOR_14)
-				if (draw_step_button(panel_x + panel_width - 34, 39, false)) {
+				if (draw_step_button(panel_x + panel_width - 34, 41, false)) {
 					staged_background = previous_setting_id(staged_background, background_count)
 				}
-				if (draw_step_button(panel_x + panel_width - 18, 39, true)) {
+				if (draw_step_button(panel_x + panel_width - 18, 41, true)) {
 					staged_background = next_setting_id(staged_background, background_count)
 				}
 
 				call graphics::draw_text(settings_window, panel_x + 4, 63, "Palette", graphics::COLOR_7)
 				call graphics::draw_int(settings_window, panel_x + panel_width - 55, 63, staged_palette, graphics::COLOR_14)
-				if (draw_step_button(panel_x + panel_width - 34, 59, false)) {
+				if (draw_step_button(panel_x + panel_width - 34, 61, false)) {
 					staged_palette = previous_setting_id(staged_palette, palette_count)
 					if (staged_theme == os::THEME_DARK && staged_palette >= 3) { staged_palette = 2 }
 					if (staged_theme == os::THEME_LIGHT && staged_palette < 3) { staged_palette = palette_count - 1 }
 				}
-				if (draw_step_button(panel_x + panel_width - 18, 59, true)) {
+				if (draw_step_button(panel_x + panel_width - 18, 61, true)) {
 					staged_palette = next_setting_id(staged_palette, palette_count)
 					if (staged_theme == os::THEME_DARK && staged_palette >= 3) { staged_palette = 0 }
 					if (staged_theme == os::THEME_LIGHT && staged_palette < 3) { staged_palette = 3 }
@@ -608,7 +630,7 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				call draw_palette_background_preview(panel_x + 8, 82, panel_width - 16, action_y - 86)
 			}
 			elseif (active_tab == 2) {
-				call graphics::draw_text(settings_window, panel_x + 4, 8, "Window appearance", graphics::WHITE)
+				call graphics::draw_text(settings_window, panel_x + 4, 8, "Window appearance", graphics::COLOR_3)
 				call graphics::draw_text(settings_window, panel_x + 4, 23, "Corner style", graphics::COLOR_7)
 				if (staged_corners == os::CORNER_SQUARE) {
 					if (settings_button_aligned(control_x, 33, control_width, 11, "Square", graphics::COLOR_5)) { staged_corners = os::CORNER_ROUNDED }
@@ -622,7 +644,7 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				call draw_window_preview(panel_x + 8, 50, panel_width - 16, action_y - 54)
 			}
 			elseif (active_tab == 3) {
-				call graphics::draw_text(settings_window, panel_x + 4, 8, "Icons and time", graphics::WHITE)
+				call graphics::draw_text(settings_window, panel_x + 4, 8, "Icons and time", graphics::COLOR_3)
 				call graphics::draw_text(settings_window, panel_x + 4, 23, "Icon size", graphics::COLOR_7)
 				if (staged_icons == os::ICON_SMALL) {
 					if (settings_button_aligned(control_x, 33, control_width, 11, "Small", graphics::COLOR_5)) { staged_icons = os::ICON_MEDIUM }
@@ -643,7 +665,7 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				call draw_icons_time_preview(panel_x + 8, 84, panel_width - 16, action_y - 88)
 			}
 			else {
-				call graphics::draw_text(settings_window, panel_x + 4, 8, "System", graphics::WHITE)
+				call graphics::draw_text(settings_window, panel_x + 20, 8, "System", graphics::COLOR_3)
 				call graphics::draw_text(settings_window, panel_x + 4, 23, "Settings access", graphics::COLOR_7)
 				if (staged_enabled) {
 					if (settings_button_aligned(control_x, 34, control_width, 11, "Enabled", graphics::COLOR_2)) { staged_enabled = false }
