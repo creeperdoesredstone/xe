@@ -9,7 +9,8 @@ without creating a window, title bar, or border.
 
 Launch the Xenon IDE with `python ide.py`. Pass an Xe file path as the first
 argument to open it directly, for example `python ide.py apps/calculator.xe`.
-Add `--run` to execute it immediately.
+Add `--run` to execute it immediately. Use `--tab image-studio`, `--tab converter`,
+or `--tab help` to open a host workbench tool directly.
 
 The host workbench has top-level Code, Xe → SB3, Image Studio, and Help tabs. The
 converter uses a pinned Scratch VM profile and exports an `.sb3` only when the

@@ -58,6 +58,11 @@ var animation_shell: int
 var nucleus_phase: int
 var rotation: int
 var tilt: int
+var rotation_target: int
+var tilt_target: int
+var orientation_difference: int
+var orientation_step: int
+var orientation_ease: int
 var rotating: bool
 var last_pointer_x: int
 var last_pointer_y: int
@@ -172,6 +177,9 @@ var projection_roll_sin: float
 var projection_rotation_cos: float
 var projection_rotation_sin: float
 var projection_depth_scale: float
+var nucleus_highlight_x: int
+var nucleus_highlight_y: int
+var nucleus_highlight_ready: bool
 
 fn transition_ease(progress: int) int {
 	if (progress < 0) { progress = 0 }
@@ -303,9 +311,37 @@ proc draw_placeholder_nucleus(x: int, y: int, radius: int) {
 	call draw_placeholder_filled_circle(x, y, radius, visual_surface)
 	call draw_placeholder_circle(x, y, radius, visual_outline)
 	call draw_placeholder_circle(x, y, radius - 2, visual_accent)
-	# The highlight is screen-space lighting, not an orbiting decoration. Keeping
-	# it fixed prevents the nucleus from reading as a stale or rotating sprite.
-	call draw_placeholder_pixel(x - radius / 2, y - radius / 2, visual_highlight)
+	if (!nucleus_highlight_ready) {
+		nucleus_highlight_x = x - radius / 2
+		nucleus_highlight_y = y - radius / 2
+		nucleus_highlight_ready = true
+	}
+	call draw_placeholder_pixel(nucleus_highlight_x, nucleus_highlight_y, visual_highlight)
+}
+
+proc update_view_orientation(elapsed_ms: int) {
+	orientation_ease = elapsed_ms * 100 / 90
+	if (orientation_ease < 1) { orientation_ease = 1 }
+	if (orientation_ease > 55) { orientation_ease = 55 }
+	orientation_difference = rotation_target - rotation
+	if (orientation_difference > 180) { orientation_difference -= 360 }
+	elseif (orientation_difference < -180) { orientation_difference += 360 }
+	if (orientation_difference != 0) {
+		orientation_step = orientation_difference * orientation_ease / 100
+		if (orientation_step == 0 && orientation_difference > 0) { orientation_step = 1 }
+		elseif (orientation_step == 0) { orientation_step = -1 }
+		rotation = (rotation + orientation_step) % 360
+		if (rotation < 0) { rotation += 360 }
+	}
+	orientation_difference = tilt_target - tilt
+	if (orientation_difference != 0) {
+		orientation_step = orientation_difference * orientation_ease / 100
+		if (orientation_step == 0 && orientation_difference > 0) { orientation_step = 1 }
+		elseif (orientation_step == 0) { orientation_step = -1 }
+		tilt += orientation_step
+		if (tilt > 70) { tilt = 70 }
+		if (tilt < -70) { tilt = -70 }
+	}
 }
 
 proc draw_placeholder_folder(x: int, y: int, radius: int, child_count: int, orbit_phase: int) {
@@ -2224,9 +2260,12 @@ proc draw_explorer_sidebar(x: int, y: int, max_height: int) {
 	var surface: int
 	var panel_height: int
 	var danger_color: int
+	var danger_text_color: int
+	var button_color: int
 	var pointer_x: int
 	var pointer_y: int
 	var interactive: bool
+	var valid_drag: bool
 	surface = graphics::COLOR_8
 	if (os::theme_mode == os::THEME_LIGHT) { surface = graphics::COLOR_1 }
 	panel_height = 62 * sidebar_progress / 100
@@ -2244,31 +2283,31 @@ proc draw_explorer_sidebar(x: int, y: int, max_height: int) {
 	}
 	if (sidebar_progress >= 70 && max_height >= 48) {
 		call draw_explorer_text_clipped(x + 18, y + 2, "Create (Drag)", (sidebar_width - 20) / 4, visual_outline)
-		if (interactive) {
-			operation_ok = graphics::button_flat(explorer_window, x + 3, y + 12, sidebar_width - 6, 10, "New file", surface)
-			operation_ok = graphics::button_flat(explorer_window, x + 3, y + 23, sidebar_width - 6, 10, "New folder", surface)
-		}
-		else {
-			call graphics::fill_rect(explorer_window, x + 3, y + 12, sidebar_width - 6, 10, surface)
-			call graphics::fill_rect(explorer_window, x + 3, y + 23, sidebar_width - 6, 10, surface)
-			call draw_explorer_text_centered(x + 3, y + 13, sidebar_width - 6, "New file", graphics::FONT_NORMAL, visual_outline)
-			call draw_explorer_text_centered(x + 3, y + 24, sidebar_width - 6, "New folder", graphics::FONT_NORMAL, visual_outline)
-		}
 		pointer_x = graphics::pointer_x(explorer_window)
 		pointer_y = graphics::pointer_y(explorer_window)
+		button_color = surface
+		if (interactive && drag_entry < 0 && drag_template == 0 && pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 12 && pointer_y < y + 22) { button_color = visual_shell }
+		call graphics::fill_rect(explorer_window, x + 3, y + 12, sidebar_width - 6, 10, button_color)
+		call draw_explorer_text_centered(x + 3, y + 13, sidebar_width - 6, "New file", graphics::FONT_NORMAL, visual_outline)
+		button_color = surface
+		if (interactive && drag_entry < 0 && drag_template == 0 && pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 23 && pointer_y < y + 33) { button_color = visual_shell }
+		call graphics::fill_rect(explorer_window, x + 3, y + 23, sidebar_width - 6, 10, button_color)
+		call draw_explorer_text_centered(x + 3, y + 24, sidebar_width - 6, "New folder", graphics::FONT_NORMAL, visual_outline)
 		if (interactive && graphics::mouse_pressed() && pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 12 && pointer_y < y + 22) {
 			drag_template = 1
 		}
 		if (interactive && graphics::mouse_pressed() && pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 23 && pointer_y < y + 33) {
 			drag_template = 2
 		}
-		# Idle trash is deliberately quieter than creation controls. It only becomes
-		# a danger target while a valid dragged selection is over it.
-		danger_color = graphics::COLOR_1
-		if (os::theme_mode == os::THEME_LIGHT) { danger_color = graphics::COLOR_8 }
-		if (drag_entry >= 0 && graphics::pointer_x(explorer_window) >= x + 3 && graphics::pointer_x(explorer_window) < x + sidebar_width - 3 && graphics::pointer_y(explorer_window) >= y + 38 && graphics::pointer_y(explorer_window) < y + 48) { danger_color = graphics::COLOR_4 }
+		valid_drag = drag_entry >= 0 && drag_moved && graphics::mouse_down()
+		danger_color = surface
+		danger_text_color = visual_outline
+		if (valid_drag && pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 38 && pointer_y < y + 48) {
+			danger_color = graphics::COLOR_4
+			danger_text_color = visual_highlight
+		}
 		call graphics::fill_rect(explorer_window, x + 3, y + 38, sidebar_width - 6, 10, danger_color)
-		call draw_explorer_text_centered(x + 3, y + 39, sidebar_width - 6, "Trash (Drag)", graphics::FONT_NORMAL, visual_outline)
+		call draw_explorer_text_centered(x + 3, y + 39, sidebar_width - 6, "Trash (Drag)", graphics::FONT_NORMAL, danger_text_color)
 		if (sidebar_progress >= 90 && max_height >= 61) {
 			call graphics::draw_text_small(explorer_window, x + 3, y + 53, "Orbit", visual_outline)
 			if (interactive) {
@@ -2620,6 +2659,11 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	if (base_center_radius < 11) { base_center_radius = 11 }
 	if (base_center_radius > 20) { base_center_radius = 20 }
 	center_radius = base_center_radius * render_scale / 100
+	if (!nucleus_highlight_ready || !rotating) {
+		nucleus_highlight_x = viewport_center_x - center_radius / 2
+		nucleus_highlight_y = viewport_center_y - center_radius / 2
+		nucleus_highlight_ready = true
+	}
 	visual_fade = scene_visibility
 	outer_radius = (area_height - 34) / 2
 	if (outer_radius > (usable_width - 48) / 2) { outer_radius = (usable_width - 48) / 2 }
@@ -3048,7 +3092,10 @@ while (animation_shell < 8) {
 }
 rotation = 0
 tilt = 25
+rotation_target = rotation
+tilt_target = tilt
 rotating = false
+nucleus_highlight_ready = false
 hovered_entry = -1
 selected_entry = -1
 selection_anchor = -1
@@ -3135,13 +3182,13 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 	animation_step = delta_ms * 100 / 220
 	if (animation_step < 1) { animation_step = 1 }
 	if (animation_step > 24) { animation_step = 24 }
-	if (sidebar_open && sidebar_progress < 100) { sidebar_progress += animation_step }
-	elseif (!sidebar_open && sidebar_progress > 0) { sidebar_progress -= animation_step }
+	if (!rotating && sidebar_open && sidebar_progress < 100) { sidebar_progress += animation_step }
+	elseif (!rotating && !sidebar_open && sidebar_progress > 0) { sidebar_progress -= animation_step }
 	if (sidebar_progress > 100) { sidebar_progress = 100 }
 	if (sidebar_progress < 0) { sidebar_progress = 0 }
 	sidebar_width = 14 + 70 * sidebar_progress / 100
 	zoom_difference = camera_zoom_target - camera_zoom
-	if (zoom_difference != 0) {
+	if (zoom_difference != 0 && !rotating) {
 		zoom_step = zoom_difference * animation_step / 100
 		if (zoom_step == 0 && zoom_difference > 0) { zoom_step = 1 }
 		elseif (zoom_step == 0) { zoom_step = -1 }
@@ -3159,14 +3206,13 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 		while (animation_shell < 8) {
 			orbit_speed_target = orbit_speed_setting
 			if (animation_shell == paused_shell && hovered_entry >= 0 && entry_shell[hovered_entry] == animation_shell) {
-				shell_speed[animation_shell] = 0
-				shell_accumulator[animation_shell] = 0
+				orbit_speed_target = 0
 			}
-			else {
-				if (animation_shell == paused_shell) {
-					orbit_speed_target = orbit_speed_setting / 8
-					if (orbit_speed_target < 2) { orbit_speed_target = 2 }
-				}
+			elseif (animation_shell == paused_shell) {
+				orbit_speed_target = orbit_speed_setting / 8
+				if (orbit_speed_target < 2) { orbit_speed_target = 2 }
+			}
+			if (shell_speed[animation_shell] != orbit_speed_target) {
 				orbit_speed_difference = orbit_speed_target - shell_speed[animation_shell]
 				orbit_speed_step = orbit_speed_difference * orbit_ease / 100
 				if (orbit_speed_step == 0 && orbit_speed_difference > 0) { orbit_speed_step = 1 }
@@ -3182,6 +3228,7 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 		}
 		nucleus_phase = (nucleus_phase + delta_ms) % 1200
 	}
+	call update_view_orientation(delta_ms)
 	if (transition_progress > 0) {
 		transition_step = animation_step * (100 + (transition_hops - 1) * 35) / 100
 		if (transition_step < 1) { transition_step = 1 }
@@ -3274,12 +3321,12 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 			marquee_current_y = graphics::pointer_y(explorer_window)
 		}
 		if (rotating && graphics::mouse_down()) {
-			rotation += (graphics::pointer_x(explorer_window) - last_pointer_x) * 2
-			rotation %= 360
-			if (rotation < 0) { rotation += 360 }
-			tilt += graphics::pointer_y(explorer_window) - last_pointer_y
-			if (tilt > 70) { tilt = 70 }
-			if (tilt < -70) { tilt = -70 }
+			rotation_target += (graphics::pointer_x(explorer_window) - last_pointer_x) * 2
+			rotation_target %= 360
+			if (rotation_target < 0) { rotation_target += 360 }
+			tilt_target += graphics::pointer_y(explorer_window) - last_pointer_y
+			if (tilt_target > 70) { tilt_target = 70 }
+			if (tilt_target < -70) { tilt_target = -70 }
 			last_pointer_x = graphics::pointer_x(explorer_window)
 			last_pointer_y = graphics::pointer_y(explorer_window)
 		}

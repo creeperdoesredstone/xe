@@ -2523,7 +2523,7 @@
       "status": "blocked"
     },
     "file_explorer.xe": {
-      "artifact_hash": "9e485fb68d37bd711933dd39b9fca02999493830ca1dc042b14bc7731d11f953",
+      "artifact_hash": "b088cded3df297e42a1be9abb99dd4f13a744cab9ed8a37cad157010eea0bdc1",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -3197,7 +3197,7 @@
           "name": "APP_GRAPHICS_DRAW_COMMANDS"
         }
       ],
-      "source_hash": "3d6be2790c9c0b7f2b454e51663ebca0c53b5d86773a7e1a422302c083777817",
+      "source_hash": "5382c253878f4e726e671afd00aa4ceab6724e0e1c385e9eef03ac3b837135ea",
       "status": "blocked"
     },
     "minesweeper.xe": {
@@ -3506,7 +3506,7 @@
       "status": "blocked"
     },
     "settings.xe": {
-      "artifact_hash": "efdbb527ec87b66171cca8b04927bfa551d5b09e180e85488e1bc4a112b6d8ff",
+      "artifact_hash": "710192c757461a634196ee6eae4061bb8a2578de91218683ba289cf2615dcf8c",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -3517,6 +3517,26 @@
           "code": "memory-model-mismatch",
           "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 200000",
           "severity": "error"
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "OS_GET_HOUR (28) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "core.os",
+            "id": 28,
+            "name": "OS_GET_HOUR"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "OS_GET_MINUTE (29) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "core.os",
+            "id": 29,
+            "name": "OS_GET_MINUTE"
+          }
         },
         {
           "code": "unsupported-syscall",
@@ -3546,6 +3566,16 @@
             "capability": "app.graphics",
             "id": 105,
             "name": "APP_GRAPHICS_SET_PIXEL"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_DRAW_LINE (107) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 107,
+            "name": "APP_GRAPHICS_DRAW_LINE"
           }
         },
         {
@@ -3630,12 +3660,42 @@
         },
         {
           "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_DRAW_CHAR (125) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 125,
+            "name": "APP_GRAPHICS_DRAW_CHAR"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
           "message": "APP_GRAPHICS_BUTTON_TONE (126) is not implemented by this Scratch VM profile",
           "severity": "error",
           "syscall": {
             "capability": "app.graphics",
             "id": 126,
             "name": "APP_GRAPHICS_BUTTON_TONE"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_POINTER_X (127) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 127,
+            "name": "APP_GRAPHICS_POINTER_X"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_POINTER_Y (128) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 128,
+            "name": "APP_GRAPHICS_POINTER_Y"
           }
         },
         {
@@ -3696,6 +3756,16 @@
             "capability": "app.os",
             "id": 140,
             "name": "APP_OS_PALETTE_COUNT"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_DRAW_CHAR_SMALL (142) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 142,
+            "name": "APP_GRAPHICS_DRAW_CHAR_SMALL"
           }
         },
         {
@@ -3827,6 +3897,16 @@
             "id": 196,
             "name": "APP_OS_APPLY_PREFERENCES"
           }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_CHAR_ADVANCE (209) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 209,
+            "name": "APP_GRAPHICS_CHAR_ADVANCE"
+          }
         }
       ],
       "required_capabilities": [
@@ -3847,6 +3927,16 @@
           "name": "OS_MALLOC"
         },
         {
+          "capability": "core.os",
+          "id": 28,
+          "name": "OS_GET_HOUR"
+        },
+        {
+          "capability": "core.os",
+          "id": 29,
+          "name": "OS_GET_MINUTE"
+        },
+        {
           "capability": "app.graphics",
           "id": 102,
           "name": "APP_GRAPHICS_BEGIN_DRAW"
@@ -3860,6 +3950,11 @@
           "capability": "app.graphics",
           "id": 105,
           "name": "APP_GRAPHICS_SET_PIXEL"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 107,
+          "name": "APP_GRAPHICS_DRAW_LINE"
         },
         {
           "capability": "app.graphics",
@@ -3903,8 +3998,23 @@
         },
         {
           "capability": "app.graphics",
+          "id": 125,
+          "name": "APP_GRAPHICS_DRAW_CHAR"
+        },
+        {
+          "capability": "app.graphics",
           "id": 126,
           "name": "APP_GRAPHICS_BUTTON_TONE"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 127,
+          "name": "APP_GRAPHICS_POINTER_X"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 128,
+          "name": "APP_GRAPHICS_POINTER_Y"
         },
         {
           "capability": "app.graphics",
@@ -3935,6 +4045,11 @@
           "capability": "app.os",
           "id": 140,
           "name": "APP_OS_PALETTE_COUNT"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 142,
+          "name": "APP_GRAPHICS_DRAW_CHAR_SMALL"
         },
         {
           "capability": "app.graphics",
@@ -4000,9 +4115,14 @@
           "capability": "app.os",
           "id": 196,
           "name": "APP_OS_APPLY_PREFERENCES"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 209,
+          "name": "APP_GRAPHICS_CHAR_ADVANCE"
         }
       ],
-      "source_hash": "8a25f1aa63a5c6a9a0cd534832afd51c73c695b4cec59366e6c06d1d09e1af19",
+      "source_hash": "afa0b933178ab6d25240d348b92cca9d6e091abb4f47c447a2c1b201d0f30b00",
       "status": "blocked"
     },
     "terminal.xe": {
@@ -4398,7 +4518,7 @@
       "status": "blocked"
     },
     "text_editor.xe": {
-      "artifact_hash": "83e5bd6cfc842a0daee4c320004f428bf50e092007d61fc58cefe6322a670b4c",
+      "artifact_hash": "c7623f052479c117baa9daa4cdadb56d6aa9d51bb28ebc13919e1328a19e77c5",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -5017,11 +5137,11 @@
           "name": "APP_GRAPHICS_DRAW_CHAR_STYLED"
         }
       ],
-      "source_hash": "291b834aeaa0d91282a768860c98e2e3e8df2dcb8f90fe428843f3391a954cb4",
+      "source_hash": "a048b2a4da1a28917f6c557434d81d435022164c79e3a9687c008ce8fb5c667a",
       "status": "blocked"
     },
     "xenon_ide.xe": {
-      "artifact_hash": "7de205b24017fce77cd52032268b5c339a01529afc55c055c93dc0a0f7223c59",
+      "artifact_hash": "4e451a3183f21f3250eddeaa6b408eb2238dfb1a8a591028449a872649e851de",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -5925,7 +6045,7 @@
           "name": "APP_COMPILER_RUN_WORKSPACE"
         }
       ],
-      "source_hash": "0c3a23a9a6923502d084e15449a4ecc0714092cc4ac6fb7b62342c201d6a399b",
+      "source_hash": "064f9801e5b90c6caec3280e3617fee801c11fd2183d31145d5899f1fa14b06a",
       "status": "blocked"
     },
     "xenon_music.xe": {

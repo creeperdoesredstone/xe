@@ -80,6 +80,325 @@ proc draw_value_line(label: string, y: int, value: int, content_x: int, content_
 	call graphics::draw_int(settings_window, content_x + content_width - 20, y, value, graphics::COLOR_14)
 }
 
+fn settings_text_width_prefix(text: string, count: int, font_size: int) int {
+	var index: int
+	var result: int
+	index = 0
+	result = 0
+	while (index < count) {
+		result += graphics::char_advance(text[index], font_size)
+		index += 1
+	}
+	return result
+}
+
+proc draw_centered_button_label(x: int, y: int, width: int, height: int, label: string, color: int) {
+	var count: int
+	var index: int
+	var font_size: int
+	var glyph_height: int
+	var text_width: int
+	var draw_x: int
+	var draw_y: int
+	font_size = graphics::FONT_NORMAL
+	glyph_height = 7
+	if (height <= 9) {
+		font_size = graphics::FONT_SMALL
+		glyph_height = 5
+	}
+	count = xestring::strlen(label)
+	text_width = settings_text_width_prefix(label, count, font_size)
+	while (count > 0 && text_width > width - 2) {
+		count -= 1
+		text_width = settings_text_width_prefix(label, count, font_size)
+	}
+	draw_x = x + (width - text_width) / 2
+	draw_y = y + (height - glyph_height) / 2
+	index = 0
+	while (index < count) {
+		if (font_size == graphics::FONT_SMALL) {
+			call graphics::draw_char_small(settings_window, draw_x, draw_y, label[index], color)
+		}
+		else {
+			call graphics::draw_char(settings_window, draw_x, draw_y, label[index], color)
+		}
+		draw_x += graphics::char_advance(label[index], font_size)
+		index += 1
+	}
+}
+
+fn settings_button_aligned(x: int, y: int, width: int, height: int, label: string, color: int) bool {
+	var clicked: bool
+	var foreground: int
+	var pointer_x: int
+	var pointer_y: int
+	clicked = graphics::button_tone(settings_window, x, y, width, height, " ", color)
+	foreground = graphics::WHITE
+	pointer_x = graphics::pointer_x(settings_window)
+	pointer_y = graphics::pointer_y(settings_window)
+	if (color == graphics::COLOR_7 && pointer_x >= x && pointer_x < x + width && pointer_y >= y && pointer_y < y + height) {
+		foreground = graphics::COLOR_1
+		if (os::theme_mode == os::THEME_LIGHT) { foreground = graphics::COLOR_0 }
+	}
+	call draw_centered_button_label(x, y, width, height, label, foreground)
+	return clicked
+}
+
+fn settings_flat_button_aligned(x: int, y: int, width: int, height: int, label: string, surface: int, foreground: int) bool {
+	var clicked: bool
+	clicked = graphics::button_flat(settings_window, x, y, width, height, " ", surface)
+	call draw_centered_button_label(x, y, width, height, label, foreground)
+	return clicked
+}
+
+proc draw_preview_box(x: int, y: int, width: int, height: int, corner_style: int, surface: int, outline: int) {
+	var cut: int
+	cut = 0
+	if (corner_style == os::CORNER_ROUNDED) { cut = 1 }
+	elseif (corner_style == os::CORNER_SOFT) { cut = 2 }
+	if (cut == 0) {
+		call graphics::fill_rect(settings_window, x, y, width, height, surface)
+	}
+	elseif (cut == 1) {
+		call graphics::fill_rect(settings_window, x + 1, y, width - 2, height, surface)
+		call graphics::fill_rect(settings_window, x, y + 1, width, height - 2, surface)
+	}
+	else {
+		call graphics::fill_rect(settings_window, x + 2, y, width - 4, height, surface)
+		call graphics::fill_rect(settings_window, x + 1, y + 1, width - 2, height - 2, surface)
+		call graphics::fill_rect(settings_window, x, y + 2, width, height - 4, surface)
+	}
+	call graphics::draw_line(settings_window, x + cut, y, x + width - cut - 1, y, outline)
+	call graphics::draw_line(settings_window, x + cut, y + height - 1, x + width - cut - 1, y + height - 1, outline)
+	call graphics::draw_line(settings_window, x, y + cut, x, y + height - cut - 1, outline)
+	call graphics::draw_line(settings_window, x + width - 1, y + cut, x + width - 1, y + height - cut - 1, outline)
+}
+
+fn settings_preview_accent() int {
+	var variant: int
+	variant = os::palette % 3
+	if (variant == 1) { return graphics::COLOR_11 }
+	if (variant == 2) { return graphics::COLOR_10 }
+	return graphics::COLOR_13
+}
+
+fn settings_preview_background() int {
+	if (os::background_id == 1) { return graphics::COLOR_1 }
+	if (os::background_id == 2) { return graphics::COLOR_8 }
+	return graphics::COLOR_0
+}
+
+proc draw_window_preview(x: int, y: int, width: int, height: int) {
+	var preview_x: int
+	var preview_y: int
+	var preview_width: int
+	var preview_height: int
+	var title_height: int
+	var accent: int
+	var background: int
+	var row: int
+	var column: int
+	var pattern: int
+	if (width < 34 || height < 24) { return }
+	if (width > 260) {
+		x += (width - 260) / 2
+		width = 260
+	}
+	if (height > 120) {
+		y += (height - 120) / 2
+		height = 120
+	}
+	accent = settings_preview_accent()
+	background = settings_preview_background()
+	call graphics::fill_rect(settings_window, x, y, width, height, background)
+	call graphics::draw_line(settings_window, x + 2, y + height - 4, x + width - 3, y + 3, graphics::COLOR_8)
+	call graphics::draw_line(settings_window, x + 2, y + 3, x + width - 3, y + height - 4, graphics::COLOR_1)
+	preview_width = width * 3 / 4
+	if (preview_width > 150) { preview_width = 150 }
+	if (preview_width < 32) { preview_width = 32 }
+	preview_height = height * 3 / 4
+	if (preview_height > 82) { preview_height = 82 }
+	if (preview_height < 22) { preview_height = 22 }
+	preview_x = x + (width - preview_width) / 2
+	preview_y = y + (height - preview_height) / 2
+	call draw_preview_box(preview_x, preview_y, preview_width, preview_height, staged_corners, graphics::COLOR_1, accent)
+	title_height = 7
+	if (preview_height >= 36) { title_height = 9 }
+	call graphics::fill_rect(settings_window, preview_x + 1, preview_y + 1, preview_width - 2, title_height - 1, accent)
+	if (staged_transparency >= 100) {
+		call graphics::fill_rect(settings_window, preview_x + 1, preview_y + title_height, preview_width - 2, preview_height - title_height - 1, background)
+	}
+	elseif (staged_transparency > 0) {
+		row = preview_y + title_height
+		while (row < preview_y + preview_height - 2) {
+			column = preview_x + 1
+			while (column < preview_x + preview_width - 2) {
+				pattern = (((column - preview_x) / 4) * 37 + ((row - preview_y) / 4) * 17) % 100
+				if (pattern < staged_transparency) {
+					call graphics::fill_rect(settings_window, column, row, 2, 2, background)
+				}
+				column += 4
+			}
+			row += 4
+		}
+	}
+	if (preview_width >= 54) {
+		call graphics::draw_text_small(settings_window, preview_x + 4, preview_y + 2, "Window", graphics::WHITE)
+	}
+	call graphics::draw_line(settings_window, preview_x + preview_width - 14, preview_y + 4, preview_x + preview_width - 11, preview_y + 4, graphics::WHITE)
+	call graphics::draw_rect(settings_window, preview_x + preview_width - 9, preview_y + 2, 4, 4, graphics::WHITE)
+	call graphics::draw_line(settings_window, preview_x + preview_width - 3, preview_y + 2, preview_x + preview_width - 1, preview_y + 4, graphics::WHITE)
+	call graphics::draw_line(settings_window, preview_x + preview_width - 1, preview_y + 2, preview_x + preview_width - 3, preview_y + 4, graphics::WHITE)
+}
+
+proc draw_icon_silhouette(x: int, baseline: int, size: int, selected: bool, accent: int) {
+	var top: int
+	var outline: int
+	top = baseline - size
+	outline = graphics::COLOR_7
+	if (selected) { outline = accent }
+	call graphics::fill_rect(settings_window, x + 1, top + 1, size - 2, size - 2, graphics::COLOR_1)
+	call graphics::draw_rect(settings_window, x, top, size, size, outline)
+	call graphics::draw_line(settings_window, x + 2, top + 2, x + size - 3, top + 2, outline)
+	if (selected) {
+		call graphics::fill_rect(settings_window, x + 1, baseline + 2, size - 2, 1, accent)
+	}
+}
+
+proc draw_clock_preview(x: int, y: int, width: int, height: int, accent: int) {
+	var hour: int
+	var minute: int
+	var pm: bool
+	var text_width: int
+	var draw_x: int
+	var draw_y: int
+	var hour_tens: char
+	var hour_ones: char
+	var minute_tens: char
+	var minute_ones: char
+	var font_size: int
+	var glyph_height: int
+	if (width < 27 || height < 13) { return }
+	font_size = graphics::FONT_SMALL
+	glyph_height = 5
+	if (width >= 46 && height >= 18) {
+		font_size = graphics::FONT_NORMAL
+		glyph_height = 7
+	}
+	hour = os::hour()
+	minute = os::minute()
+	pm = hour >= 12
+	if (staged_clock == os::CLOCK_12_HOUR) {
+		hour = hour % 12
+		if (hour == 0) { hour = 12 }
+	}
+	hour_tens = (char)(48 + hour / 10)
+	hour_ones = (char)(48 + hour % 10)
+	minute_tens = (char)(48 + minute / 10)
+	minute_ones = (char)(48 + minute % 10)
+	text_width = graphics::char_advance(hour_ones, font_size)
+	if (staged_clock == os::CLOCK_24_HOUR || hour >= 10) { text_width += graphics::char_advance(hour_tens, font_size) }
+	text_width += graphics::char_advance(':', font_size)
+	text_width += graphics::char_advance(minute_tens, font_size)
+	text_width += graphics::char_advance(minute_ones, font_size)
+	if (staged_clock == os::CLOCK_12_HOUR && width >= 42) {
+		text_width += graphics::char_advance(' ', font_size)
+		text_width += graphics::char_advance('A', font_size)
+		text_width += graphics::char_advance('M', font_size)
+	}
+	draw_x = x + (width - text_width) / 2
+	draw_y = y + (height - glyph_height) / 2
+	call draw_preview_box(x, y, width, height, os::CORNER_ROUNDED, graphics::COLOR_1, accent)
+	if (staged_clock == os::CLOCK_24_HOUR || hour >= 10) {
+		if (font_size == graphics::FONT_SMALL) { call graphics::draw_char_small(settings_window, draw_x, draw_y, hour_tens, graphics::WHITE) }
+		else { call graphics::draw_char(settings_window, draw_x, draw_y, hour_tens, graphics::WHITE) }
+		draw_x += graphics::char_advance(hour_tens, font_size)
+	}
+	if (font_size == graphics::FONT_SMALL) { call graphics::draw_char_small(settings_window, draw_x, draw_y, hour_ones, graphics::WHITE) }
+	else { call graphics::draw_char(settings_window, draw_x, draw_y, hour_ones, graphics::WHITE) }
+	draw_x += graphics::char_advance(hour_ones, font_size)
+	if (font_size == graphics::FONT_SMALL) { call graphics::draw_char_small(settings_window, draw_x, draw_y, ':', accent) }
+	else { call graphics::draw_char(settings_window, draw_x, draw_y, ':', accent) }
+	draw_x += graphics::char_advance(':', font_size)
+	if (font_size == graphics::FONT_SMALL) { call graphics::draw_char_small(settings_window, draw_x, draw_y, minute_tens, graphics::WHITE) }
+	else { call graphics::draw_char(settings_window, draw_x, draw_y, minute_tens, graphics::WHITE) }
+	draw_x += graphics::char_advance(minute_tens, font_size)
+	if (font_size == graphics::FONT_SMALL) { call graphics::draw_char_small(settings_window, draw_x, draw_y, minute_ones, graphics::WHITE) }
+	else { call graphics::draw_char(settings_window, draw_x, draw_y, minute_ones, graphics::WHITE) }
+	draw_x += graphics::char_advance(minute_ones, font_size)
+	if (staged_clock == os::CLOCK_12_HOUR && width >= 42) {
+		draw_x += graphics::char_advance(' ', font_size)
+		if (font_size == graphics::FONT_SMALL) {
+			if (pm) { call graphics::draw_char_small(settings_window, draw_x, draw_y, 'P', accent) }
+			else { call graphics::draw_char_small(settings_window, draw_x, draw_y, 'A', accent) }
+		}
+		else {
+			if (pm) { call graphics::draw_char(settings_window, draw_x, draw_y, 'P', accent) }
+			else { call graphics::draw_char(settings_window, draw_x, draw_y, 'A', accent) }
+		}
+		draw_x += graphics::char_advance('A', font_size)
+		if (font_size == graphics::FONT_SMALL) { call graphics::draw_char_small(settings_window, draw_x, draw_y, 'M', accent) }
+		else { call graphics::draw_char(settings_window, draw_x, draw_y, 'M', accent) }
+	}
+}
+
+proc draw_icons_time_preview(x: int, y: int, width: int, height: int) {
+	var accent: int
+	var icons_width: int
+	var clock_x: int
+	var clock_y: int
+	var clock_width: int
+	var clock_height: int
+	var baseline: int
+	var gap: int
+	var first_x: int
+	var small_size: int
+	var medium_size: int
+	var large_size: int
+	if (width < 38 || height < 22) { return }
+	if (width > 260) {
+		x += (width - 260) / 2
+		width = 260
+	}
+	if (height > 96) {
+		y += (height - 96) / 2
+		height = 96
+	}
+	accent = settings_preview_accent()
+	call graphics::draw_rect(settings_window, x, y, width, height, graphics::COLOR_8)
+	if (width >= 92) {
+		icons_width = width * 55 / 100
+		clock_x = x + icons_width + 3
+		clock_y = y + 5
+		clock_width = width - icons_width - 7
+		clock_height = height - 10
+		baseline = y + height / 2 + 5
+	}
+	else {
+		icons_width = width
+		clock_x = x + 5
+		clock_y = y + height / 2 + 2
+		clock_width = width - 10
+		clock_height = height / 2 - 5
+		baseline = y + height / 2 - 4
+	}
+	small_size = 6
+	medium_size = 9
+	large_size = 12
+	if (height >= 58 && icons_width >= 74) {
+		small_size = 8
+		medium_size = 12
+		large_size = 16
+	}
+	gap = (icons_width - small_size - medium_size - large_size) / 4
+	if (gap < 3) { gap = 3 }
+	first_x = x + gap
+	call draw_icon_silhouette(first_x, baseline, small_size, staged_icons == os::ICON_SMALL, accent)
+	call draw_icon_silhouette(first_x + small_size + gap, baseline, medium_size, staged_icons == os::ICON_MEDIUM, accent)
+	call draw_icon_silhouette(first_x + small_size + medium_size + gap * 2, baseline, large_size, staged_icons == os::ICON_LARGE, accent)
+	call draw_clock_preview(clock_x, clock_y, clock_width, clock_height, accent)
+}
+
 var staged_master: int
 var staged_music: int
 var staged_effects: int
@@ -200,6 +519,8 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 		if (layout_panel_width >= 142 && panel_height >= 104) {
 			call graphics::fill_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_1)
 			call graphics::draw_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_8)
+			action_y = content_height - 16
+			action_width = (panel_width - 10) / 2
 
 			if (active_tab == 0) {
 				call graphics::draw_text(settings_window, panel_x + 4, 8, "Sound", graphics::WHITE)
@@ -214,13 +535,13 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				call graphics::draw_text(settings_window, panel_x + 4, 8, "Personalization", graphics::WHITE)
 				call graphics::draw_text(settings_window, panel_x + 4, 23, "Theme", graphics::COLOR_7)
 				if (staged_theme == os::THEME_DARK) {
-					if (graphics::button_tone(settings_window, panel_x + panel_width - 50, 19, 46, 11, "Dark", graphics::COLOR_5)) {
+					if (settings_button_aligned(panel_x + panel_width - 50, 19, 46, 11, "Dark", graphics::COLOR_5)) {
 						staged_theme = os::THEME_LIGHT
 						if (staged_palette < 3) { staged_palette += 3 }
 					}
 				}
 				else {
-					if (graphics::button_tone(settings_window, panel_x + panel_width - 50, 19, 46, 11, "Light", graphics::COLOR_7)) {
+					if (settings_button_aligned(panel_x + panel_width - 50, 19, 46, 11, "Light", graphics::COLOR_7)) {
 						staged_theme = os::THEME_DARK
 						if (staged_palette >= 3) { staged_palette -= 3 }
 					}
@@ -256,56 +577,56 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				call graphics::draw_text_small(settings_window, panel_x + 4, 43, "0 opaque - 100 clear", graphics::COLOR_8)
 				call graphics::draw_text(settings_window, panel_x + 4, 55, "Corner style", graphics::COLOR_7)
 				if (staged_corners == os::CORNER_SQUARE) {
-					if (graphics::button(settings_window, control_x, 65, control_width, 11, "Square")) { staged_corners = os::CORNER_ROUNDED }
+					if (settings_button_aligned(control_x, 65, control_width, 11, "Square", graphics::COLOR_5)) { staged_corners = os::CORNER_ROUNDED }
 				}
 				elseif (staged_corners == os::CORNER_ROUNDED) {
-					if (graphics::button(settings_window, control_x, 65, control_width, 11, "Rounded")) { staged_corners = os::CORNER_SOFT }
+					if (settings_button_aligned(control_x, 65, control_width, 11, "Rounded", graphics::COLOR_5)) { staged_corners = os::CORNER_SOFT }
 				}
 				else {
-					if (graphics::button(settings_window, control_x, 65, control_width, 11, "Soft")) { staged_corners = os::CORNER_SQUARE }
+					if (settings_button_aligned(control_x, 65, control_width, 11, "Soft", graphics::COLOR_5)) { staged_corners = os::CORNER_SQUARE }
 				}
+				call draw_window_preview(panel_x + 8, 82, panel_width - 16, action_y - 86)
 			}
 			elseif (active_tab == 3) {
 				call graphics::draw_text(settings_window, panel_x + 4, 8, "Icons and time", graphics::WHITE)
 				call graphics::draw_text(settings_window, panel_x + 4, 23, "Icon size", graphics::COLOR_7)
 				if (staged_icons == os::ICON_SMALL) {
-					if (graphics::button(settings_window, control_x, 33, control_width, 11, "Small")) { staged_icons = os::ICON_MEDIUM }
+					if (settings_button_aligned(control_x, 33, control_width, 11, "Small", graphics::COLOR_5)) { staged_icons = os::ICON_MEDIUM }
 				}
 				elseif (staged_icons == os::ICON_MEDIUM) {
-					if (graphics::button(settings_window, control_x, 33, control_width, 11, "Medium")) { staged_icons = os::ICON_LARGE }
+					if (settings_button_aligned(control_x, 33, control_width, 11, "Medium", graphics::COLOR_5)) { staged_icons = os::ICON_LARGE }
 				}
 				else {
-					if (graphics::button(settings_window, control_x, 33, control_width, 11, "Large")) { staged_icons = os::ICON_SMALL }
+					if (settings_button_aligned(control_x, 33, control_width, 11, "Large", graphics::COLOR_5)) { staged_icons = os::ICON_SMALL }
 				}
 				call graphics::draw_text(settings_window, panel_x + 4, 57, "Clock format", graphics::COLOR_7)
 				if (staged_clock == os::CLOCK_24_HOUR) {
-					if (graphics::button(settings_window, panel_x + 4, 67, panel_width - 8, 11, "24 hour")) { staged_clock = os::CLOCK_12_HOUR }
+					if (settings_button_aligned(panel_x + 4, 67, panel_width - 8, 11, "24 hour", graphics::COLOR_5)) { staged_clock = os::CLOCK_12_HOUR }
 				}
 				else {
-					if (graphics::button(settings_window, panel_x + 4, 67, panel_width - 8, 11, "12 hour")) { staged_clock = os::CLOCK_24_HOUR }
+					if (settings_button_aligned(panel_x + 4, 67, panel_width - 8, 11, "12 hour", graphics::COLOR_5)) { staged_clock = os::CLOCK_24_HOUR }
 				}
+				call draw_icons_time_preview(panel_x + 8, 84, panel_width - 16, action_y - 88)
 			}
 			else {
 				call graphics::draw_text(settings_window, panel_x + 4, 8, "System", graphics::WHITE)
 				call graphics::draw_text(settings_window, panel_x + 4, 23, "Settings access", graphics::COLOR_7)
 				if (staged_enabled) {
-					if (graphics::button_tone(settings_window, control_x, 34, control_width, 11, "Enabled", graphics::COLOR_2)) { staged_enabled = false }
+					if (settings_button_aligned(control_x, 34, control_width, 11, "Enabled", graphics::COLOR_2)) { staged_enabled = false }
 				}
 				else {
-					if (graphics::button_tone(settings_window, control_x, 34, control_width, 11, "Disabled", graphics::COLOR_4)) { staged_enabled = true }
+					if (settings_button_aligned(control_x, 34, control_width, 11, "Disabled", graphics::COLOR_4)) { staged_enabled = true }
 				}
 				call graphics::draw_text(settings_window, panel_x + 4, 54, "Changes apply together", graphics::COLOR_8)
 			}
 
-			action_y = content_height - 16
-			action_width = (panel_width - 10) / 2
-			if (graphics::button_tone(settings_window, panel_x + 4, action_y, action_width, 11, "Apply", graphics::COLOR_2)) {
+			if (settings_button_aligned(panel_x + 4, action_y, action_width, 11, "Apply", graphics::COLOR_2)) {
 				applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, staged_transparency, staged_corners, staged_icons, staged_clock, staged_enabled)
 				if (applied) {
 					call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 				}
 			}
-			if (graphics::button(settings_window, panel_x + 6 + action_width, action_y, action_width, 11, "Cancel")) {
+			if (settings_button_aligned(panel_x + 6 + action_width, action_y, action_width, 11, "Cancel", graphics::COLOR_5)) {
 				call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 				settings_window.close()
 			}
@@ -376,6 +697,8 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 		else {
 			call graphics::fill_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_1)
 			call graphics::draw_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_8)
+			action_y = content_height - 9
+			action_width = (panel_width - 7) / 2
 
 			if (active_tab == 0) {
 				call graphics::draw_text_small(settings_window, panel_x + 3, 7, "Sound", graphics::WHITE)
@@ -393,20 +716,20 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 			elseif (active_tab == 1) {
 				call graphics::draw_text_small(settings_window, panel_x + 3, 7, "Personalization", graphics::WHITE)
 				if (staged_theme == os::THEME_DARK) {
-					if (graphics::button_flat(settings_window, control_x, 15, control_width, 7, "Dark theme", graphics::COLOR_8)) {
+					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Dark theme", graphics::COLOR_8, graphics::WHITE)) {
 						staged_theme = os::THEME_LIGHT
 						if (staged_palette < 3) { staged_palette += 3 }
 					}
 				}
 				else {
-					if (graphics::button_flat(settings_window, control_x, 15, control_width, 7, "Light theme", graphics::COLOR_8)) {
+					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Light theme", graphics::COLOR_8, graphics::WHITE)) {
 						staged_theme = os::THEME_DARK
 						if (staged_palette >= 3) { staged_palette -= 3 }
 					}
 				}
 				if (content_height >= 43) {
-					if (graphics::button_flat(settings_window, control_x, 24, control_width, 7, "Background", graphics::COLOR_8)) { staged_background = next_setting_id(staged_background, background_count) }
-					if (graphics::button_flat(settings_window, control_x, 33, control_width, 7, "Palette", graphics::COLOR_8)) {
+					if (settings_flat_button_aligned(control_x, 24, control_width, 7, "Background", graphics::COLOR_8, graphics::WHITE)) { staged_background = next_setting_id(staged_background, background_count) }
+					if (settings_flat_button_aligned(control_x, 33, control_width, 7, "Palette", graphics::COLOR_8, graphics::WHITE)) {
 						staged_palette = next_setting_id(staged_palette, palette_count)
 						if (staged_theme == os::THEME_DARK && staged_palette >= 3) { staged_palette = 0 }
 						if (staged_theme == os::THEME_LIGHT && staged_palette < 3) { staged_palette = 3 }
@@ -418,52 +741,52 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				call graphics::draw_text_small(settings_window, panel_x + 3, 14, "Transparency", graphics::COLOR_7)
 				staged_transparency = graphics::slider(settings_window, control_x, 20, control_width, staged_transparency, 0, 100)
 				if (staged_corners == os::CORNER_SQUARE) {
-					if (graphics::button_flat(settings_window, control_x, 28, control_width, 7, "Square corners", graphics::COLOR_8)) { staged_corners = os::CORNER_ROUNDED }
+					if (settings_flat_button_aligned(control_x, 28, control_width, 7, "Square corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_ROUNDED }
 				}
 				elseif (staged_corners == os::CORNER_ROUNDED) {
-					if (graphics::button_flat(settings_window, control_x, 28, control_width, 7, "Rounded corners", graphics::COLOR_8)) { staged_corners = os::CORNER_SOFT }
+					if (settings_flat_button_aligned(control_x, 28, control_width, 7, "Rounded corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_SOFT }
 				}
 				else {
-					if (graphics::button_flat(settings_window, control_x, 28, control_width, 7, "Soft corners", graphics::COLOR_8)) { staged_corners = os::CORNER_SQUARE }
+					if (settings_flat_button_aligned(control_x, 28, control_width, 7, "Soft corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_SQUARE }
 				}
+				if (action_y >= 58) { call draw_window_preview(panel_x + 5, 38, panel_width - 10, action_y - 42) }
 			}
 			elseif (active_tab == 3) {
 				call graphics::draw_text_small(settings_window, panel_x + 3, 7, "Icons and time", graphics::WHITE)
 				if (staged_icons == os::ICON_SMALL) {
-					if (graphics::button_flat(settings_window, control_x, 15, control_width, 7, "Small icons", graphics::COLOR_8)) { staged_icons = os::ICON_MEDIUM }
+					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Small icons", graphics::COLOR_8, graphics::WHITE)) { staged_icons = os::ICON_MEDIUM }
 				}
 				elseif (staged_icons == os::ICON_MEDIUM) {
-					if (graphics::button_flat(settings_window, control_x, 15, control_width, 7, "Medium icons", graphics::COLOR_8)) { staged_icons = os::ICON_LARGE }
+					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Medium icons", graphics::COLOR_8, graphics::WHITE)) { staged_icons = os::ICON_LARGE }
 				}
 				else {
-					if (graphics::button_flat(settings_window, control_x, 15, control_width, 7, "Large icons", graphics::COLOR_8)) { staged_icons = os::ICON_SMALL }
+					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Large icons", graphics::COLOR_8, graphics::WHITE)) { staged_icons = os::ICON_SMALL }
 				}
 				if (staged_clock == os::CLOCK_24_HOUR) {
-					if (graphics::button_flat(settings_window, control_x, 24, control_width, 7, "24 hour clock", graphics::COLOR_8)) { staged_clock = os::CLOCK_12_HOUR }
+					if (settings_flat_button_aligned(control_x, 24, control_width, 7, "24 hour clock", graphics::COLOR_8, graphics::WHITE)) { staged_clock = os::CLOCK_12_HOUR }
 				}
 				else {
-					if (graphics::button_flat(settings_window, control_x, 24, control_width, 7, "12 hour clock", graphics::COLOR_8)) { staged_clock = os::CLOCK_24_HOUR }
+					if (settings_flat_button_aligned(control_x, 24, control_width, 7, "12 hour clock", graphics::COLOR_8, graphics::WHITE)) { staged_clock = os::CLOCK_24_HOUR }
 				}
+				if (action_y >= 58) { call draw_icons_time_preview(panel_x + 5, 34, panel_width - 10, action_y - 38) }
 			}
 			else {
 				call graphics::draw_text_small(settings_window, panel_x + 3, 7, "System", graphics::WHITE)
 				if (staged_enabled) {
-					if (graphics::button_flat(settings_window, control_x, 15, control_width, 7, "Settings enabled", graphics::COLOR_8)) { staged_enabled = false }
+					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Settings enabled", graphics::COLOR_8, graphics::WHITE)) { staged_enabled = false }
 				}
 				else {
-					if (graphics::button_flat(settings_window, control_x, 15, control_width, 7, "Settings disabled", graphics::COLOR_8)) { staged_enabled = true }
+					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Settings disabled", graphics::COLOR_8, graphics::WHITE)) { staged_enabled = true }
 				}
 			}
 
-			action_y = content_height - 9
-			action_width = (panel_width - 7) / 2
-			if (graphics::button_tone(settings_window, panel_x + 3, action_y, action_width, 6, "Apply", graphics::COLOR_2)) {
+			if (settings_button_aligned(panel_x + 3, action_y, action_width, 6, "Apply", graphics::COLOR_2)) {
 				applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, staged_transparency, staged_corners, staged_icons, staged_clock, staged_enabled)
 				if (applied) {
 					call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 				}
 			}
-			if (graphics::button(settings_window, panel_x + 4 + action_width, action_y, action_width, 6, "Cancel")) {
+			if (settings_button_aligned(panel_x + 4 + action_width, action_y, action_width, 6, "Cancel", graphics::COLOR_5)) {
 				call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 				settings_window.close()
 			}
@@ -494,45 +817,45 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 		# prevents a row from sliding underneath a held pointer and being chosen.
 		if (drawer_open && drawer_progress == 100 && drawer_compact && drawer_width >= 40) {
 			if (drawer_height >= 18) {
-				if (graphics::button_flat(settings_window, 8, 13, drawer_width - 12, 7, "Sound", drawer_surface)) { active_tab = 0 }
+				if (settings_flat_button_aligned(8, 13, drawer_width - 12, 7, "Sound", drawer_surface, drawer_foreground)) { active_tab = 0 }
 				if (active_tab == 0) { call graphics::fill_rect(settings_window, 5, 14, 2, 5, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 25) {
-				if (graphics::button_flat(settings_window, 8, 20, drawer_width - 12, 7, "Theme", drawer_surface)) { active_tab = 1 }
+				if (settings_flat_button_aligned(8, 20, drawer_width - 12, 7, "Theme", drawer_surface, drawer_foreground)) { active_tab = 1 }
 				if (active_tab == 1) { call graphics::fill_rect(settings_window, 5, 21, 2, 5, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 32) {
-				if (graphics::button_flat(settings_window, 8, 27, drawer_width - 12, 7, "Window", drawer_surface)) { active_tab = 2 }
+				if (settings_flat_button_aligned(8, 27, drawer_width - 12, 7, "Window", drawer_surface, drawer_foreground)) { active_tab = 2 }
 				if (active_tab == 2) { call graphics::fill_rect(settings_window, 5, 28, 2, 5, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 39) {
-				if (graphics::button_flat(settings_window, 8, 34, drawer_width - 12, 7, "Display", drawer_surface)) { active_tab = 3 }
+				if (settings_flat_button_aligned(8, 34, drawer_width - 12, 7, "Display", drawer_surface, drawer_foreground)) { active_tab = 3 }
 				if (active_tab == 3) { call graphics::fill_rect(settings_window, 5, 35, 2, 5, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 46) {
-				if (graphics::button_flat(settings_window, 8, 41, drawer_width - 12, 7, "System", drawer_surface)) { active_tab = 4 }
+				if (settings_flat_button_aligned(8, 41, drawer_width - 12, 7, "System", drawer_surface, drawer_foreground)) { active_tab = 4 }
 				if (active_tab == 4) { call graphics::fill_rect(settings_window, 5, 42, 2, 5, graphics::COLOR_10) }
 			}
 		}
 		elseif (drawer_open && drawer_progress == 100 && drawer_width >= 76) {
 			if (drawer_height >= 22) {
-				if (graphics::button_flat(settings_window, 8, 13, drawer_width - 12, 9, "Sound", drawer_surface)) { active_tab = 0 }
+				if (settings_flat_button_aligned(8, 13, drawer_width - 12, 9, "Sound", drawer_surface, drawer_foreground)) { active_tab = 0 }
 				if (active_tab == 0) { call graphics::fill_rect(settings_window, 5, 14, 2, 7, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 31) {
-				if (graphics::button_flat(settings_window, 8, 22, drawer_width - 12, 9, "Personalization", drawer_surface)) { active_tab = 1 }
+				if (settings_flat_button_aligned(8, 22, drawer_width - 12, 9, "Personalization", drawer_surface, drawer_foreground)) { active_tab = 1 }
 				if (active_tab == 1) { call graphics::fill_rect(settings_window, 5, 23, 2, 7, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 40) {
-				if (graphics::button_flat(settings_window, 8, 31, drawer_width - 12, 9, "Appearance", drawer_surface)) { active_tab = 2 }
+				if (settings_flat_button_aligned(8, 31, drawer_width - 12, 9, "Appearance", drawer_surface, drawer_foreground)) { active_tab = 2 }
 				if (active_tab == 2) { call graphics::fill_rect(settings_window, 5, 32, 2, 7, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 49) {
-				if (graphics::button_flat(settings_window, 8, 40, drawer_width - 12, 9, "Icons and time", drawer_surface)) { active_tab = 3 }
+				if (settings_flat_button_aligned(8, 40, drawer_width - 12, 9, "Icons and time", drawer_surface, drawer_foreground)) { active_tab = 3 }
 				if (active_tab == 3) { call graphics::fill_rect(settings_window, 5, 41, 2, 7, graphics::COLOR_10) }
 			}
 			if (drawer_height >= 58) {
-				if (graphics::button_flat(settings_window, 8, 49, drawer_width - 12, 9, "System", drawer_surface)) { active_tab = 4 }
+				if (settings_flat_button_aligned(8, 49, drawer_width - 12, 9, "System", drawer_surface, drawer_foreground)) { active_tab = 4 }
 				if (active_tab == 4) { call graphics::fill_rect(settings_window, 5, 50, 2, 7, graphics::COLOR_10) }
 			}
 		}

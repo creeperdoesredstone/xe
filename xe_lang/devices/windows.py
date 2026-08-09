@@ -888,11 +888,14 @@ class WindowManager:
 		if framed:
 			self._draw_frame(rect, self.theme.text_color, scale)
 		if height <= 9:
-			glyph_height = 5 * scale
+			glyph_height = 5
 			visible_label = self._fit_text(label, max(0, rect.width - 2 * scale), scale, small=True)
-			text_width = self.graphics.measure_text(visible_label, scale, small=True)
-			text_x = rect.x + max(scale, (rect.width - text_width) // 2)
-			text_y = rect.y + max(scale, (rect.height - glyph_height) // 2)
+			text_width = self.graphics.measure_text(visible_label, 1, small=True)
+			# Center in logical pixels and scale the result as one unit. Centering in
+			# physical pixels can land a glyph between logical pixels at UI scales
+			# above one, which makes the label look offset from its hover surface.
+			text_x = rect.x + max(1, (width - text_width) // 2) * scale
+			text_y = rect.y + max(1, (height - glyph_height) // 2) * scale
 			self.graphics.draw_text_small(
 				text_x,
 				text_y,
@@ -901,11 +904,11 @@ class WindowManager:
 				pixel_scale=scale,
 			)
 		else:
-			glyph_height = 7 * scale
+			glyph_height = 7
 			visible_label = self._fit_text(label, max(0, rect.width - 2 * scale), scale)
-			text_width = self.graphics.measure_text(visible_label, scale)
-			text_x = rect.x + max(scale, (rect.width - text_width) // 2)
-			text_y = rect.y + max(scale, (rect.height - glyph_height) // 2)
+			text_width = self.graphics.measure_text(visible_label, 1)
+			text_x = rect.x + max(1, (width - text_width) // 2) * scale
+			text_y = rect.y + max(1, (height - glyph_height) // 2) * scale
 			self.graphics.draw_text(
 				text_x,
 				text_y,

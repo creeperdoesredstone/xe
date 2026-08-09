@@ -193,6 +193,9 @@ def test_canonical_converter_analysis_is_side_effect_free(tmp_path):
 
 def test_host_ide_preserves_code_workspace_and_adds_tools(app, tmp_path):
 	ide = X26IDE()
+	ide.resize(1024, 640)
+	ide.show()
+	app.processEvents()
 	assert ide.workspace_tabs.count() == 4
 	assert [ide.workspace_tabs.tabText(index) for index in range(4)] == [
 		"Code",
@@ -211,7 +214,18 @@ def test_host_ide_preserves_code_workspace_and_adds_tools(app, tmp_path):
 	ide.change_theme("Default Light")
 	assert ide.current_theme == "Default Light"
 	ide.open_help()
+	app.processEvents()
 	assert ide.workspace_tabs.currentWidget() is ide.help_view
+	assert ide.help_view.search.hasFocus()
+	assert ide.select_workspace_tool("image-studio")
+	app.processEvents()
+	assert ide.workspace_tabs.currentWidget() is ide.image_studio_view
+	assert ide.workspace_tabs.tabBar().isVisible()
+	assert ide.image_studio_view.isVisible()
+	assert ide.image_studio_view.canvas.isVisible()
+	assert ide.select_workspace_tool("converter")
+	assert ide.workspace_tabs.currentWidget() is ide.converter_view
+	assert not ide.select_workspace_tool("missing-tool")
 	ide.toggle_graphics_view()
 	assert ide.workspace_tabs.currentWidget() is ide.code_tab
 	assert ide.graphics_maximized

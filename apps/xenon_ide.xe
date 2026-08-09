@@ -65,6 +65,7 @@ var selected_all: bool
 var clipboard_text: string
 var source_scratch: string
 var source_insert: string
+var ide_clipped_text_scratch: string
 var cursor_index: int
 var selection_start: int
 var selection_end: int
@@ -121,12 +122,20 @@ array view_selection_end: int[16]
 array view_compile_ok: int[16]
 array view_rotation: int[16]
 array view_tilt: int[16]
+array view_tilt_cosine: float[16]
 array view_rotation_target: int[16]
 array view_tilt_target: int[16]
 array view_orbit_phase: int[16]
 array view_orbit_speed: int[16]
 array view_orbit_target: int[16]
-array view_relationships: int[4096]
+array view_script_count: int[16]
+array view_script_name: string[256]
+array view_script_shell: int[256]
+array view_script_enabled: int[256]
+array view_script_line: int[256]
+array view_relationship_count: int[16]
+array view_relationship_caller: int[3840]
+array view_relationship_callee: int[3840]
 array explorer_expanded: int[64]
 array explorer_nested_expanded: int[4096]
 var explorer_cache_valid: bool
@@ -145,6 +154,10 @@ var view_count: int
 var active_view: int
 var tab_scroll: int
 var ide_camera_bank: int
+var ide_camera_bank_cosine: float
+var ide_camera_bank_sine: float
+var ide_projection_x: int
+var ide_projection_y: int
 var close_prompt_open: bool
 var close_prompt_slot: int
 var help_scroll: int
@@ -503,11 +516,12 @@ fn ide_add_view(name: string, is_folder: bool) int {
 	view_compile_ok[slot] = 1
 	view_rotation[slot] = 0
 	view_tilt[slot] = 28
+	view_tilt_cosine[slot] = math::cos(28.0)
 	view_rotation_target[slot] = 0
 	view_tilt_target[slot] = 28
 	view_orbit_phase[slot] = 0
-	view_orbit_speed[slot] = 24
-	view_orbit_target[slot] = 24
+	view_orbit_speed[slot] = 16
+	view_orbit_target[slot] = 16
 	active_view = slot
 	tab_scroll = slot
 	return slot
@@ -564,9 +578,14 @@ fn ide_source_name_at(text: string, position: int, name: string) bool {
 	return after_name < xestring::strlen(text) && (int)(text[after_name]) == 40
 }
 
+fn ide_script_cache_index(slot: int, script: int) int {
+	return slot * 16 + script
+}
+
 fn ide_document_script_calls(slot: int, caller: int, callee: int) bool {
 	var text: string
 	var target_name: string
+	var cache_slot: int
 	var index: int
 	var line: int
 	var scan: int
@@ -581,12 +600,13 @@ fn ide_document_script_calls(slot: int, caller: int, callee: int) bool {
 	var escaped: bool
 	if (caller == callee) { return false }
 	text = compiler::document_source(slot)
-	target_name = compiler::document_script_name(slot, callee)
+	cache_slot = ide_script_cache_index(slot, callee)
+	target_name = view_script_name[cache_slot]
 	if (xestring::strlen(text) == 0 || xestring::strlen(target_name) == 0) { return false }
 	main_script = -1
 	scan = 0
-	while (scan < compiler::document_script_count(slot)) {
-		if (compiler::document_script_name(slot, scan) == "main") { main_script = scan }
+	while (scan < view_script_count[slot]) {
+		if (view_script_name[ide_script_cache_index(slot, scan)] == "main") { main_script = scan }
 		scan += 1
 	}
 	owner = main_script
@@ -601,8 +621,8 @@ fn ide_document_script_calls(slot: int, caller: int, callee: int) bool {
 	while (index < xestring::strlen(text)) {
 		if (at_line_start) {
 			scan = 0
-			while (scan < compiler::document_script_count(slot)) {
-				if (scan != main_script && compiler::document_script_line(slot, scan) == line) {
+			while (scan < view_script_count[slot]) {
+				if (scan != main_script && view_script_line[ide_script_cache_index(slot, scan)] == line) {
 					owner = scan
 					depth = 0
 				}
@@ -640,25 +660,57 @@ fn ide_document_script_calls(slot: int, caller: int, callee: int) bool {
 	return false
 }
 
-fn ide_relationship_index(slot: int, caller: int, callee: int) int {
-	return slot * 256 + caller * 16 + callee
+fn ide_relationship_list_index(slot: int, relationship: int) int {
+	return slot * 240 + relationship
+}
+
+proc ide_refresh_script_cache(slot: int) {
+	var count: int
+	var script: int
+	var cache_slot: int
+	if (slot < 0 || slot >= 16) { return }
+	count = compiler::document_script_count(slot)
+	if (count < 0) { count = 0 }
+	if (count > 16) { count = 16 }
+	view_script_count[slot] = count
+	script = 0
+	while (script < 16) {
+		cache_slot = ide_script_cache_index(slot, script)
+		view_script_name[cache_slot] = ""
+		view_script_shell[cache_slot] = 0
+		view_script_enabled[cache_slot] = 0
+		view_script_line[cache_slot] = 0
+		if (script < count) {
+			view_script_name[cache_slot] = xestring::concat("", compiler::document_script_name(slot, script))
+			view_script_shell[cache_slot] = compiler::document_script_shell(slot, script)
+			if (compiler::document_script_enabled(slot, script)) { view_script_enabled[cache_slot] = 1 }
+			view_script_line[cache_slot] = compiler::document_script_line(slot, script)
+		}
+		script += 1
+	}
 }
 
 proc ide_refresh_relationships(slot: int) {
 	var caller: int
 	var callee: int
 	var count: int
-	var relation_slot: int
-	count = compiler::document_script_count(slot)
-	if (count > 16) { count = 16 }
+	var relationship: int
+	var relationship_slot: int
+	call ide_refresh_script_cache(slot)
+	count = view_script_count[slot]
+	view_relationship_count[slot] = 0
 	caller = 0
-	while (caller < 16) {
+	while (caller < count) {
 		callee = 0
-		while (callee < 16) {
-			relation_slot = ide_relationship_index(slot, caller, callee)
-			view_relationships[relation_slot] = 0
-			if (caller < count && callee < count && ide_document_script_calls(slot, caller, callee)) {
-				view_relationships[relation_slot] = 1
+		while (callee < count) {
+			if (ide_document_script_calls(slot, caller, callee)) {
+				relationship = view_relationship_count[slot]
+				if (relationship < 240) {
+					relationship_slot = ide_relationship_list_index(slot, relationship)
+					view_relationship_caller[relationship_slot] = caller
+					view_relationship_callee[relationship_slot] = callee
+					view_relationship_count[slot] += 1
+				}
 			}
 			callee += 1
 		}
@@ -731,6 +783,7 @@ proc ide_close_view(slot: int) {
 		view_compile_ok[index] = view_compile_ok[index + 1]
 		view_rotation[index] = view_rotation[index + 1]
 		view_tilt[index] = view_tilt[index + 1]
+		view_tilt_cosine[index] = view_tilt_cosine[index + 1]
 		view_rotation_target[index] = view_rotation_target[index + 1]
 		view_tilt_target[index] = view_tilt_target[index + 1]
 		view_orbit_phase[index] = view_orbit_phase[index + 1]
@@ -870,6 +923,28 @@ fn ide_save_view(slot: int) bool {
 	return saved
 }
 
+proc ide_resolve_close_prompt(choice: int) {
+	var closing_slot: int
+	closing_slot = close_prompt_slot
+	if (!close_prompt_open || closing_slot < 0 || closing_slot >= view_count) { return }
+	if (choice == 1) {
+		if (!ide_save_view(closing_slot)) { return }
+	}
+	elseif (choice == 2) {
+		view_dirty[closing_slot] = 0
+		if (closing_slot == active_view) { dirty = false }
+	}
+	else {
+		close_prompt_open = false
+		close_prompt_slot = -1
+		call ide_report("Close canceled", false)
+		return
+	}
+	close_prompt_open = false
+	close_prompt_slot = -1
+	call ide_close_view(closing_slot)
+}
+
 proc ide_run_text(text: string, reaction: bool) {
 	terminal_open = true
 	compile_ok = compiler::check(text)
@@ -939,6 +1014,10 @@ proc ide_check_and_run() {
 	else { call ide_terminal_append("(no output)") }
 	running = false
 	call ide_report("Workspace finished", false)
+}
+
+proc ide_run_primary() {
+	call ide_check_and_run()
 }
 
 proc ide_run_active_file() {
@@ -1042,7 +1121,7 @@ proc ide_handle_key(value: int, target: int) {
 				call ide_save()
 			}
 			elseif (value == 18 || value == 82 || value == 114) {
-				call ide_check_and_run()
+				call ide_run_primary()
 			}
 		}
 		return
@@ -1081,14 +1160,13 @@ proc ide_handle_key(value: int, target: int) {
 
 proc draw_ide_text_clipped(x: int, y: int, text: string, maximum: int, color: int) {
 	var index: int
-	var offset: int
 	index = 0
-	offset = 0
+	call ide_clear(ide_clipped_text_scratch)
 	while (index < xestring::strlen(text) && index < maximum) {
-		call graphics::draw_char_styled(ide_window, x + offset, y, text[index], color, graphics::FONT_SMALL, 0)
-		offset += graphics::char_advance(text[index], graphics::FONT_SMALL)
+		call xestring::append_char(ide_clipped_text_scratch, text[index])
 		index += 1
 	}
+	call graphics::draw_text_small(ide_window, x, y, ide_clipped_text_scratch, color)
 }
 
 proc draw_ide_text_clipped_large(x: int, y: int, text: string, maximum: int, color: int) {
@@ -1544,6 +1622,15 @@ fn ide_base_name(path: string) string {
 	return result
 }
 
+fn ide_tab_label(slot: int) string {
+	var label: string
+	if (slot < 0 || slot >= view_count) { return "" }
+	if (view_is_folder[slot] == 2) { return "Help" }
+	label = ide_base_name(view_path[slot])
+	if (view_dirty[slot] != 0) { label = xestring::concat(label, "*") }
+	return label
+}
+
 proc ide_begin_open_picker() {
 	open_picker_open = true
 	call ide_set(open_picker_path, ".")
@@ -1584,6 +1671,19 @@ proc ide_open_picker_entry(index: int) {
 	}
 	open_picker_open = false
 	call ide_open_file(path)
+}
+
+proc ide_select_open_picker_entry(index: int) {
+	if (index < 0 || index >= os::entry_count(open_picker_path)) { return }
+	if (open_picker_last_entry == index && current_ticks - open_picker_last_ticks <= 450) {
+		open_picker_last_entry = -1
+		call ide_open_picker_entry(index)
+	}
+	else {
+		open_picker_selected = index
+		open_picker_last_entry = index
+		open_picker_last_ticks = current_ticks
+	}
 }
 
 proc ide_open_picker_back() {
@@ -1701,14 +1801,7 @@ proc draw_ide_open_picker(window_width: int, window_height: int) {
 		else { call graphics::draw_text_small(ide_window, panel_x + 6, row_y + 2, "F", graphics::COLOR_7) }
 		call draw_ide_text_clipped(panel_x + 12, row_y + 2, entry_name, (row_width - 12) / 4, graphics::WHITE)
 		if (row_clicked) {
-			if (open_picker_last_entry == entry_index && current_ticks - open_picker_last_ticks <= 450) {
-				call ide_open_picker_entry(entry_index)
-			}
-			else {
-				open_picker_selected = entry_index
-				open_picker_last_entry = entry_index
-				open_picker_last_ticks = current_ticks
-			}
+			call ide_select_open_picker_entry(entry_index)
 		}
 		visible_index += 1
 	}
@@ -2093,6 +2186,18 @@ proc ide_ensure_explorer_cache(start: int, limit: int) {
 	}
 }
 
+proc ide_toggle_explorer_folder(depth: int, root_slot: int, nested_slot: int) {
+	if (depth == 0 && root_slot >= 0 && root_slot < 64) {
+		explorer_expanded[root_slot] = 1 - explorer_expanded[root_slot]
+	}
+	elseif (depth == 1 && nested_slot >= 0 && nested_slot < 4096) {
+		explorer_nested_expanded[nested_slot] = 1 - explorer_nested_expanded[nested_slot]
+	}
+	else { return }
+	explorer_toggle_lock = true
+	call ide_invalidate_explorer_cache()
+}
+
 fn ide_explorer_row_count() int {
 	return explorer_cache_total
 }
@@ -2235,10 +2340,7 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 				if (rows_interactive) { arrow_clicked = ide_chevron_button(arrow_x, row_y, 10, 7, folder_direction, graphics::COLOR_1) }
 				else { call draw_ide_chevron(arrow_x, row_y, 10, 7, folder_direction) }
 				if (rows_interactive && !explorer_toggle_lock && arrow_clicked) {
-					if (depth == 0) { explorer_expanded[root_index] = 1 - explorer_expanded[root_index] }
-					elseif (nested_slot >= 0) { explorer_nested_expanded[nested_slot] = 1 - explorer_nested_expanded[nested_slot] }
-					explorer_toggle_lock = true
-					call ide_invalidate_explorer_cache()
+					call ide_toggle_explorer_folder(depth, root_index, nested_slot)
 				}
 			}
 			else {
@@ -2427,38 +2529,33 @@ proc draw_ide_file_electron_asset(center_x: int, center_y: int, active: bool) {
 	call graphics::set_pixel(ide_window, center_x, center_y, graphics::COLOR_7)
 }
 
-fn ide_orbit_x(angle: float, radius: int, tilt_value: int) int {
+proc ide_project_orbit_point(slot: int, angle: float, radius: int) {
 	var flat_x: float
 	var flat_y: float
 	flat_x = math::cos(angle) * (float)radius
-	flat_y = math::sin(angle) * (float)radius * math::cos((float)tilt_value)
-	return (int)(flat_x * math::cos((float)ide_camera_bank) - flat_y * math::sin((float)ide_camera_bank))
+	flat_y = math::sin(angle) * (float)radius * view_tilt_cosine[slot]
+	ide_projection_x = (int)(flat_x * ide_camera_bank_cosine - flat_y * ide_camera_bank_sine)
+	ide_projection_y = (int)(flat_x * ide_camera_bank_sine + flat_y * ide_camera_bank_cosine)
 }
 
-fn ide_orbit_y(angle: float, radius: int, tilt_value: int) int {
-	var flat_x: float
-	var flat_y: float
-	flat_x = math::cos(angle) * (float)radius
-	flat_y = math::sin(angle) * (float)radius * math::cos((float)tilt_value)
-	return (int)(flat_x * math::sin((float)ide_camera_bank) + flat_y * math::cos((float)ide_camera_bank))
-}
-
-proc draw_visual_orbit(center_x: int, center_y: int, radius: int, tilt_value: int, color: int) {
+proc draw_visual_orbit(slot: int, center_x: int, center_y: int, radius: int, color: int) {
 	var angle: int
 	var point_x: int
 	var point_y: int
 	var previous_x: int
 	var previous_y: int
-	angle = 0
-	previous_x = center_x + ide_orbit_x(0.0, radius, tilt_value)
-	previous_y = center_y + ide_orbit_y(0.0, radius, tilt_value)
+	angle = 20
+	call ide_project_orbit_point(slot, 0.0, radius)
+	previous_x = center_x + ide_projection_x
+	previous_y = center_y + ide_projection_y
 	while (angle <= 360) {
-		point_x = center_x + ide_orbit_x((float)angle, radius, tilt_value)
-		point_y = center_y + ide_orbit_y((float)angle, radius, tilt_value)
+		call ide_project_orbit_point(slot, (float)angle, radius)
+		point_x = center_x + ide_projection_x
+		point_y = center_y + ide_projection_y
 		call graphics::draw_line(ide_window, previous_x, previous_y, point_x, point_y, color)
 		previous_x = point_x
 		previous_y = point_y
-		angle += 15
+		angle += 20
 	}
 }
 
@@ -2468,7 +2565,7 @@ fn document_shell_population(slot: int, shell: int, count: int) int {
 	index = 0
 	population = 0
 	while (index < count) {
-		if (compiler::document_script_name(slot, index) != "main" && compiler::document_script_shell(slot, index) == shell) { population += 1 }
+		if (view_script_name[ide_script_cache_index(slot, index)] != "main" && view_script_shell[ide_script_cache_index(slot, index)] == shell) { population += 1 }
 		index += 1
 	}
 	return population
@@ -2479,13 +2576,13 @@ fn ide_script_orbit_angle(slot: int, script: int, count: int, orbit_phase: int) 
 	var population: int
 	var position: int
 	var scan: int
-	shell = compiler::document_script_shell(slot, script)
+	shell = view_script_shell[ide_script_cache_index(slot, script)]
 	population = document_shell_population(slot, shell, count)
 	if (population > ide_max_shell_items) { population = ide_max_shell_items }
 	position = 0
 	scan = 0
 	while (scan < script) {
-		if (compiler::document_script_name(slot, scan) != "main" && compiler::document_script_shell(slot, scan) == shell) { position += 1 }
+		if (view_script_name[ide_script_cache_index(slot, scan)] != "main" && view_script_shell[ide_script_cache_index(slot, scan)] == shell) { position += 1 }
 		scan += 1
 	}
 	return view_rotation[slot] + orbit_phase + position * 360 / population + shell * 31
@@ -2494,7 +2591,7 @@ fn ide_script_orbit_angle(slot: int, script: int, count: int, orbit_phase: int) 
 fn ide_script_orbit_radius(slot: int, script: int, outer_radius: int, inner_radius: int, shell_gap: int, shell_count: int) int {
 	var shell: int
 	var radius: int
-	shell = compiler::document_script_shell(slot, script)
+	shell = view_script_shell[ide_script_cache_index(slot, script)]
 	radius = outer_radius
 	if (shell_count > 1) { radius = inner_radius + shell * shell_gap }
 	return radius
@@ -2513,15 +2610,17 @@ proc draw_ide_script_relationship(slot: int, caller: int, callee: int, count: in
 	var callee_radius: int
 	var caller_angle: float
 	var callee_angle: float
-	if (compiler::document_script_name(slot, caller) == "main" || compiler::document_script_name(slot, callee) == "main") { return }
+	if (view_script_name[ide_script_cache_index(slot, caller)] == "main" || view_script_name[ide_script_cache_index(slot, callee)] == "main") { return }
 	caller_radius = ide_script_orbit_radius(slot, caller, outer_radius, inner_radius, shell_gap, shell_count)
 	callee_radius = ide_script_orbit_radius(slot, callee, outer_radius, inner_radius, shell_gap, shell_count)
 	caller_angle = (float)(ide_script_orbit_angle(slot, caller, count, orbit_phase))
 	callee_angle = (float)(ide_script_orbit_angle(slot, callee, count, orbit_phase))
-	caller_x = center_x + ide_orbit_x(caller_angle, caller_radius, view_tilt[slot])
-	caller_y = center_y + ide_orbit_y(caller_angle, caller_radius, view_tilt[slot])
-	callee_x = center_x + ide_orbit_x(callee_angle, callee_radius, view_tilt[slot])
-	callee_y = center_y + ide_orbit_y(callee_angle, callee_radius, view_tilt[slot])
+	call ide_project_orbit_point(slot, caller_angle, caller_radius)
+	caller_x = center_x + ide_projection_x
+	caller_y = center_y + ide_projection_y
+	call ide_project_orbit_point(slot, callee_angle, callee_radius)
+	callee_x = center_x + ide_projection_x
+	callee_y = center_y + ide_projection_y
 	call graphics::draw_line(ide_window, caller_x, caller_y, callee_x, callee_y, graphics::COLOR_14)
 	if (animate) {
 		flow = (current_ticks / 110 + caller * 3 + callee * 5) % 12
@@ -2563,7 +2662,8 @@ proc draw_file_nucleus_view(slot: int, x: int, y: int, area_width: int, area_hei
 	var orbit_phase: int
 	var caller: int
 	var callee: int
-	var relation_slot: int
+	var relationship: int
+	var relationship_slot: int
 	var hover_plane_x: float
 	var hover_plane_y: float
 	var hover_tilt_cosine: float
@@ -2585,7 +2685,7 @@ proc draw_file_nucleus_view(slot: int, x: int, y: int, area_width: int, area_hei
 	else {
 		call draw_ide_text_clipped(x + 4, y + 3, view_path[slot], maximum_chars, graphics::COLOR_7)
 	}
-	count = compiler::document_script_count(slot)
+	count = view_script_count[slot]
 	orbit_phase = (view_orbit_phase[slot] / 600) % 360
 	center_x = x + area_width / 2
 	center_y = y + area_height / 2 + 3
@@ -2597,7 +2697,7 @@ proc draw_file_nucleus_view(slot: int, x: int, y: int, area_width: int, area_hei
 	shell_count = 1
 	index = 0
 	while (index < count) {
-		if (compiler::document_script_shell(slot, index) + 1 > shell_count) { shell_count = compiler::document_script_shell(slot, index) + 1 }
+		if (view_script_shell[ide_script_cache_index(slot, index)] + 1 > shell_count) { shell_count = view_script_shell[ide_script_cache_index(slot, index)] + 1 }
 		index += 1
 	}
 	hidden = 0
@@ -2614,7 +2714,7 @@ proc draw_file_nucleus_view(slot: int, x: int, y: int, area_width: int, area_hei
 	while (shell < shell_count) {
 		radius = outer_radius
 		if (shell_count > 1) { radius = inner_radius + shell * shell_gap }
-		call draw_visual_orbit(center_x, center_y, radius, view_tilt[slot], graphics::COLOR_8)
+		call draw_visual_orbit(slot, center_x, center_y, radius, graphics::COLOR_8)
 		shell += 1
 	}
 	pointer_x = graphics::pointer_x(ide_window)
@@ -2636,29 +2736,27 @@ proc draw_file_nucleus_view(slot: int, x: int, y: int, area_width: int, area_hei
 		if (hover_delta <= 8) { hovered_view = slot }
 		shell += 1
 	}
-	caller = 0
-	while (caller < count && caller < ide_max_shells * ide_max_shell_items) {
-		callee = 0
-		while (callee < count && callee < ide_max_shells * ide_max_shell_items) {
-			relation_slot = ide_relationship_index(slot, caller, callee)
-			if (compiler::document_script_shell(slot, caller) < ide_max_shells && compiler::document_script_shell(slot, callee) < ide_max_shells && view_relationships[relation_slot] != 0) {
-				call draw_ide_script_relationship(slot, caller, callee, count, center_x, center_y, outer_radius, inner_radius, shell_gap, shell_count, orbit_phase, running && is_active)
-			}
-			callee += 1
+	relationship = 0
+	while (relationship < view_relationship_count[slot]) {
+		relationship_slot = ide_relationship_list_index(slot, relationship)
+		caller = view_relationship_caller[relationship_slot]
+		callee = view_relationship_callee[relationship_slot]
+		if (caller < ide_max_shells * ide_max_shell_items && callee < ide_max_shells * ide_max_shell_items && view_script_shell[ide_script_cache_index(slot, caller)] < ide_max_shells && view_script_shell[ide_script_cache_index(slot, callee)] < ide_max_shells) {
+			call draw_ide_script_relationship(slot, caller, callee, count, center_x, center_y, outer_radius, inner_radius, shell_gap, shell_count, orbit_phase, running && is_active)
 		}
-		caller += 1
+		relationship += 1
 	}
 	call draw_ide_file_nucleus_asset(center_x, center_y, 8, is_active, orbit_phase)
 	call graphics::draw_text_small(ide_window, center_x - 8, center_y - 2, "main", graphics::WHITE)
 	index = 0
 	while (index < count && index < ide_max_shells * ide_max_shell_items) {
-		shell = compiler::document_script_shell(slot, index)
-		if (compiler::document_script_name(slot, index) != "main" && shell < ide_max_shells) {
+		shell = view_script_shell[ide_script_cache_index(slot, index)]
+		if (view_script_name[ide_script_cache_index(slot, index)] != "main" && shell < ide_max_shells) {
 			population = document_shell_population(slot, shell, count)
 			position = 0
 			scan = 0
 			while (scan < index) {
-				if (compiler::document_script_shell(slot, scan) == shell) { position += 1 }
+				if (view_script_name[ide_script_cache_index(slot, scan)] != "main" && view_script_shell[ide_script_cache_index(slot, scan)] == shell) { position += 1 }
 				scan += 1
 			}
 			if (position < ide_max_shell_items) {
@@ -2666,12 +2764,13 @@ proc draw_file_nucleus_view(slot: int, x: int, y: int, area_width: int, area_hei
 				radius = outer_radius
 				if (shell_count > 1) { radius = inner_radius + shell * shell_gap }
 				angle = (float)(view_rotation[slot] + orbit_phase + position * 360 / population + shell * 31)
-				electron_x = center_x + ide_orbit_x(angle, radius, view_tilt[slot])
-				electron_y = center_y + ide_orbit_y(angle, radius, view_tilt[slot])
+				call ide_project_orbit_point(slot, angle, radius)
+				electron_x = center_x + ide_projection_x
+				electron_y = center_y + ide_projection_y
 				state = graphics::ATOM_DISABLED
 				if (is_active) { state = graphics::ATOM_CONNECTED }
-				if (!compiler::document_script_enabled(slot, index)) { state = graphics::ATOM_DISABLED }
-				elseif (is_active && !compile_ok && compiler::document_script_line(slot, index) == compiler::error_line()) { state = graphics::ATOM_ERROR }
+				if (view_script_enabled[ide_script_cache_index(slot, index)] == 0) { state = graphics::ATOM_DISABLED }
+				elseif (is_active && !compile_ok && view_script_line[ide_script_cache_index(slot, index)] == compiler::error_line()) { state = graphics::ATOM_ERROR }
 				elseif (is_active && running) { state = graphics::ATOM_EXECUTING }
 				call draw_ide_script_electron_asset(electron_x, electron_y, state, orbit_phase + index * 17)
 				dx = pointer_x - electron_x
@@ -2682,7 +2781,7 @@ proc draw_file_nucleus_view(slot: int, x: int, y: int, area_width: int, area_hei
 					hovered_view = slot
 					if (selected_atom != hover_id) { selected_atom = hover_id; hover_started = current_ticks }
 					call graphics::fill_rect(ide_window, x + 3, y + area_height - 10, area_width - 6, 7, graphics::COLOR_8)
-					call draw_ide_text_clipped(x + 5, y + area_height - 9, compiler::document_script_name(slot, index), maximum_chars - 1, graphics::WHITE)
+					call draw_ide_text_clipped(x + 5, y + area_height - 9, view_script_name[ide_script_cache_index(slot, index)], maximum_chars - 1, graphics::WHITE)
 				}
 			}
 		}
@@ -2737,7 +2836,7 @@ proc draw_folder_nucleus_view(slot: int, x: int, y: int, area_width: int, area_h
 	outer_radius = (area_width - 22) / 2
 	if (outer_radius > (area_height - 30) / 2) { outer_radius = (area_height - 30) / 2 }
 	if (outer_radius < 18) { outer_radius = 18 }
-	call draw_visual_orbit(center_x, center_y, outer_radius, view_tilt[slot], graphics::COLOR_8)
+	call draw_visual_orbit(slot, center_x, center_y, outer_radius, graphics::COLOR_8)
 	call draw_ide_folder_nucleus_asset(center_x, center_y, 9, is_active, orbit_phase)
 	call graphics::draw_text_small(ide_window, center_x - 6, center_y - 2, "DIR", graphics::WHITE)
 	visible_count = count
@@ -2747,8 +2846,9 @@ proc draw_folder_nucleus_view(slot: int, x: int, y: int, area_width: int, area_h
 	index = 0
 	while (index < visible_count) {
 		angle = (float)(view_rotation[slot] + orbit_phase + index * 360 / visible_count)
-		electron_x = center_x + ide_orbit_x(angle, outer_radius, view_tilt[slot])
-		electron_y = center_y + ide_orbit_y(angle, outer_radius, view_tilt[slot])
+		call ide_project_orbit_point(slot, angle, outer_radius)
+		electron_x = center_x + ide_projection_x
+		electron_y = center_y + ide_projection_y
 		if (os::entry_is_directory(view_path[slot], index)) {
 			call draw_ide_folder_mini_atom_asset(electron_x, electron_y, is_active, orbit_phase + index * 17)
 		}
@@ -2979,21 +3079,13 @@ proc draw_ide_close_prompt(window_width: int, window_height: int) {
 	call graphics::draw_rect(ide_window, panel_x, panel_y, panel_width, 36, graphics::COLOR_10)
 	call draw_ide_text_clipped(panel_x + 5, panel_y + 5, "Save changes before closing?", (panel_width - 10) / 4, graphics::WHITE)
 	if (graphics::button_flat(ide_window, panel_x + 5, panel_y + 21, 38, 9, "Save", graphics::COLOR_10)) {
-		if (ide_save_view(closing_slot)) {
-			close_prompt_open = false
-			call ide_close_view(closing_slot)
-		}
+		call ide_resolve_close_prompt(1)
 	}
 	if (graphics::button_flat(ide_window, panel_x + 46, panel_y + 21, 54, 9, "Don't save", graphics::COLOR_1)) {
-		view_dirty[closing_slot] = 0
-		if (closing_slot == active_view) { dirty = false }
-		close_prompt_open = false
-		call ide_close_view(closing_slot)
+		call ide_resolve_close_prompt(2)
 	}
 	if (graphics::button_flat(ide_window, panel_x + panel_width - 48, panel_y + 21, 43, 9, "Cancel", graphics::COLOR_1)) {
-		close_prompt_open = false
-		close_prompt_slot = -1
-		call ide_report("Close canceled", false)
+		call ide_resolve_close_prompt(0)
 	}
 }
 
@@ -3070,6 +3162,7 @@ proc draw_ribbon_file_menu(window_width: int) {
 	}
 	if (ribbon_file_menu_guard == 0 && graphics::button_flat(ide_window, 3, 43, menu_width - 2, 7, "Close", graphics::COLOR_1)) {
 		ribbon_file_menu_open = false
+		call ide_close_view(active_view)
 	}
 	if (ribbon_file_menu_guard > 0) {
 		call draw_ide_passive_button(3, 11, menu_width - 2, 7, "New file", graphics::COLOR_8)
@@ -3090,6 +3183,13 @@ proc draw_ide_run_menu() {
 		run_menu_open = false
 		call ide_run_active_file()
 	}
+}
+
+fn ide_orbit_speed_target(slot: int) int {
+	if (rotation_dragging && rotating_view == slot) { return 0 }
+	if (hovered_view == slot && hovered_atom >= 0) { return 0 }
+	if (hovered_view == slot) { return 3 }
+	return 16
 }
 
 source = ""
@@ -3148,6 +3248,7 @@ selected_all = false
 clipboard_text = ""
 source_scratch = ""
 source_insert = ""
+ide_clipped_text_scratch = ""
 cursor_index = xestring::strlen(source)
 selection_start = cursor_index
 selection_end = cursor_index
@@ -3188,11 +3289,12 @@ view_selection_end[0] = 0
 view_compile_ok[0] = 1
 view_rotation[0] = 0
 view_tilt[0] = 28
+view_tilt_cosine[0] = math::cos(28.0)
 view_rotation_target[0] = 0
 view_tilt_target[0] = 28
 view_orbit_phase[0] = 0
-view_orbit_speed[0] = 24
-view_orbit_target[0] = 24
+view_orbit_speed[0] = 16
+view_orbit_target[0] = 16
 view_path[1] = "Help"
 view_is_folder[1] = 2
 view_source[1] = ""
@@ -3203,12 +3305,15 @@ view_selection_end[1] = 0
 view_compile_ok[1] = 1
 view_rotation[1] = 0
 view_tilt[1] = 28
+view_tilt_cosine[1] = math::cos(28.0)
 view_rotation_target[1] = 0
 view_tilt_target[1] = 28
 view_orbit_phase[1] = 0
-view_orbit_speed[1] = 24
-view_orbit_target[1] = 24
+view_orbit_speed[1] = 16
+view_orbit_target[1] = 16
 ide_camera_bank = -10
+ide_camera_bank_cosine = math::cos((float)ide_camera_bank)
+ide_camera_bank_sine = math::sin((float)ide_camera_bank)
 ribbon_file_pointer_inside = false
 close_prompt_open = false
 close_prompt_slot = -1
@@ -3265,10 +3370,8 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		if (view_tilt_step == 0 && view_tilt_target[view_update] > view_tilt[view_update]) { view_tilt_step = 1 }
 		if (view_tilt_step == 0 && view_tilt_target[view_update] < view_tilt[view_update]) { view_tilt_step = -1 }
 		view_tilt[view_update] += view_tilt_step
-		view_orbit_target[view_update] = 24
-		if (hovered_view == view_update) { view_orbit_target[view_update] = 6 }
-		if (hovered_view == view_update && hovered_atom >= 0) { view_orbit_target[view_update] = 0 }
-		if (rotation_dragging && rotating_view == view_update) { view_orbit_target[view_update] = 0 }
+		if (view_tilt_step != 0) { view_tilt_cosine[view_update] = math::cos((float)(view_tilt[view_update])) }
+		view_orbit_target[view_update] = ide_orbit_speed_target(view_update)
 		view_orbit_step = (view_orbit_target[view_update] - view_orbit_speed[view_update]) * animation_step / 100
 		if (view_orbit_step == 0 && view_orbit_target[view_update] > view_orbit_speed[view_update]) { view_orbit_step = 1 }
 		if (view_orbit_step == 0 && view_orbit_target[view_update] < view_orbit_speed[view_update]) { view_orbit_step = -1 }
@@ -3314,7 +3417,12 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 			}
 			if (graphics::button_flat(ide_window, 32, 2, 28, 7, "Edit", graphics::COLOR_8)) { edit_menu_open = !edit_menu_open; plus_menu_open = false; file_menu_open = false }
 			if (graphics::button_flat(ide_window, 62, 2, 28, 7, "View", graphics::COLOR_8)) { explorer_open = !explorer_open; edit_menu_open = false }
-			if (graphics::button_flat(ide_window, 92, 2, 28, 7, "Run", graphics::COLOR_8)) {
+			if (graphics::button_flat(ide_window, 92, 2, 21, 7, "Run", graphics::COLOR_8)) {
+				run_menu_open = false
+				call ide_run_primary()
+				edit_menu_open = false
+			}
+			if (ide_chevron_button(114, 2, 6, 7, 2, graphics::COLOR_8)) {
 				run_menu_open = true
 				run_menu_guard = 2
 				edit_menu_open = false
@@ -3332,7 +3440,9 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 			call draw_ide_passive_button(2, 2, 28, 7, "File", graphics::COLOR_8)
 			call draw_ide_passive_button(32, 2, 28, 7, "Edit", graphics::COLOR_8)
 			call draw_ide_passive_button(62, 2, 28, 7, "View", graphics::COLOR_8)
-			call draw_ide_passive_button(92, 2, 28, 7, "Run", graphics::COLOR_8)
+			call draw_ide_passive_button(92, 2, 21, 7, "Run", graphics::COLOR_8)
+			call graphics::fill_rect(ide_window, 114, 2, 6, 7, graphics::COLOR_8)
+			call draw_ide_chevron(114, 2, 6, 7, 2)
 			if (width >= 176) {
 				call draw_ide_passive_button(122, 2, 48, 7, "Terminal", graphics::COLOR_8)
 			}
@@ -3476,9 +3586,7 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 			else {
 				call graphics::fill_rect(ide_window, tab_x, 12, tab_width, 7, tab_tone)
 			}
-			if (view_is_folder[tab_slot] == 2) { tab_label = "Help" }
-			else { tab_label = ide_base_name(view_path[tab_slot]) }
-			if (view_dirty[tab_slot] != 0) { tab_label = xestring::concat(tab_label, "*") }
+			tab_label = ide_tab_label(tab_slot)
 			call draw_ide_text_clipped(tab_x + 2, 13, tab_label, (tab_body_width - 4) / 4, graphics::WHITE)
 			if (tab_clicked) {
 				call ide_activate_view(tab_slot)

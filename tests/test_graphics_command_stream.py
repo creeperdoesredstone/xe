@@ -204,6 +204,39 @@ def test_negative_tilt_keeps_front_back_depth_and_projection_stable() -> None:
 	assert negative_values == positive_values
 
 
+def test_drag_tilt_sequence_never_reverses_occlusion_and_highlight_is_pixel_fixed() -> None:
+	context, words = _scene(tilt=70, roll=31, rotation=-119)
+	memory = context.vm.data_memory
+	command = STREAM + gc.HEADER_WORDS
+	width = context.vm.devices.graphics.width
+	expected_highlight = (120 - 18 // 2, 90 - 18 // 2)
+	positive: dict[int, tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]] = {}
+
+	for tilt in (70, 48, 24, 8, 1, 0, -1, -8, -24, -48, -70):
+		memory[command + gc.ORBIT_TILT_OFFSET] = tilt & 0xFFFFFFFF
+		context.vm.devices.graphics.clear_both(0)
+		assert _call(context, words) >= 0
+		depths = tuple(_signed(value) for value in memory[OUT_DEPTH:OUT_DEPTH + 2])
+		order = tuple(memory[DEPTH_ORDER:DEPTH_ORDER + 2])
+		positions = tuple(memory[OUT_X:OUT_X + 2] + memory[OUT_Y:OUT_Y + 2])
+		magnitude = abs(tilt)
+		if magnitude in positive:
+			assert (depths, order, positions) == positive[magnitude]
+		else:
+			positive[magnitude] = (depths, order, positions)
+
+		pixels = _back_pixels(context)
+		hx, hy = expected_highlight
+		assert pixels[hy * width + hx] == 15
+		interior_highlights = [
+			(x, y)
+			for y in range(90 - 14, 90 + 15)
+			for x in range(120 - 14, 120 + 15)
+			if (x - 120) ** 2 + (y - 90) ** 2 < 14 ** 2 and pixels[y * width + x] == 15
+		]
+		assert interior_highlights == [expected_highlight]
+
+
 Mutation = Callable[[list[int], int], None]
 
 

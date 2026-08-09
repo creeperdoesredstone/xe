@@ -141,6 +141,7 @@ def _representative_program(*, native: bool) -> tuple[int, ...]:
 	modified = modified.replace(
 		"view_roll = -12",
 		"view_roll = 31\nrotation = -119\ntilt = -57\nentry_selected[1] = 1\n"
+		"rotation_target = rotation\ntilt_target = tilt\n"
 		"orbit_speed_setting = 0\nanimation_shell = 0\nwhile (animation_shell < 8) {\n"
 		"\tshell_speed[animation_shell] = 0\n\tanimation_shell += 1\n}",
 		1,

@@ -91,3 +91,46 @@ def test_window_content_clear_applies_transparency_without_affecting_screen_clea
 	assert 2 in content
 	assert 5 in content
 	assert set(content) <= {2, 5}
+
+
+def test_button_labels_stay_on_the_logical_pixel_grid_through_hover() -> None:
+	def render_label(*, hovered: bool, height: int) -> tuple[int, int, Rect]:
+		graphics = GraphicsDevice(240, 160)
+		input_device = InputDevice(240, 160)
+		manager = WindowManager(graphics, input_device)
+		handle = manager.create(12, 10, 200, 130, "Buttons", ui_scale=2)
+		manager.draw(handle)
+		origin_x, origin_y = manager.draw_origin(handle)
+		if hovered:
+			input_device.move_pointer(origin_x + 20, origin_y + 10)
+		else:
+			input_device.move_pointer(0, 0)
+
+		coordinates: list[tuple[int, int]] = []
+		if height <= 9:
+			original = graphics.draw_text_small
+
+			def record(x: int, y: int, *args, **kwargs) -> None:
+				coordinates.append((x, y))
+				original(x, y, *args, **kwargs)
+
+			graphics.draw_text_small = record  # type: ignore[method-assign]
+		else:
+			original = graphics.draw_text
+
+			def record(x: int, y: int, *args, **kwargs) -> None:
+				coordinates.append((x, y))
+				original(x, y, *args, **kwargs)
+
+			graphics.draw_text = record  # type: ignore[method-assign]
+
+		manager.button(handle, 5, 5, 31, height, "Delete", 4, False)
+		assert len(coordinates) == 1
+		return coordinates[0][0], coordinates[0][1], Rect(origin_x + 10, origin_y + 10, 62, height * 2)
+
+	for height in (9, 12):
+		normal_x, normal_y, rect = render_label(hovered=False, height=height)
+		hover_x, hover_y, _ = render_label(hovered=True, height=height)
+		assert (normal_x, normal_y) == (hover_x, hover_y)
+		assert (normal_x - rect.x) % 2 == 0
+		assert (normal_y - rect.y) % 2 == 0

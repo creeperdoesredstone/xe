@@ -448,6 +448,33 @@ proc confirm_file_dialog() {
 	}
 }
 
+proc select_file_dialog_entry(index: int) {
+	var entry_name: string
+	if (index < 0 || index >= os::entry_count(file_dialog_path)) { return }
+	entry_name = os::entry_name(file_dialog_path, index)
+	if (os::entry_is_directory(file_dialog_path, index)) {
+		call set_text(file_dialog_path, editor_join_path(file_dialog_path, entry_name))
+		call clear_text(file_dialog_selected)
+		file_dialog_scroll = 0
+		file_dialog_last_entry = -1
+		return
+	}
+	call set_text(file_dialog_selected, entry_name)
+	if (file_dialog_save) {
+		call set_text(file_dialog_name, entry_name)
+		file_dialog_name_focused = true
+		file_dialog_replace_name = true
+	}
+	elseif (file_dialog_last_entry == index && current_ticks - file_dialog_last_ticks <= 450) {
+		file_dialog_last_entry = -1
+		call confirm_file_dialog()
+	}
+	else {
+		file_dialog_last_entry = index
+		file_dialog_last_ticks = current_ticks
+	}
+}
+
 fn editor_line_count() int {
 	var index: int
 	var count: int
@@ -1034,28 +1061,7 @@ proc draw_file_dialog() {
 		call copy_text_prefix(preview, entry_name, (row_width - 8) / 4)
 		if (entry_is_directory) { call xestring::append(preview, "/") }
 		if (graphics::button_flat(editor_window, panel_x + 4, row_y, row_width, 8, preview, row_color)) {
-			if (entry_is_directory) {
-				call set_text(file_dialog_path, editor_join_path(file_dialog_path, entry_name))
-				call clear_text(file_dialog_selected)
-				file_dialog_scroll = 0
-				file_dialog_last_entry = -1
-			}
-			else {
-				call set_text(file_dialog_selected, entry_name)
-				if (file_dialog_save) {
-					call set_text(file_dialog_name, entry_name)
-					file_dialog_name_focused = true
-					file_dialog_replace_name = true
-				}
-				elseif (file_dialog_last_entry == index && current_ticks - file_dialog_last_ticks <= 450) {
-					file_dialog_last_entry = -1
-					call confirm_file_dialog()
-				}
-				else {
-					file_dialog_last_entry = index
-					file_dialog_last_ticks = current_ticks
-				}
-			}
+			call select_file_dialog_entry(index)
 		}
 		index += 1
 	}
@@ -1087,6 +1093,23 @@ proc draw_file_dialog() {
 	}
 }
 
+proc resolve_dirty_prompt(choice: int) {
+	if (!dirty_prompt_open) { return }
+	if (choice == 1) {
+		dirty_prompt_open = false
+		call save_editor_file()
+	}
+	elseif (choice == 2) {
+		dirty = false
+		call finish_dirty_prompt_action()
+	}
+	else {
+		dirty_prompt_open = false
+		dirty_prompt_action = 0
+		call set_text(editor_status, "Cancelled")
+	}
+}
+
 proc draw_dirty_prompt() {
 	var panel_width: int
 	var panel_x: int
@@ -1100,17 +1123,13 @@ proc draw_dirty_prompt() {
 	call graphics::draw_rect(editor_window, panel_x, panel_y, panel_width, 36, graphics::COLOR_10)
 	call graphics::draw_text_small(editor_window, panel_x + 5, panel_y + 5, "Save changes?", graphics::WHITE)
 	if (graphics::button_flat(editor_window, panel_x + 5, panel_y + 21, 40, 9, "Save", graphics::COLOR_10)) {
-		dirty_prompt_open = false
-		call save_editor_file()
+		call resolve_dirty_prompt(1)
 	}
 	if (graphics::button_flat(editor_window, panel_x + 48, panel_y + 21, 56, 9, "Don't save", graphics::COLOR_1)) {
-		dirty = false
-		call finish_dirty_prompt_action()
+		call resolve_dirty_prompt(2)
 	}
 	if (graphics::button_flat(editor_window, panel_x + panel_width - 48, panel_y + 21, 43, 9, "Cancel", graphics::COLOR_1)) {
-		dirty_prompt_open = false
-		dirty_prompt_action = 0
-		call set_text(editor_status, "Cancelled")
+		call resolve_dirty_prompt(0)
 	}
 }
 

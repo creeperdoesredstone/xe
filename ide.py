@@ -1872,6 +1872,27 @@ class X26IDE(QMainWindow):
 		self.workspace_tabs.setCurrentWidget(self.help_view)
 		self.help_view.focus_search()
 
+	def select_workspace_tool(self, name: str) -> bool:
+		"""Select a host workbench tab by a stable command-line friendly name."""
+		normalized = name.strip().casefold().replace("_", "-").replace(" ", "-")
+		aliases = {
+			"code": 0,
+			"editor": 0,
+			"xe-to-sb3": 1,
+			"converter": 1,
+			"sb3": 1,
+			"image": 2,
+			"image-editor": 2,
+			"image-studio": 2,
+			"help": 3,
+			"docs": 3,
+		}
+		index = aliases.get(normalized)
+		if index is None or index >= self.workspace_tabs.count():
+			return False
+		self.workspace_tabs.setCurrentIndex(index)
+		return True
+
 	def show_find_bar(self, replace: bool):
 		self.find_replace_bar.set_replace_mode(replace)
 		self.find_replace_bar.show()
@@ -2206,12 +2227,28 @@ def main():
 
 	ide = X26IDE()
 	arguments = sys.argv[1:]
-	auto_run = "--run" in arguments
-	file_arguments = [argument for argument in arguments if argument != "--run"]
+	auto_run = False
+	requested_tab: str | None = None
+	file_arguments: list[str] = []
+	index = 0
+	while index < len(arguments):
+		argument = arguments[index]
+		if argument == "--run":
+			auto_run = True
+		elif argument in ("--tab", "--tool") and index + 1 < len(arguments):
+			index += 1
+			requested_tab = arguments[index]
+		elif argument.startswith("--tab=") or argument.startswith("--tool="):
+			requested_tab = argument.split("=", 1)[1]
+		else:
+			file_arguments.append(argument)
+		index += 1
 	if file_arguments:
 		path = Path(file_arguments[0])
 		if path.is_file():
 			ide.load_file(path)
+	if requested_tab is not None:
+		ide.select_workspace_tool(requested_tab)
 	ide.show()
 	if auto_run and ide.current_file is not None:
 		QTimer.singleShot(0, ide.run_code)
