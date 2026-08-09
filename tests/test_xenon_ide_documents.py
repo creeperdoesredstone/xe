@@ -323,7 +323,9 @@ out << ":"
 out << probe_main_count'''
     )
     assert output == "2:1"
-    assert 'draw_text_small(ide_window, center_x - 8, center_y - 2, "main"' in SOURCE
+    assert 'draw_text_small(ide_window, center_x - 8, center_y - 2, "main"' not in SOURCE
+    assert 'if (dx * dx + dy * dy < 81)' in SOURCE
+    assert 'draw_ide_text_clipped(x + 5, y + area_height - 9, "main"' in SOURCE
     assert 'view_script_name[ide_script_cache_index(slot, index)] != "main"' in SOURCE
 
 
@@ -353,13 +355,22 @@ def test_populated_visual_workspace_remains_responsive(tmp_path: Path) -> None:
     assert separator
     modified = before + "visual_mode = true" + after
     modified = modified.replace(
+        "proc ide_rebuild_ring_cache(slot: int, outer_radius: int, inner_radius: int, shell_gap: int, shell_count: int) {",
+        "var performance_ring_rebuilds: int\n"
+        "proc ide_rebuild_ring_cache(slot: int, outer_radius: int, inner_radius: int, shell_gap: int, shell_count: int) {\n"
+        "\tperformance_ring_rebuilds += 1",
+        1,
+    )
+    modified = modified.replace(
         "while (ide_window.state != graphics::WINDOW_CLOSED) {",
         "var performance_frame: int\nperformance_frame = 0\nwhile (performance_frame < 6) {",
         1,
     )
     modified = modified.replace(
         "call graphics::update(ide_window)",
-        "call graphics::update(ide_window)\n\tperformance_frame += 1",
+        "call graphics::update(ide_window)\n"
+        "\tperformance_frame += 1\n"
+        "\tif (performance_frame == 6) { out << performance_ring_rebuilds }",
         1,
     )
     artifact = compile_source(modified, "xenon-ide-visual-performance.xe")
@@ -370,13 +381,16 @@ def test_populated_visual_workspace_remains_responsive(tmp_path: Path) -> None:
     for index in range(64):
         (drive / f"file{index}.xe").write_text("", encoding="utf-8")
     timestamps: list[float] = []
+    output: list[str] = []
     context = RuntimeContext(frame_handler=lambda _frame: timestamps.append(perf_counter()), filesystem_root=drive)
+    context.output_handler = output.append
     context.create_vm(list(artifact.program))
     context.vm.devices._pace_frame = lambda _vm: None
     result = context.vm.run()
 
     assert result.error is None
     assert len(timestamps) == 6
+    assert "".join(output) == "1"
     frame_seconds = (timestamps[-1] - timestamps[1]) / (len(timestamps) - 2)
     assert frame_seconds < 0.030
 

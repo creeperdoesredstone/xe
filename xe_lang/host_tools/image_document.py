@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+import hashlib
+import json
 import os
 from pathlib import Path
 import tempfile
 from typing import Literal, Protocol, runtime_checkable
+import zipfile
 
 from PyQt6.QtCore import QByteArray, QBuffer, QIODevice, QPoint, QRect, QSize, Qt
 from PyQt6.QtGui import QColor, QImage, QImageReader, QPainter, QPen
@@ -297,7 +301,7 @@ class ImageStudioDocument:
 		return True
 
 
-ExportKind = Literal["png", "gif", "sprite-sheet", "xip", "ximg"]
+ExportKind = Literal["png", "gif", "sprite-sheet", "scratch-sprite", "xip", "ximg"]
 
 
 @runtime_checkable
@@ -379,6 +383,9 @@ class QtImageProjectCodec:
 		if kind == "gif":
 			self._save_gif(project, path)
 			return
+		if kind == "scratch-sprite":
+			self._save_scratch_sprite(project, path)
+			return
 		if kind == "ximg":
 			self._save_ximg(project, path)
 			return
@@ -427,6 +434,137 @@ class QtImageProjectCodec:
 		finally:
 			if temporary.exists():
 				temporary.unlink()
+
+	@classmethod
+	def _save_scratch_sprite(cls, project: ImageProject, path: Path) -> None:
+		"""Write a deterministic Scratch 3 sprite with one costume per frame.
+
+		The generated playback stack uses each frame's millisecond duration. Scratch
+		may schedule waits at its own tick rate, so the file preserves the requested
+		timing values without claiming host-clock playback precision.
+		"""
+		costumes: list[dict[str, object]] = []
+		members: dict[str, bytes] = {}
+		for index in range(project.frame_count):
+			payload = cls._png_bytes(project.composite(index))
+			digest = hashlib.md5(payload, usedforsecurity=False).hexdigest()
+			member = f"{digest}.png"
+			members[member] = payload
+			costumes.append(
+				{
+					"assetId": digest,
+					"name": f"Frame {index + 1:03d}",
+					"bitmapResolution": 1,
+					"md5ext": member,
+					"dataFormat": "png",
+					"rotationCenterX": project.width / 2,
+					"rotationCenterY": project.height / 2,
+				}
+			)
+		blocks = cls._scratch_animation_blocks(project)
+		sprite = {
+			"isStage": False,
+			"name": project.name.strip() or "Xenon Animation",
+			"variables": {},
+			"lists": {},
+			"broadcasts": {},
+			"blocks": blocks,
+			"comments": {},
+			"currentCostume": min(project.current_frame, project.frame_count - 1),
+			"costumes": costumes,
+			"sounds": [],
+			"volume": 100,
+			"layerOrder": 1,
+			"visible": True,
+			"x": 0,
+			"y": 0,
+			"size": 100,
+			"direction": 90,
+			"draggable": False,
+			"rotationStyle": "all around",
+		}
+		members["sprite.json"] = json.dumps(
+			sprite,
+			ensure_ascii=False,
+			sort_keys=True,
+			separators=(",", ":"),
+		).encode("utf-8")
+		path.parent.mkdir(parents=True, exist_ok=True)
+		fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+		os.close(fd)
+		temporary = Path(temporary_name)
+		try:
+			with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+				for name in sorted(members):
+					info = zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0))
+					info.compress_type = zipfile.ZIP_DEFLATED
+					info.create_system = 0
+					archive.writestr(info, members[name], compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+			os.replace(temporary, path)
+		finally:
+			if temporary.exists():
+				temporary.unlink()
+
+	@staticmethod
+	def _scratch_animation_blocks(project: ImageProject) -> dict[str, dict[str, object]]:
+		if project.frame_count <= 1:
+			return {}
+		blocks: dict[str, dict[str, object]] = {
+			"xenon_event": {
+				"opcode": "event_whenflagclicked",
+				"next": "xenon_forever",
+				"parent": None,
+				"inputs": {},
+				"fields": {},
+				"shadow": False,
+				"topLevel": True,
+				"x": 24,
+				"y": 24,
+			},
+			"xenon_forever": {
+				"opcode": "control_forever",
+				"next": None,
+				"parent": "xenon_event",
+				"inputs": {"SUBSTACK": [2, "xenon_frame_0000"]},
+				"fields": {},
+				"shadow": False,
+				"topLevel": False,
+			},
+		}
+		for index, duration in enumerate(project.frame_durations_ms):
+			frame_id = f"xenon_frame_{index:04d}"
+			wait_id = f"xenon_wait_{index:04d}"
+			costume_id = f"xenon_costume_{index:04d}"
+			next_frame = f"xenon_frame_{index + 1:04d}" if index + 1 < project.frame_count else None
+			blocks[frame_id] = {
+				"opcode": "looks_switchcostumeto",
+				"next": wait_id,
+				"parent": "xenon_forever" if index == 0 else f"xenon_wait_{index - 1:04d}",
+				"inputs": {"COSTUME": [1, costume_id]},
+				"fields": {},
+				"shadow": False,
+				"topLevel": False,
+			}
+			blocks[costume_id] = {
+				"opcode": "looks_costume",
+				"next": None,
+				"parent": frame_id,
+				"inputs": {},
+				"fields": {"COSTUME": [f"Frame {index + 1:03d}", None]},
+				"shadow": True,
+				"topLevel": False,
+			}
+			seconds = f"{duration / 1000:.3f}".rstrip("0").rstrip(".")
+			blocks[wait_id] = {
+				"opcode": "control_wait",
+				"next": next_frame,
+				"parent": frame_id,
+				"inputs": {"DURATION": [1, [4, seconds]]},
+				"fields": {},
+				"shadow": False,
+				"topLevel": False,
+			}
+		return blocks
 
 	@staticmethod
 	def _portable_palette() -> tuple[QColor, ...]:

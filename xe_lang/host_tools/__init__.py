@@ -6,6 +6,7 @@ the Scratch-compatible runtime.
 """
 
 from .converter import ConverterPane
+from .file_picker import XeSourcePicker, select_xe_source
 from .help_view import HelpPane
 from .image_studio import ImageStudioPane
 from .services import (
@@ -24,5 +25,7 @@ __all__ = [
 	"HelpPane",
 	"ImageStudioPane",
 	"UnavailableConverterService",
+	"XeSourcePicker",
 	"XeSb3ExportService",
+	"select_xe_source",
 ]

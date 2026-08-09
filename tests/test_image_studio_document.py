@@ -1,10 +1,12 @@
 import os
+import json
+import zipfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PyQt6.QtCore import QPoint
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtGui import QColor, QMouseEvent
 from PyQt6.QtWidgets import QApplication
 
 from xe_lang.host_tools.image_document import (
@@ -115,6 +117,29 @@ def test_xip_round_trip_preserves_layers_and_frames(tmp_path):
 	assert loaded.layers[1].opacity == pytest.approx(0.5)
 
 
+def test_scratch_sprite_export_is_deterministic_and_preserves_animation(tmp_path):
+	codec = QtImageProjectCodec()
+	project = ImageProject.blank(5, 4, "Walk")
+	document = ImageStudioDocument(project)
+	document.draw_line(QPoint(0, 0), QPoint(2, 0), QColor("#55ffff"))
+	document.add_frame(copy_current=True)
+	project.frame_durations_ms[:] = [80, 125]
+	document.draw_line(QPoint(1, 1), QPoint(3, 1), QColor("#ff6685"))
+	first = tmp_path / "walk.sprite3"
+	second = tmp_path / "walk-copy.sprite3"
+	codec.export_file(project, first, "scratch-sprite")
+	codec.export_file(project, second, "scratch-sprite")
+	assert first.read_bytes() == second.read_bytes()
+	with zipfile.ZipFile(first) as archive:
+		sprite = json.loads(archive.read("sprite.json"))
+		assert [costume["name"] for costume in sprite["costumes"]] == ["Frame 001", "Frame 002"]
+		assert sprite["blocks"]["xenon_wait_0000"]["inputs"]["DURATION"] == [1, [4, "0.08"]]
+		assert sprite["blocks"]["xenon_wait_0001"]["inputs"]["DURATION"] == [1, [4, "0.125"]]
+		assert sprite["blocks"]["xenon_frame_0000"]["inputs"]["COSTUME"] == [1, "xenon_costume_0000"]
+		assert sprite["blocks"]["xenon_costume_0000"]["fields"]["COSTUME"] == ["Frame 001", None]
+		assert all(costume["md5ext"] in archive.namelist() for costume in sprite["costumes"])
+
+
 def test_image_studio_pane_exposes_all_tools_and_timeline(app):
 	pane = ImageStudioPane()
 	assert set(pane.tool_buttons) == {
@@ -128,6 +153,10 @@ def test_image_studio_pane_exposes_all_tools_and_timeline(app):
 		"select",
 	}
 	assert pane.frame_list.count() == 1
+	assert pane.fps_spin.value() == 10
+	assert pane.brush_size.buttonSymbols() == pane.brush_size.ButtonSymbols.NoButtons
+	assert pane.duration_spin.buttonSymbols() == pane.duration_spin.ButtonSymbols.NoButtons
+	assert pane.brush_stepper.up_button.geometry().center().x() == pane.brush_stepper.down_button.geometry().center().x()
 	pane.add_frame()
 	assert pane.frame_list.count() == 2
 	pane.undo()
@@ -150,4 +179,94 @@ def test_image_studio_pane_exposes_all_tools_and_timeline(app):
 		"O",
 		"M",
 	}
+	pane.close()
+
+
+def test_fps_duration_controls_stay_synchronized(app):
+	pane = ImageStudioPane()
+	pane.fps_spin.setValue(25)
+	pane._set_frame_fps()
+	assert pane.document.project.frame_durations_ms[0] == 40
+	assert pane.duration_spin.value() == 40
+	pane.duration_spin.setValue(125)
+	pane._set_frame_duration()
+	assert pane.fps_spin.value() == 8
+	pane.close()
+
+
+def test_image_studio_normal_and_narrow_layout_keeps_controls_in_bounds(app):
+	pane = ImageStudioPane()
+	pane.show()
+	for width, expected_rect_label in ((1200, "Rect"), (800, "R")):
+		pane.resize(width, 620)
+		app.processEvents()
+		assert pane.tool_buttons["rect"].text() == expected_rect_label
+		for control in (
+			pane.brush_stepper,
+			pane.duration_stepper,
+			pane.fps_stepper,
+			pane.play_button,
+			pane.frame_list,
+		):
+			assert control.isVisibleTo(pane)
+			bottom_right = control.mapTo(pane, control.rect().bottomRight())
+			assert 0 <= bottom_right.x() < pane.width()
+			assert 0 <= bottom_right.y() < pane.height()
+		for stepper in (pane.brush_stepper, pane.duration_stepper, pane.fps_stepper):
+			assert stepper.up_button.geometry().center().x() == stepper.down_button.geometry().center().x()
+			assert stepper.up_button.height() == stepper.down_button.height()
+	pane.close()
+
+
+def test_canvas_empty_surround_pans_and_brush_hover_tracks_grid(app):
+	pane = ImageStudioPane()
+	canvas = pane.canvas
+	canvas.resize(520, 420)
+	canvas.zoom = 2
+	canvas.pan = QPointF()
+	canvas.show()
+	app.processEvents()
+	outside = QPointF(4, 4)
+	press = QMouseEvent(
+		QMouseEvent.Type.MouseButtonPress,
+		outside,
+		outside,
+		Qt.MouseButton.LeftButton,
+		Qt.MouseButton.LeftButton,
+		Qt.KeyboardModifier.NoModifier,
+	)
+	canvas.mousePressEvent(press)
+	assert canvas._panning
+	move_at = QPointF(19, 12)
+	move = QMouseEvent(
+		QMouseEvent.Type.MouseMove,
+		move_at,
+		move_at,
+		Qt.MouseButton.NoButton,
+		Qt.MouseButton.LeftButton,
+		Qt.KeyboardModifier.NoModifier,
+	)
+	canvas.mouseMoveEvent(move)
+	assert canvas.pan == QPointF(15, 8)
+	release = QMouseEvent(
+		QMouseEvent.Type.MouseButtonRelease,
+		move_at,
+		move_at,
+		Qt.MouseButton.LeftButton,
+		Qt.MouseButton.NoButton,
+		Qt.KeyboardModifier.NoModifier,
+	)
+	canvas.mouseReleaseEvent(release)
+	assert not canvas._panning
+	inside = canvas._canvas_origin() + QPointF(3.5 * canvas.zoom, 2.5 * canvas.zoom)
+	hover = QMouseEvent(
+		QMouseEvent.Type.MouseMove,
+		inside,
+		inside,
+		Qt.MouseButton.NoButton,
+		Qt.MouseButton.NoButton,
+		Qt.KeyboardModifier.NoModifier,
+	)
+	canvas.mouseMoveEvent(hover)
+	assert canvas._hover_image_pos == QPoint(3, 2)
 	pane.close()

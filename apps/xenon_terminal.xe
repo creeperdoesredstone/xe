@@ -72,8 +72,10 @@ proc terminal_select_all() {
 }
 
 proc terminal_copy_selection() {
+	var shared_ok: bool
 	if (terminal_selected_all) {
 		call set_terminal_text(terminal_clipboard, terminal_command)
+		shared_ok = os::clipboard_write(terminal_clipboard)
 	}
 }
 
@@ -87,6 +89,11 @@ proc terminal_cut_selection() {
 }
 
 proc terminal_paste_clipboard() {
+	var shared_clipboard: string
+	shared_clipboard = os::clipboard_read()
+	if (xestring::strlen(shared_clipboard) > 0) {
+		call set_terminal_text(terminal_clipboard, shared_clipboard)
+	}
 	if (xestring::strlen(terminal_clipboard) > 0) {
 		if (terminal_selected_all) { call clear_terminal_text(terminal_command) }
 		call xestring::append(terminal_command, terminal_clipboard)

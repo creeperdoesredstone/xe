@@ -255,6 +255,7 @@ proc append_editor_indent() {
 
 proc copy_selection() {
 	var index: int
+	var shared_ok: bool
 	if (editor_has_selection()) {
 		call clear_text(editor_clipboard)
 		index = editor_selection_begin()
@@ -262,6 +263,7 @@ proc copy_selection() {
 			call xestring::append_char(editor_clipboard, editor_text[index])
 			index += 1
 		}
+		shared_ok = os::clipboard_write(editor_clipboard)
 		call set_text(editor_status, "Copied selection")
 	}
 	else {
@@ -281,6 +283,11 @@ proc cut_selection() {
 }
 
 proc paste_clipboard() {
+	var shared_clipboard: string
+	shared_clipboard = os::clipboard_read()
+	if (xestring::strlen(shared_clipboard) > 0) {
+		call set_text(editor_clipboard, shared_clipboard)
+	}
 	if (xestring::strlen(editor_clipboard) > 0) {
 		call replace_editor_selection(editor_clipboard)
 		call set_text(editor_status, "Pasted")

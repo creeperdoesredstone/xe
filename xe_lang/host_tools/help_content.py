@@ -151,10 +151,15 @@ call os::sleep(16)
 call os::close("notes.txt")
 ```
 
+The desktop IDE can expose the computer clipboard through
+`os::clipboard_read()` and `os::clipboard_write(text)`. Its visible System
+clipboard toggle is the permission boundary: disabled reads are empty and writes
+return `false`. Scratch export reports these host-only calls as unsupported.
+
 Use the documented constants and check errors returned by file operations. A virtual
 path must never be treated as permission to modify the host workspace.
 """,
-		("os", "file", "filesystem", "keyboard", "mouse", "volume"),
+		("os", "file", "filesystem", "keyboard", "mouse", "volume", "clipboard"),
 	),
 	HelpTopic(
 		"XAssembly overview",
@@ -206,7 +211,10 @@ VM stage dimensions or the program's framebuffer.
 		"""# Xe → SB3
 
 Choose **Whole workspace** for an application whose entry point is `workspace.xe`,
-or **Active editor** for a single-file experiment. Run **Check compatibility** first.
+**Active editor** for a single-file experiment, or **Choose .xe file** to use the
+read-only Xenon virtual-drive picker. The picker opens a selected source immediately
+on double-click and offers an explicit computer browser for files outside the private
+drive. Run **Check compatibility** first.
 
 An **Exact** result means the pinned VM profile can reproduce the program. A
 **Blocked** result lists the source locations, syscalls, assets, or memory constraints
@@ -223,20 +231,25 @@ Exports are explicit. Compatibility analysis is side-effect free.
 		"""# Image Studio
 
 Use the toolbar for pencil, eraser, fill, eyedropper, line, rectangle, ellipse, and
-selection tools. Wheel over the canvas to zoom; hold the middle mouse button to pan.
+selection tools. Wheel over the canvas to zoom; drag the empty canvas surround with
+the left button, or hold the middle mouse button anywhere, to pan. Pencil and eraser
+show their exact brush footprint under the pointer.
 Layers compose from bottom to top. Frames form a timeline and can be previewed with
-onion skinning or playback.
+onion skinning or playback. Milliseconds and FPS are synchronized per frame.
 
 PNG and JPEG import as one frame. GIF imports its frames when the local Qt image
 plugin supports it. PNG and sprite-sheet export are always checked before writing;
 GIF uses the installed image codec. `.xip` preserves editable layers and frames;
 `.ximg` applies the deterministic 16-colour Scratch/XVM palette and reports any
 format or memory-limit error before replacing an existing destination.
+`.sprite3` flattens each visible frame into a Scratch costume and adds deterministic
+green-flag playback. Requested wait values are preserved, while Scratch may schedule
+them with small live timing variations.
 
 Use the Scratch preview to check the 480×360 target and the indexed preview to catch
 palette/transparency loss before export.
 """,
-		("image", "animation", "layer", "frame", "xip", "ximg", "gif"),
+		("image", "animation", "layer", "frame", "fps", "xip", "ximg", "gif", "sprite3"),
 	),
 	HelpTopic(
 		"Official reference",

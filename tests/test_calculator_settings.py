@@ -241,29 +241,29 @@ class SettingsTests(unittest.TestCase):
 
 	def test_preferences_are_staged_then_applied_atomically(self) -> None:
 		output = self.probe(
-			'''out << os::window_transparency
+			'''out << os::background_id
 out << ","
-staged_transparency = 73
-out << os::window_transparency
+staged_background = 2
+out << os::background_id
 out << ","
-applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, staged_transparency, staged_corners, staged_icons, staged_clock, staged_enabled)
+applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, 0, staged_corners, staged_icons, staged_clock, staged_enabled)
 out << applied
 out << ","
-out << os::window_transparency
+out << os::background_id
 out << ","
-call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
-out << staged_transparency'''
+call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+out << staged_background'''
 		)
-		self.assertEqual("0,0,-1,73,73", output)
+		self.assertEqual("0,0,-1,2,2", output)
 
 	def test_cancel_reload_discards_staged_values(self) -> None:
 		output = self.probe(
 			'''staged_master = 1
-staged_transparency = 99
-call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+staged_background = 2
+call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 out << staged_master
 out << ","
-out << staged_transparency'''
+out << staged_background'''
 		)
 		self.assertEqual("70,0", output)
 
@@ -272,15 +272,19 @@ out << staged_transparency'''
 		self.assertIn("drawer_target_width = 100", self.source)
 		self.assertIn("drawer_eased = ease_menu(drawer_progress)", self.source)
 		self.assertIn("drawer_step = delta_ms * 100 / 200", self.source)
-		self.assertIn("0 opaque - 100 clear", self.source)
+		self.assertNotIn('"Transparency', self.source)
+		self.assertNotIn("graphics::slider(settings_window, control_x, 31, control_width", self.source)
 		self.assertNotIn("active_tab = 0; drawer_open = false", self.source)
 		self.assertNotIn("active_tab = 4; drawer_open = false", self.source)
 		self.assertIn("drawer_surface = graphics::COLOR_7", self.source)
 
 	def test_live_previews_use_staged_values_and_centered_settings_controls(self) -> None:
 		self.assertIn("proc draw_window_preview", self.source)
-		self.assertIn("pattern < staged_transparency", self.source)
 		self.assertIn("call draw_preview_box(preview_x, preview_y, preview_width, preview_height, staged_corners", self.source)
+		self.assertIn("proc draw_palette_background_preview", self.source)
+		self.assertIn("background = settings_preview_background()", self.source)
+		self.assertIn("variant = staged_palette % 3", self.source)
+		self.assertIn("if (staged_background == 2)", self.source)
 		self.assertIn("proc draw_icons_time_preview", self.source)
 		self.assertIn("staged_icons == os::ICON_SMALL", self.source)
 		self.assertIn("staged_clock == os::CLOCK_12_HOUR", self.source)
@@ -288,7 +292,6 @@ out << staged_transparency'''
 		self.assertIn("call draw_centered_button_label", self.source)
 		self.assertIn("pointer_x >= x && pointer_x < x + width", self.source)
 		self.assertIn("os::theme_mode == os::THEME_LIGHT", self.source)
-		self.assertIn("variant = os::palette % 3", self.source)
 
 	def test_preview_frames_change_before_apply_and_stay_clear_of_actions(self) -> None:
 		icons_24 = render_settings_frame(
@@ -308,23 +311,36 @@ out << staged_transparency'''
 		self.assertNotEqual(icon_preview_24, icon_preview_12)
 		self.assertGreaterEqual(len(set(icon_preview_24)), 4)
 
-		window_opaque = render_settings_frame(
+		window_square = render_settings_frame(
 			self.source,
 			(280, 210),
 			2,
-			"staged_transparency = 0\nstaged_corners = os::CORNER_SQUARE",
+			"staged_corners = os::CORNER_SQUARE",
 		)
-		window_clear = render_settings_frame(
+		window_soft = render_settings_frame(
 			self.source,
 			(280, 210),
 			2,
-			"staged_transparency = 100\nstaged_corners = os::CORNER_SOFT",
+			"staged_corners = os::CORNER_SOFT",
 		)
-		window_preview_opaque = frame_crop(window_opaque, 80, 134, 314, 222)
-		window_preview_clear = frame_crop(window_clear, 80, 134, 314, 222)
-		self.assertNotEqual(window_preview_opaque, window_preview_clear)
+		window_preview_square = frame_crop(window_square, 80, 102, 314, 222)
+		window_preview_soft = frame_crop(window_soft, 80, 102, 314, 222)
+		self.assertNotEqual(window_preview_square, window_preview_soft)
+		personal_dark = render_settings_frame(
+			self.source,
+			(280, 210),
+			1,
+			"staged_background = 0\nstaged_palette = 0",
+		)
+		personal_slate = render_settings_frame(
+			self.source,
+			(280, 210),
+			1,
+			"staged_background = 2\nstaged_palette = 2",
+		)
+		self.assertNotEqual(frame_crop(personal_dark, 80, 134, 314, 222), frame_crop(personal_slate, 80, 134, 314, 222))
 		# The action row starts at absolute y=226 for the normal logical window.
-		self.assertEqual({1}, set(frame_crop(window_clear, 80, 222, 314, 226)))
+		self.assertEqual({1}, set(frame_crop(window_soft, 80, 222, 314, 226)))
 
 	def test_previews_render_at_narrow_normal_and_large_sizes(self) -> None:
 		for size in ((180, 130), (280, 210), (400, 300)):
@@ -333,7 +349,15 @@ out << staged_transparency'''
 					self.source,
 					size,
 					2,
-					"staged_transparency = 58\nstaged_corners = os::CORNER_ROUNDED",
+					"staged_corners = os::CORNER_ROUNDED",
+				)
+				self.assertGreater(len(set(frame.indices)), 5)
+			with self.subTest(size=size, tab="personalization"):
+				frame = render_settings_frame(
+					self.source,
+					size,
+					1,
+					"staged_background = 2\nstaged_palette = 2",
 				)
 				self.assertGreater(len(set(frame.indices)), 5)
 			with self.subTest(size=size, tab="icons"):
@@ -350,7 +374,7 @@ out << staged_transparency'''
 			self.source,
 			(280, 210),
 			2,
-			"staged_transparency = 47\nstaged_corners = os::CORNER_SOFT",
+			"staged_corners = os::CORNER_SOFT",
 			OSSettings(theme_mode=1, palette_id=3, background_id=2),
 		)
 		self.assertEqual(PALETTES[3], frame.palette)

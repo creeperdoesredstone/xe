@@ -245,6 +245,8 @@ class DeviceRuntime:
 			SyscallID.APP_OS_MODIFIED_TICKS: self._os_modified_ticks,
 			SyscallID.APP_OS_REVISION: self._os_revision,
 			SyscallID.APP_OS_NORMALIZE_PATH: self._os_normalize_path,
+			SyscallID.APP_OS_CLIPBOARD_READ: self._os_clipboard_read,
+			SyscallID.APP_OS_CLIPBOARD_WRITE: self._os_clipboard_write,
 			SyscallID.APP_COMPILER_CHECK: self._compiler_check,
 			SyscallID.APP_COMPILER_ERROR: self._compiler_error,
 			SyscallID.APP_COMPILER_ERROR_LINE: self._compiler_error_line,
@@ -1483,6 +1485,14 @@ class DeviceRuntime:
 		if args is not None:
 			self._push_string(vm, result, self.files.normalize(self._read_string(vm, args[0])))
 
+	def _os_clipboard_read(self, vm: Any, result: Any) -> None:
+		self._push_string(vm, result, self.os.clipboard_read())
+
+	def _os_clipboard_write(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self._push_bool(vm, self.os.clipboard_write(self._read_string(vm, args[0])))
+
 	def _os_get_music_volume(self, vm: Any, result: Any) -> None:
 		vm.push(self.os.music_volume)
 
@@ -2207,7 +2217,7 @@ class DeviceRuntime:
 			plane_y = mulf(mulf(sine, float_radius), tilt_cos)
 			x = int(subf(mulf(plane_x, roll_cos), mulf(plane_y, roll_sin)))
 			y = int(addf(mulf(plane_x, roll_sin), mulf(plane_y, roll_cos)))
-			depth = int(mulf(mulf(mulf(-sine, float_radius), depth_scale), 100.0))
+			depth = int(mulf(mulf(mulf(sine, float_radius), depth_scale), 100.0))
 			return center_x + x, center_y + y, depth
 
 		slot_components: list[list[tuple[float, float]]] = []

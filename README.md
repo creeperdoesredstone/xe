@@ -17,7 +17,10 @@ converter uses a pinned Scratch VM profile and exports an `.sb3` only when the
 compiled program is exact for that profile; otherwise its optional fallback is an
 explicit `.xbn + .compatibility.json` pair. Image Studio provides layers, frames,
 palette preview, undo/redo, animation playback, and deterministic XIP/XIMG plus
-PNG/GIF/sprite-sheet exports. Help contains searchable Xe/XAssembly basics, app and
+PNG/GIF/sprite-sheet exports. Frame duration and FPS stay synchronized; the canvas
+supports direct pan and a live brush-footprint cursor. Scratch animation export
+produces a deterministic `.sprite3`, while XIMG remains the compact format Xe
+programs can load. Help contains searchable Xe/XAssembly basics, app and
 workbench guidance, and a link to the official language reference. The bundled
 legacy profile currently blocks exact export of current Xe builds because its
 65,536-address memory and syscall set do not yet match the 200,000-address XVM
@@ -30,7 +33,9 @@ Included graphical applications:
   currency values compact safely at narrow widths and equation editing supports
   Ctrl+A/C/X/V.
 - `apps/settings.xe` - staged system preferences with an animated side drawer that
-  pushes the active page right and collapses back to its compact tab.
+  pushes the active page right and collapses back to its compact tab, plus live
+  background, palette, icon, clock, and window-corner previews. Built-in settings
+  windows remain opaque.
 - `apps/xenon_terminal.xe` - tabbed sandboxed terminal with deterministic parsing
   and autocomplete, history, saved commands, a named per-tab ribbon, adjustable
   text, split view, themes, a resource monitor, host-local `date`/`time` commands,
@@ -39,8 +44,8 @@ Included graphical applications:
   safety, exact mine counts, iterative flood reveal, chording, keyboard and visible
   Reveal/Flag controls, timer, restart, and responsive cell sizing.
 - `apps/xenon_music.xe` - tactile vinyl-style XMusic sequencer with three generated
-  demo discs, angular scrubbing, clickable tonearm pause/preview, disc removal, and
-  drag/drop inventory. When a compatible native Qt audio output is available, the
+  demo discs, full-record drag scrubbing, a pivoted S-arm/headshell playback control,
+  disc removal, and drag/drop inventory. When a compatible native Qt audio output is available, the
   host IDE synthesizes the portable note stream; otherwise sequencing remains
   deterministic and silent. The app state stays suitable for a future Scratch audio
   backend.
@@ -58,13 +63,17 @@ Included graphical applications:
   extension-safe rename/delete actions, double-click folder opening, Ctrl/Shift and
   marquee multi-selection, eased wheel/button zoom, shell-wide hover slowdown,
   adjustable orbit speed, always-visible shell growth, and direct shell/folder drag
-  operations.
+  operations. Native and portable render paths share the same stable depth ordering,
+  and cached entries reconcile by filesystem identity after bulk operations.
 
 Xe filesystem apps use a private XenonOS virtual drive by default; they never open
 the repository or current working directory. Deletes are moved to the drive's hidden
 recovery trash instead of being permanently removed.
 The host IDE also persists applied OS preferences in XenonOS's private application
 data, so Settings remains staged while Apply becomes the durable commit point.
+Its visible System clipboard toggle is enabled by default for this host build;
+editor-like apps retain their private in-app clipboard when that bridge is disabled
+or unavailable.
 
 For example: `python ide.py apps/xenon_terminal.xe --run`.
 

@@ -28,6 +28,9 @@ var music_inventory_drag_track: int
 var music_disc_dragging: bool
 var music_disc_drag_origin_x: int
 var music_disc_drag_origin_y: int
+var music_disc_drag_offset_x: int
+var music_disc_drag_offset_y: int
+var music_disc_drag_was_playing: bool
 var music_scrubbing: bool
 var music_resume_after_scrub: bool
 var music_scrub_angle: float
@@ -213,7 +216,8 @@ proc music_select_track(index: int) {
 	music_disc_inserted = false
 	music_playing = false
 	call music_prepare_audio(index)
-	music_disc_inserted = music_audio_available
+	# The note-event sequencer is the portable fallback when native audio is absent.
+	music_disc_inserted = true
 }
 
 proc music_set_playing(value: bool) {
@@ -285,40 +289,96 @@ proc music_fill_disc(center_x: int, center_y: int, radius: int, color: int) {
 proc music_draw_disc(center_x: int, center_y: int, radius: int, track: int, rotation: int) {
 	var groove: int
 	var label_radius: int
-	var marker_x: int
-	var marker_y: int
+	var angle: float
+	var inner_x: int
+	var inner_y: int
+	var outer_x: int
+	var outer_y: int
+	var mark: int
 	call music_fill_disc(center_x, center_y, radius, graphics::COLOR_1)
+	call graphics::draw_circle(music_window, center_x, center_y, radius, graphics::COLOR_7)
 	groove = radius - 3
-	while (groove > 10) {
+	while (groove > radius / 3 + 2) {
 		call graphics::draw_circle(music_window, center_x, center_y, groove, graphics::COLOR_5)
-		groove -= 5
+		groove -= 4
 	}
 	label_radius = radius / 3
 	call music_fill_disc(center_x, center_y, label_radius, music_track_color(track))
 	call graphics::draw_circle(music_window, center_x, center_y, label_radius, graphics::WHITE)
 	call graphics::set_pixel(music_window, center_x, center_y, graphics::WHITE)
-	marker_x = center_x + (int)(math::cos((float)rotation) * (float)(radius - 7))
-	marker_y = center_y + (int)(math::sin((float)rotation) * (float)(radius - 7))
-	call graphics::set_pixel(music_window, marker_x, marker_y, graphics::COLOR_14)
+	# Rotating label print and groove glints make the whole record visibly scrub.
+	angle = (float)rotation
+	inner_x = center_x + (int)(math::cos(angle) * (float)(label_radius / 3))
+	inner_y = center_y + (int)(math::sin(angle) * (float)(label_radius / 3))
+	outer_x = center_x + (int)(math::cos(angle) * (float)(label_radius - 2))
+	outer_y = center_y + (int)(math::sin(angle) * (float)(label_radius - 2))
+	call graphics::draw_line(music_window, inner_x, inner_y, outer_x, outer_y, graphics::COLOR_1)
+	mark = 0
+	while (mark < 3) {
+		angle = (float)(rotation + mark * 120)
+		inner_x = center_x + (int)(math::cos(angle) * (float)(radius - 6))
+		inner_y = center_y + (int)(math::sin(angle) * (float)(radius - 6))
+		outer_x = center_x + (int)(math::cos(angle) * (float)(radius - 3))
+		outer_y = center_y + (int)(math::sin(angle) * (float)(radius - 3))
+		call graphics::draw_line(music_window, inner_x, inner_y, outer_x, outer_y, graphics::COLOR_7)
+		mark += 1
+	}
+}
+
+proc music_draw_empty_platter(center_x: int, center_y: int, radius: int) {
+	call music_fill_disc(center_x, center_y, radius, graphics::COLOR_5)
+	call graphics::draw_circle(music_window, center_x, center_y, radius, graphics::COLOR_7)
+	call graphics::draw_circle(music_window, center_x, center_y, radius - 3, graphics::COLOR_1)
+	call graphics::draw_circle(music_window, center_x, center_y, 3, graphics::COLOR_8)
+	call graphics::set_pixel(music_window, center_x, center_y, graphics::WHITE)
+}
+
+proc music_draw_tonearm(pivot_x: int, pivot_y: int, reader_x: int, reader_y: int, active: bool, hovered: bool) {
+	var arm_color: int
+	var head_color: int
+	var bend_x: int
+	var bend_y: int
+	var offset_x: int
+	var offset_y: int
+	arm_color = graphics::COLOR_7
+	head_color = graphics::COLOR_8
+	if (active) { arm_color = graphics::WHITE }
+	if (hovered) { head_color = graphics::COLOR_10 }
+	bend_x = pivot_x - 4
+	bend_y = pivot_y + 11
+	offset_x = reader_x + 7
+	offset_y = reader_y - 5
+	call music_fill_disc(pivot_x, pivot_y, 4, graphics::COLOR_5)
+	call graphics::draw_circle(music_window, pivot_x, pivot_y, 4, graphics::COLOR_7)
+	call graphics::fill_rect(music_window, pivot_x + 3, pivot_y - 2, 7, 4, graphics::COLOR_5)
+	call graphics::draw_rect(music_window, pivot_x + 3, pivot_y - 2, 7, 4, graphics::COLOR_7)
+	# A compact S-arm: rear pivot, elbow, offset headshell, then stylus.
+	call graphics::draw_line(music_window, pivot_x, pivot_y + 2, bend_x, bend_y, arm_color)
+	call graphics::draw_line(music_window, bend_x, bend_y, offset_x, offset_y, arm_color)
+	call graphics::draw_line(music_window, bend_x + 1, bend_y, offset_x + 1, offset_y, graphics::COLOR_5)
+	call graphics::draw_line(music_window, offset_x, offset_y, reader_x + 2, reader_y - 1, arm_color)
+	call graphics::fill_rect(music_window, reader_x - 4, reader_y - 2, 7, 4, head_color)
+	call graphics::draw_rect(music_window, reader_x - 4, reader_y - 2, 7, 4, graphics::WHITE)
+	call graphics::set_pixel(music_window, reader_x - 3, reader_y + 2, graphics::COLOR_14)
 }
 
 proc music_draw_inventory(x: int, y: int, width: int, height: int) {
 	var row: int
 	var row_y: int
 	call graphics::fill_rect(music_window, x, y, width, height, graphics::COLOR_1)
-	call graphics::draw_rect(music_window, x, y, width, height, graphics::COLOR_8)
-	call graphics::draw_text_small(music_window, x + 4, y + 4, "Disc library", graphics::WHITE)
+	call graphics::draw_line(music_window, x, y, x, y + height - 1, graphics::COLOR_8)
+	call graphics::draw_text_small(music_window, x + 5, y + 4, "DISC LIBRARY", graphics::WHITE)
 	row = 0
 	while (row < MUSIC_TRACK_COUNT) {
 		row_y = y + 13 + row * 18
-		if (graphics::button_flat(music_window, x + 3, row_y, width - 6, 15, music_track_name(row), music_track_color(row))) {
+		if (graphics::button_flat(music_window, x + 4, row_y, width - 8, 15, music_track_name(row), graphics::COLOR_5)) {
 			music_inventory_drag_track = row
 		}
-		call graphics::draw_circle(music_window, x + 10, row_y + 7, 4, graphics::COLOR_1)
-		call graphics::set_pixel(music_window, x + 10, row_y + 7, music_track_color(row))
+		call graphics::draw_circle(music_window, x + 11, row_y + 7, 4, graphics::COLOR_1)
+		call graphics::draw_circle(music_window, x + 11, row_y + 7, 2, music_track_color(row))
 		row += 1
 	}
-	call graphics::draw_text_small(music_window, x + 4, y + height - 10, "Drag a disc to the spindle", graphics::COLOR_7)
+	if (height >= 75) { call graphics::draw_text_small(music_window, x + 5, y + height - 10, "Drag to platter", graphics::COLOR_7) }
 }
 
 call music_build_library()
@@ -335,12 +395,15 @@ music_current_step = 0
 music_inventory_open = false
 music_inventory_drag_track = -1
 music_disc_dragging = false
+music_disc_drag_offset_x = 0
+music_disc_drag_offset_y = 0
+music_disc_drag_was_playing = false
 music_scrubbing = false
 music_resume_after_scrub = false
 music_scrub_angle = 0.0
 music_scrub_velocity = 0
 call music_prepare_audio(0)
-music_disc_inserted = music_audio_available
+music_disc_inserted = true
 
 var music_width: int
 var music_height: int
@@ -351,6 +414,8 @@ var music_inventory_width: int
 var music_inventory_x: int
 var music_reader_x: int
 var music_reader_y: int
+var music_render_disc_x: int
+var music_render_disc_y: int
 var music_pivot_x: int
 var music_pivot_y: int
 var music_pointer_x: int
@@ -367,6 +432,8 @@ var music_light: bool
 var music_play_label: string
 var music_status_label: string
 var music_status_width: int
+var music_reader_hovered: bool
+var music_deck_width: int
 
 music_window.x = 82
 music_window.y = 48
@@ -387,67 +454,83 @@ while (music_window.state != graphics::WINDOW_CLOSED) {
 	if (!music_window.is_minimized()) {
 		music_width = graphics::content_width(music_window)
 		music_height = graphics::content_height(music_window)
+		music_pointer_x = graphics::pointer_x(music_window)
+		music_pointer_y = graphics::pointer_y(music_window)
 		music_light = os::theme_mode == os::THEME_LIGHT
 		music_inventory_width = 0
 		if (music_inventory_open && music_width >= 210) {
 			music_inventory_width = music_width / 3
 			if (music_inventory_width > 104) { music_inventory_width = 104 }
 		}
-		music_center_x = (music_width - music_inventory_width) / 2
+		music_deck_width = music_width - music_inventory_width
+		music_center_x = music_deck_width / 2
 		music_center_y = 24 + (music_height - 48) / 2
 		music_radius = (music_height - 58) / 2
-		if ((music_width - music_inventory_width - 36) / 2 < music_radius) { music_radius = (music_width - music_inventory_width - 36) / 2 }
-		if (music_radius < 18) { music_radius = 18 }
+		if ((music_deck_width - 36) / 2 < music_radius) { music_radius = (music_deck_width - 36) / 2 }
+		if (music_radius < 10) { music_radius = 10 }
 		if (music_radius > 64) { music_radius = 64 }
 		music_reader_x = music_center_x + music_radius * 2 / 3
 		music_reader_y = music_center_y - music_radius * 2 / 3
 		music_pivot_x = music_center_x + music_radius + 18
-		if (music_pivot_x > music_width - music_inventory_width - 8) { music_pivot_x = music_width - music_inventory_width - 8 }
+		if (music_pivot_x > music_deck_width - 8) { music_pivot_x = music_deck_width - 8 }
 		music_pivot_y = music_center_y - music_radius + 2
+		music_reader_hovered = music_disc_inserted && music_distance_squared(music_pointer_x, music_pointer_y, music_reader_x, music_reader_y) <= 49
+		music_render_disc_x = music_center_x
+		music_render_disc_y = music_center_y
+		if (music_disc_dragging) {
+			music_render_disc_x = music_pointer_x + music_disc_drag_offset_x
+			music_render_disc_y = music_pointer_y + music_disc_drag_offset_y
+		}
 		music_rotation = 0
 		if (music_track_totals[music_track] > 0) { music_rotation = music_playhead_ms * 360 / music_track_totals[music_track] }
 
 		if (graphics::button_flat(music_window, 4, 3, 54, 8, "Library", graphics::COLOR_8)) { music_inventory_open = !music_inventory_open }
-		if (music_disc_inserted) {
-			call graphics::draw_text_small(music_window, 64, 5, music_track_name(music_track), music_track_color(music_track))
-		}
-		else { call graphics::draw_text_small(music_window, 64, 5, "No .xmusic discs", graphics::COLOR_7) }
-		music_play_label = "Preview"
+		if (music_disc_inserted) { call graphics::draw_text_small(music_window, 64, 5, music_track_name(music_track), music_track_color(music_track)) }
+		else { call graphics::draw_text_small(music_window, 64, 5, "Platter empty", graphics::COLOR_7) }
+		music_play_label = "READY"
 		if (music_playing) { music_play_label = "Pause" }
-		call graphics::draw_text_small(music_window, music_width - 38, 5, music_play_label, graphics::COLOR_7)
+		if (music_deck_width >= 150) { call graphics::draw_text_small(music_window, music_deck_width - 38, 5, music_play_label, graphics::COLOR_7) }
 
+		if (music_height >= 48) {
+			call graphics::fill_rect(music_window, 3, 14, music_deck_width - 6, music_height - 38, graphics::COLOR_1)
+			call graphics::draw_rect(music_window, 3, 14, music_deck_width - 6, music_height - 38, graphics::COLOR_5)
+		}
+		call music_draw_empty_platter(music_center_x, music_center_y, music_radius)
 		if (music_disc_inserted) {
-			call music_draw_disc(music_center_x, music_center_y, music_radius, music_track, music_rotation)
-			call graphics::draw_circle(music_window, music_pivot_x, music_pivot_y, 3, graphics::COLOR_8)
-			call graphics::draw_line(music_window, music_pivot_x, music_pivot_y, music_reader_x, music_reader_y, graphics::COLOR_7)
-			call graphics::fill_rect(music_window, music_reader_x - 3, music_reader_y - 3, 7, 7, graphics::COLOR_8)
-			call graphics::draw_rect(music_window, music_reader_x - 3, music_reader_y - 3, 7, 7, graphics::WHITE)
+			if (!music_disc_dragging) { call music_draw_disc(music_render_disc_x, music_render_disc_y, music_radius, music_track, music_rotation) }
+			if (music_disc_dragging) { call music_draw_tonearm(music_pivot_x, music_pivot_y, music_pivot_x - 8, music_pivot_y + 15, false, false) }
+			else { call music_draw_tonearm(music_pivot_x, music_pivot_y, music_reader_x, music_reader_y, music_playing, music_reader_hovered) }
 			music_current_note = music_notes[music_track * MUSIC_STEPS_PER_TRACK + music_current_step]
-			call graphics::draw_text_small(music_window, 5, music_height - 19, "Note", graphics::COLOR_7)
-			if (music_current_note == 0) { call graphics::draw_text_small(music_window, 26, music_height - 19, "rest", graphics::COLOR_8) }
-			else { call graphics::draw_int_small(music_window, 26, music_height - 19, music_current_note, music_track_color(music_track)) }
+			if (music_deck_width >= 220) {
+				call graphics::draw_text_small(music_window, 5, music_height - 19, "Note", graphics::COLOR_7)
+				if (music_current_note == 0) { call graphics::draw_text_small(music_window, 26, music_height - 19, "rest", graphics::COLOR_8) }
+				else { call graphics::draw_int_small(music_window, 26, music_height - 19, music_current_note, music_track_color(music_track)) }
+			}
 		}
 		else {
-			call graphics::draw_circle(music_window, music_center_x, music_center_y, 3, graphics::COLOR_7)
-			call graphics::draw_text_small(music_window, music_center_x - 28, music_center_y + 10, "Open Library", graphics::COLOR_7)
+			call music_draw_tonearm(music_pivot_x, music_pivot_y, music_pivot_x - 8, music_pivot_y + 15, false, false)
+			if (music_deck_width >= 90) { call graphics::draw_text_small(music_window, music_center_x - 26, music_center_y + 10, "Choose a disc", graphics::COLOR_7) }
 		}
 
 		music_total = music_track_totals[music_track]
 		music_progress_width = 0
-		if (music_total > 0) { music_progress_width = (music_width - 10) * music_playhead_ms / music_total }
-		call graphics::fill_rect(music_window, 5, music_height - 9, music_width - 10, 3, graphics::COLOR_5)
+		if (music_total > 0) { music_progress_width = (music_deck_width - 10) * music_playhead_ms / music_total }
+		call graphics::fill_rect(music_window, 5, music_height - 9, music_deck_width - 10, 3, graphics::COLOR_5)
 		call graphics::fill_rect(music_window, 5, music_height - 9, music_progress_width, 3, music_track_color(music_track))
 		music_status_label = "XMusic note playback"
+		if (!music_disc_inserted) { music_status_label = "Library: drag a disc here" }
+		elseif (music_disc_dragging) { music_status_label = "Lifted - release outside to shelve" }
+		elseif (music_scrubbing) { music_status_label = "Scrubbing vinyl" }
+		elseif (music_reader_hovered && music_playing) { music_status_label = "Stylus: click to pause" }
+		elseif (music_reader_hovered) { music_status_label = "Stylus: click to play" }
 		music_status_width = music_small_text_width(music_status_label)
-		call graphics::draw_text_small(music_window, (music_width - music_status_width) / 2, music_height - 19, music_status_label, graphics::COLOR_8)
+		if (music_status_width < music_deck_width - 8) { call graphics::draw_text_small(music_window, (music_deck_width - music_status_width) / 2, music_height - 19, music_status_label, graphics::COLOR_8) }
 
 		if (music_inventory_open && music_inventory_width > 0) {
 			music_inventory_x = music_width - music_inventory_width
 			call music_draw_inventory(music_inventory_x, 13, music_inventory_width - 3, music_height - 27)
 		}
 
-		music_pointer_x = graphics::pointer_x(music_window)
-		music_pointer_y = graphics::pointer_y(music_window)
 		if (graphics::mouse_pressed()) {
 			if (music_inventory_open && music_inventory_width > 0 && music_pointer_x >= music_inventory_x) {
 				var inventory_row: int
@@ -458,6 +541,9 @@ while (music_window.state != graphics::WINDOW_CLOSED) {
 				music_disc_dragging = true
 				music_disc_drag_origin_x = music_pointer_x
 				music_disc_drag_origin_y = music_pointer_y
+				music_disc_drag_offset_x = music_center_x - music_pointer_x
+				music_disc_drag_offset_y = music_center_y - music_pointer_y
+				music_disc_drag_was_playing = music_playing
 				call music_set_playing(false)
 			}
 			elseif (music_disc_inserted && music_distance_squared(music_pointer_x, music_pointer_y, music_reader_x, music_reader_y) <= 36) {
@@ -485,10 +571,12 @@ while (music_window.state != graphics::WINDOW_CLOSED) {
 			}
 			if (music_disc_dragging) {
 				music_drag_distance = music_distance_squared(music_pointer_x, music_pointer_y, music_disc_drag_origin_x, music_disc_drag_origin_y)
-				if (music_drag_distance >= 64) {
+				if (music_distance_squared(music_pointer_x + music_disc_drag_offset_x, music_pointer_y + music_disc_drag_offset_y, music_center_x, music_center_y) > (music_radius + 4) * (music_radius + 4)) {
+					call music_set_playing(false)
 					music_disc_inserted = false
 					music_inventory_open = true
 				}
+				else { call music_set_playing(music_disc_drag_was_playing) }
 				music_disc_dragging = false
 			}
 			if (music_inventory_drag_track >= 0) {
@@ -500,7 +588,7 @@ while (music_window.state != graphics::WINDOW_CLOSED) {
 			}
 		}
 		if (music_inventory_drag_track >= 0) { call music_draw_disc(music_pointer_x, music_pointer_y, 10, music_inventory_drag_track, 0) }
-		if (music_disc_dragging) { call music_draw_disc(music_pointer_x, music_pointer_y, 12, music_track, music_rotation) }
+		if (music_disc_dragging) { call music_draw_disc(music_pointer_x + music_disc_drag_offset_x, music_pointer_y + music_disc_drag_offset_y, music_radius, music_track, music_rotation) }
 
 		music_key = graphics::read_key()
 		while (music_key != 0) {

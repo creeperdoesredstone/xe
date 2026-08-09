@@ -1398,6 +1398,8 @@ class VMWorkerThread(QThread):
 	vm_ready = pyqtSignal(object)
 	output_ready = pyqtSignal(str)
 	input_requested = pyqtSignal(object, object)
+	clipboard_read_requested = pyqtSignal(object, object)
+	clipboard_write_requested = pyqtSignal(str, object, object)
 	audio_state = pyqtSignal(object)
 
 	def __init__(self, filename: str, code: str, context: RuntimeContext):
@@ -1429,11 +1431,31 @@ class VMWorkerThread(QThread):
 						return ""
 				return holder.get("value", "")
 
+			def clipboard_read_handler() -> str:
+				ready = threading.Event()
+				holder: dict[str, str] = {}
+				self.clipboard_read_requested.emit(ready, holder)
+				while not ready.wait(0.05):
+					if self.context.cancel_event.is_set() or self.isInterruptionRequested():
+						return ""
+				return holder.get("value", "")
+
+			def clipboard_write_handler(text: str) -> bool:
+				ready = threading.Event()
+				holder: dict[str, bool] = {}
+				self.clipboard_write_requested.emit(text, ready, holder)
+				while not ready.wait(0.05):
+					if self.context.cancel_event.is_set() or self.isInterruptionRequested():
+						return False
+				return bool(holder.get("written", False))
+
 			self.context.output_handler = output_handler
 			self.context.input_handler = input_handler
 			self.context.frame_handler = frame_handler
 			self.context.vm_ready_handler = self.vm_ready.emit
 			self.context.audio_handler = self.audio_state.emit
+			self.context.clipboard_read_handler = clipboard_read_handler
+			self.context.clipboard_write_handler = clipboard_write_handler
 			result, error, asm = run(self.filename, self.code, self.context)
 
 			self.execution_finished.emit(result, error, asm or "")
@@ -1612,6 +1634,14 @@ class X26IDE(QMainWindow):
 			toolbar_layout.addWidget(btn)
 
 		toolbar_layout.addStretch()
+		self.system_clipboard_toggle = QCheckBox("System clipboard")
+		self.system_clipboard_toggle.setChecked(True)
+		self.system_clipboard_toggle.setToolTip(
+			"Allow Xe programs to read and write the computer clipboard. "
+			"This host-only bridge is not exported to Scratch."
+		)
+		self.system_clipboard_toggle.setAccessibleName("Enable system clipboard bridge")
+		toolbar_layout.addWidget(self.system_clipboard_toggle)
 		toolbar_layout.addWidget(QLabel("Theme:"))
 
 		self.theme_dropdown = QComboBox()
@@ -1799,6 +1829,7 @@ class X26IDE(QMainWindow):
 		self.editor.line_number_fg = QColor(theme["comment"])
 		is_light = QColor(theme["background"]).lightness() > 145
 		warning_color = "#8a5800" if is_light else "#e8b967"
+		disabled_surface = "#c5ccda" if is_light else "#334057"
 		stylesheet = f"""
 			QMainWindow {{ background-color: {theme['background']}; color: {theme['foreground']}; }}
 			QWidget {{ background-color: {theme['background']}; color: {theme['foreground']}; }}
@@ -1812,10 +1843,12 @@ class X26IDE(QMainWindow):
 			QPushButton:focus, QToolButton:focus, QComboBox:focus, QLineEdit:focus, QListWidget:focus {{ border: 1px solid {theme['keyword']}; }}
 			QPushButton#PrimaryButton {{ background-color: {theme['keyword']}; color: {theme['background']}; }}
 			QPushButton#PrimaryButton:hover {{ background-color: {theme['button_hover']}; }}
+			QPushButton#PrimaryButton:disabled {{ background-color: {disabled_surface}; color: {theme['comment']}; border-color: transparent; }}
 			QPushButton#SecondaryButton {{ border: 1px solid #47556d; }}
 			QToolButton {{ background-color: transparent; color: {theme['foreground']}; border: 1px solid transparent; border-radius: 4px; padding: 5px 7px; }}
 			QToolButton:hover {{ background-color: {theme['button']}; }}
 			QToolButton:checked {{ background-color: {theme['button']}; border-color: {theme['keyword']}; }}
+			QPushButton:disabled, QToolButton:disabled {{ color: {theme['comment']}; border-color: transparent; }}
 			QPlainTextEdit {{ background-color: {theme['background']}; color: {theme['foreground']}; border: 1px solid #555; }}
 			QTextEdit, QTextBrowser {{ background-color: {theme['background']}; color: {theme['foreground']}; border: 1px solid #39445a; border-radius: 4px; }}
 			QLineEdit, QComboBox, QSpinBox {{ background-color: {theme['output_bg']}; color: {theme['foreground']}; border: 1px solid #39445a; border-radius: 4px; padding: 5px 7px; min-height: 20px; }}
@@ -2152,6 +2185,28 @@ class X26IDE(QMainWindow):
 		self.input_line.clear()
 		self.input_line.hide()
 
+	@pyqtSlot(object, object)
+	def read_system_clipboard(self, ready: threading.Event, holder: dict[str, str]) -> None:
+		holder["value"] = (
+			QApplication.clipboard().text()
+			if self.system_clipboard_toggle.isChecked()
+			else ""
+		)
+		ready.set()
+
+	@pyqtSlot(str, object, object)
+	def write_system_clipboard(
+		self,
+		text: str,
+		ready: threading.Event,
+		holder: dict[str, bool],
+	) -> None:
+		enabled = self.system_clipboard_toggle.isChecked()
+		if enabled:
+			QApplication.clipboard().setText(text)
+		holder["written"] = enabled
+		ready.set()
+
 	def run_code(self):
 		self.workspace_tabs.setCurrentWidget(self.code_tab)
 		code = self.editor.toPlainText()
@@ -2177,6 +2232,8 @@ class X26IDE(QMainWindow):
 		self.worker.vm_ready.connect(self.graphics_view.set_active_vm)
 		self.worker.output_ready.connect(self.append_output)
 		self.worker.input_requested.connect(self.request_program_input)
+		self.worker.clipboard_read_requested.connect(self.read_system_clipboard)
+		self.worker.clipboard_write_requested.connect(self.write_system_clipboard)
 		self.worker.audio_state.connect(self.audio_engine.update_state)
 		self.worker.execution_finished.connect(self.handle_execution_finished)
 

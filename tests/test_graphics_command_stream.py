@@ -204,10 +204,34 @@ def test_negative_tilt_keeps_front_back_depth_and_projection_stable() -> None:
 	assert negative_values == positive_values
 
 
+def test_positive_orbit_sine_is_the_near_half_of_the_camera() -> None:
+	context, words = _scene(tilt=70, roll=0, rotation=0)
+	memory = context.vm.data_memory
+	shell_table = STREAM + gc.HEADER_WORDS + gc.ORBIT_WORDS
+	item_table = shell_table + gc.ORBIT_SHELL_WORDS
+	memory[shell_table + gc.ORBIT_SHELL_PHASE_OFFSET] = 90
+	memory[item_table + gc.ORBIT_ITEM_DIRECTORY_OFFSET] = 1
+	memory[item_table + gc.ORBIT_ITEM_WORDS + gc.ORBIT_ITEM_DIRECTORY_OFFSET] = 0
+	context.vm.devices.graphics.clear_both(0)
+	assert _call(context, words) >= 0
+	depths = tuple(_signed(value) for value in memory[OUT_DEPTH:OUT_DEPTH + 2])
+	assert depths[0] > 0
+	assert depths[1] < 0
+	assert tuple(memory[DEPTH_ORDER:DEPTH_ORDER + 2]) == (1, 0)
+	near_highlight = (memory[OUT_X] - 2, memory[OUT_Y] - 2)
+	assert (near_highlight[0] - 120) ** 2 + (near_highlight[1] - 90) ** 2 < 18 ** 2
+	pixels = _back_pixels(context)
+	assert pixels[near_highlight[1] * context.vm.devices.graphics.width + near_highlight[0]] == 15
+
+
 def test_drag_tilt_sequence_never_reverses_occlusion_and_highlight_is_pixel_fixed() -> None:
 	context, words = _scene(tilt=70, roll=31, rotation=-119)
 	memory = context.vm.data_memory
+	memory[SELECTED:SELECTED + 2] = [0, 0]
 	command = STREAM + gc.HEADER_WORDS
+	item_table = command + gc.ORBIT_WORDS + gc.ORBIT_SHELL_WORDS
+	memory[item_table + gc.ORBIT_ITEM_WORDS + gc.ORBIT_ITEM_DIRECTORY_OFFSET] = 0
+	memory[item_table + gc.ORBIT_ITEM_WORDS + gc.ORBIT_ITEM_CHILD_COUNT_OFFSET] = 0
 	width = context.vm.devices.graphics.width
 	expected_highlight = (120 - 18 // 2, 90 - 18 // 2)
 	positive: dict[int, tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]] = {}

@@ -268,6 +268,8 @@ OS_SPEC = LibrarySpec(
 		_builtin("modified_ticks", BuiltInID.OS_MODIFIED_TICKS, ("string",), "int", SyscallID.APP_OS_MODIFIED_TICKS),
 		_builtin("revision", BuiltInID.OS_REVISION, (), "int", SyscallID.APP_OS_REVISION),
 		_builtin("normalize_path", BuiltInID.OS_NORMALIZE_PATH, ("string",), "string", SyscallID.APP_OS_NORMALIZE_PATH),
+		_builtin("clipboard_read", BuiltInID.OS_CLIPBOARD_READ, (), "string", SyscallID.APP_OS_CLIPBOARD_READ),
+		_builtin("clipboard_write", BuiltInID.OS_CLIPBOARD_WRITE, ("string",), "bool", SyscallID.APP_OS_CLIPBOARD_WRITE),
 		_builtin(
 			"apply_preferences",
 			BuiltInID.OS_APPLY_PREFERENCES,

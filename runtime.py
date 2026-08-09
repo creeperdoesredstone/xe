@@ -20,6 +20,8 @@ class RuntimeContext:
 		input_handler=None,
 		request_handler=None,
 		audio_handler=None,
+		clipboard_read_handler=None,
+		clipboard_write_handler=None,
 		memory_words: int = DEFAULT_DATA_WORDS,
 	) -> None:
 		self.semantic = SemanticAnalyzer()
@@ -29,6 +31,12 @@ class RuntimeContext:
 		self.input_handler = input_handler
 		self.request_handler = request_handler
 		self.audio_handler = audio_handler
+		self.clipboard_read_handler = clipboard_read_handler
+		self.clipboard_write_handler = clipboard_write_handler
+		self.os_device.set_clipboard_handlers(
+			self.clipboard_read_handler,
+			self.clipboard_write_handler,
+		)
 		self.memory_words = memory_words
 		self.filesystem_root = Path(filesystem_root).resolve() if filesystem_root is not None else None
 		self.cancel_event = threading.Event()
@@ -49,6 +57,10 @@ class RuntimeContext:
 
 	def create_vm(self, program: list[int]) -> VM:
 		self.cancel_event.clear()
+		self.os_device.set_clipboard_handlers(
+			self.clipboard_read_handler,
+			self.clipboard_write_handler,
+		)
 		self.vm = VM(
 			program,
 			output_handler=self.output_handler,

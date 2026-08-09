@@ -28,9 +28,11 @@ from .services import (
 	XeSb3ExportService,
 	load_default_converter_service,
 )
+from .file_picker import select_xe_source
 
 
 RequestProvider = Callable[[str], ConversionRequest]
+SourcePicker = Callable[[QWidget], Path | None]
 
 
 class ConverterPane(QWidget):
@@ -40,11 +42,14 @@ class ConverterPane(QWidget):
 		self,
 		service: XeSb3ExportService | None = None,
 		request_provider: RequestProvider | None = None,
+		source_picker: SourcePicker | None = None,
 		parent: QWidget | None = None,
 	):
 		super().__init__(parent)
 		self.service = service or load_default_converter_service()
 		self.request_provider = request_provider or self._empty_request
+		self.source_picker = source_picker or select_xe_source
+		self.selected_source_path: Path | None = None
 		self.last_report: ConversionReport | None = None
 		self._busy = False
 		self._build_ui()
@@ -90,11 +95,23 @@ class ConverterPane(QWidget):
 		self.scope_combo = QComboBox()
 		self.scope_combo.addItem("Active editor", "active")
 		self.scope_combo.addItem("Whole workspace", "workspace")
+		self.scope_combo.addItem("Choose .xe file", "file")
 		self.scope_combo.setAccessibleName("Conversion scope")
-		self.scope_combo.currentIndexChanged.connect(self.invalidate)
+		self.scope_combo.currentIndexChanged.connect(self._scope_changed)
 		source_row.addWidget(source_label)
 		source_row.addWidget(self.scope_combo, 1)
+		self.choose_source_button = QPushButton("Choose file…")
+		self.choose_source_button.setObjectName("SecondaryButton")
+		self.choose_source_button.setToolTip("Open the Xenon virtual-drive file picker")
+		self.choose_source_button.clicked.connect(self.choose_source_file)
+		self.choose_source_button.hide()
+		source_row.addWidget(self.choose_source_button)
 		settings_layout.addLayout(source_row)
+		self.source_path_label = QLabel("No .xe file selected")
+		self.source_path_label.setObjectName("MutedText")
+		self.source_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+		self.source_path_label.hide()
+		settings_layout.addWidget(self.source_path_label)
 
 		profile_row = QHBoxLayout()
 		profile_label = QLabel("Profile")
@@ -173,7 +190,43 @@ class ConverterPane(QWidget):
 	def _scope(self) -> str:
 		return str(self.scope_combo.currentData())
 
+	def _scope_changed(self) -> None:
+		is_file = self._scope() == "file"
+		self.choose_source_button.setVisible(is_file)
+		self.source_path_label.setVisible(is_file)
+		self.invalidate()
+
+	def choose_source_file(self) -> None:
+		path = self.source_picker(self)
+		if path is None:
+			return
+		candidate = Path(path).resolve()
+		if not candidate.is_file() or candidate.suffix.casefold() != ".xe":
+			self.selected_source_path = None
+			self.source_path_label.setText("Select an existing .xe source file")
+			self.invalidate()
+			return
+		self.selected_source_path = candidate
+		self.source_path_label.setText(str(candidate))
+		self.source_path_label.setToolTip(str(candidate))
+		self.invalidate()
+
 	def _request(self) -> ConversionRequest:
+		if self._scope() == "file":
+			path = self.selected_source_path
+			if path is None:
+				return ConversionRequest(scope="active", source_text="")
+			try:
+				source = path.read_text(encoding="utf-8")
+			except (OSError, UnicodeError):
+				source = ""
+			return ConversionRequest(
+				scope="active",
+				source_text=source,
+				source_path=path,
+				workspace_root=path.parent,
+				profile=self.profile_field.text(),
+			)
 		request = self.request_provider(self._scope())
 		if request.profile != self.profile_field.text():
 			request = ConversionRequest(

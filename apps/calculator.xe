@@ -793,8 +793,10 @@ proc calculator_select_all() {
 }
 
 proc calculator_copy_selection() {
+	var shared_ok: bool
 	if (calculator_selected_all) {
 		call set_calculator_text(calculator_clipboard, expression)
+		shared_ok = os::clipboard_write(calculator_clipboard)
 	}
 }
 
@@ -808,6 +810,11 @@ proc calculator_cut_selection() {
 }
 
 proc calculator_paste_clipboard() {
+	var shared_clipboard: string
+	shared_clipboard = os::clipboard_read()
+	if (xestring::strlen(shared_clipboard) > 0) {
+		call set_calculator_text(calculator_clipboard, shared_clipboard)
+	}
 	if (xestring::strlen(calculator_clipboard) > 0) {
 		call prepare_calculator_insert(expression)
 		call xestring::append(expression, calculator_clipboard)

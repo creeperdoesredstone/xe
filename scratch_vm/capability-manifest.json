@@ -1,6 +1,6 @@
 {
   "abi": {
-    "known_syscall_count": 211,
+    "known_syscall_count": 213,
     "missing_by_capability": {
       "app.audio": [
         {
@@ -757,6 +757,16 @@
           "capability": "app.os",
           "id": 252,
           "name": "APP_OS_DAY"
+        },
+        {
+          "capability": "app.os",
+          "id": 292,
+          "name": "APP_OS_CLIPBOARD_READ"
+        },
+        {
+          "capability": "app.os",
+          "id": 293,
+          "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
       "app.string": [
@@ -1653,6 +1663,16 @@
         "capability": "app.compiler",
         "id": 291,
         "name": "APP_COMPILER_RUN_WORKSPACE"
+      },
+      {
+        "capability": "app.os",
+        "id": 292,
+        "name": "APP_OS_CLIPBOARD_READ"
+      },
+      {
+        "capability": "app.os",
+        "id": 293,
+        "name": "APP_OS_CLIPBOARD_WRITE"
       }
     ],
     "profile_supported_syscalls": [
@@ -1900,7 +1920,7 @@
   },
   "apps": {
     "calculator.xe": {
-      "artifact_hash": "10745d983acaec7423d12ff3c1567080dcdd1c2062f1502b0f05d9f97b82cf4f",
+      "artifact_hash": "b6a547d61f6688a655ccf6926eb86333e8acd3d9d8110584e82c776f29ad01df",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -2281,6 +2301,26 @@
             "id": 246,
             "name": "APP_GRAPHICS_MODIFIERS"
           }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_OS_CLIPBOARD_READ (292) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.os",
+            "id": 292,
+            "name": "APP_OS_CLIPBOARD_READ"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_OS_CLIPBOARD_WRITE (293) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.os",
+            "id": 293,
+            "name": "APP_OS_CLIPBOARD_WRITE"
+          }
         }
       ],
       "required_capabilities": [
@@ -2517,13 +2557,23 @@
           "capability": "app.graphics",
           "id": 246,
           "name": "APP_GRAPHICS_MODIFIERS"
+        },
+        {
+          "capability": "app.os",
+          "id": 292,
+          "name": "APP_OS_CLIPBOARD_READ"
+        },
+        {
+          "capability": "app.os",
+          "id": 293,
+          "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
-      "source_hash": "d939b8dcf21e421179941f90463b0309d9b8c21738c6ba9134ce5d7e6bf8fbc1",
+      "source_hash": "48a03a80defa4f3093e8e91656ce4f8df641a3f42ee6fad8b6c5542bcb7180a7",
       "status": "blocked"
     },
     "file_explorer.xe": {
-      "artifact_hash": "b088cded3df297e42a1be9abb99dd4f13a744cab9ed8a37cad157010eea0bdc1",
+      "artifact_hash": "3d3a669d2636e1c007141730270205fc846b6849a0f15f7c7f2893bc46378a2b",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -2947,12 +2997,42 @@
         },
         {
           "code": "unsupported-syscall",
+          "message": "APP_OS_REVISION (265) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.filesystem",
+            "id": 265,
+            "name": "APP_OS_REVISION"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
           "message": "APP_GRAPHICS_DRAW_COMMANDS (276) is not implemented by this Scratch VM profile",
           "severity": "error",
           "syscall": {
             "capability": "app.graphics",
             "id": 276,
             "name": "APP_GRAPHICS_DRAW_COMMANDS"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_OS_CLIPBOARD_READ (292) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.os",
+            "id": 292,
+            "name": "APP_OS_CLIPBOARD_READ"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_OS_CLIPBOARD_WRITE (293) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.os",
+            "id": 293,
+            "name": "APP_OS_CLIPBOARD_WRITE"
           }
         }
       ],
@@ -3192,16 +3272,31 @@
           "name": "APP_GRAPHICS_DRAW_CHAR_STYLED"
         },
         {
+          "capability": "app.filesystem",
+          "id": 265,
+          "name": "APP_OS_REVISION"
+        },
+        {
           "capability": "app.graphics",
           "id": 276,
           "name": "APP_GRAPHICS_DRAW_COMMANDS"
+        },
+        {
+          "capability": "app.os",
+          "id": 292,
+          "name": "APP_OS_CLIPBOARD_READ"
+        },
+        {
+          "capability": "app.os",
+          "id": 293,
+          "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
-      "source_hash": "5382c253878f4e726e671afd00aa4ceab6724e0e1c385e9eef03ac3b837135ea",
+      "source_hash": "10048a35220c4b2270e3ca9fdba4b9136d5894be4e60e6100ea1ea8458c8dc8f",
       "status": "blocked"
     },
     "minesweeper.xe": {
-      "artifact_hash": "be4269437f58d24f3961fc9116f45b75d6aa640b3ad281c3f21693cca25242a9",
+      "artifact_hash": "27f4e432ea051ea79ceae3c56c2aa2c941b4e72634de6fe0cdd6eaac2ddfd8e3",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -3241,6 +3336,26 @@
             "capability": "app.graphics",
             "id": 105,
             "name": "APP_GRAPHICS_SET_PIXEL"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_DRAW_CIRCLE (106) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 106,
+            "name": "APP_GRAPHICS_DRAW_CIRCLE"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_DRAW_LINE (107) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 107,
+            "name": "APP_GRAPHICS_DRAW_LINE"
           }
         },
         {
@@ -3385,6 +3500,16 @@
         },
         {
           "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_CHAR_ADVANCE (209) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 209,
+            "name": "APP_GRAPHICS_CHAR_ADVANCE"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
           "message": "APP_GRAPHICS_RIGHT_MOUSE_PRESSED (248) is not implemented by this Scratch VM profile",
           "severity": "error",
           "syscall": {
@@ -3425,6 +3550,16 @@
           "capability": "app.graphics",
           "id": 105,
           "name": "APP_GRAPHICS_SET_PIXEL"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 106,
+          "name": "APP_GRAPHICS_DRAW_CIRCLE"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 107,
+          "name": "APP_GRAPHICS_DRAW_LINE"
         },
         {
           "capability": "app.graphics",
@@ -3498,15 +3633,20 @@
         },
         {
           "capability": "app.graphics",
+          "id": 209,
+          "name": "APP_GRAPHICS_CHAR_ADVANCE"
+        },
+        {
+          "capability": "app.graphics",
           "id": 248,
           "name": "APP_GRAPHICS_RIGHT_MOUSE_PRESSED"
         }
       ],
-      "source_hash": "91a3d5910a870a84fa22fc848edacf904736983d139581f4ebf01383a20ac859",
+      "source_hash": "7caaad16a539e607036c961a2a9aab8efd96d56d17e8fa3816d644716d6f77a8",
       "status": "blocked"
     },
     "settings.xe": {
-      "artifact_hash": "710192c757461a634196ee6eae4061bb8a2578de91218683ba289cf2615dcf8c",
+      "artifact_hash": "1e9eabc656e864fd031cd59f84c110d5c2b219960acedff6638211ea77240123",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -3840,12 +3980,12 @@
         },
         {
           "code": "unsupported-syscall",
-          "message": "APP_OS_GET_WINDOW_TRANSPARENCY (186) is not implemented by this Scratch VM profile",
+          "message": "APP_OS_SET_WINDOW_TRANSPARENCY (187) is not implemented by this Scratch VM profile",
           "severity": "error",
           "syscall": {
             "capability": "app.os",
-            "id": 186,
-            "name": "APP_OS_GET_WINDOW_TRANSPARENCY"
+            "id": 187,
+            "name": "APP_OS_SET_WINDOW_TRANSPARENCY"
           }
         },
         {
@@ -4088,8 +4228,8 @@
         },
         {
           "capability": "app.os",
-          "id": 186,
-          "name": "APP_OS_GET_WINDOW_TRANSPARENCY"
+          "id": 187,
+          "name": "APP_OS_SET_WINDOW_TRANSPARENCY"
         },
         {
           "capability": "app.os",
@@ -4122,7 +4262,7 @@
           "name": "APP_GRAPHICS_CHAR_ADVANCE"
         }
       ],
-      "source_hash": "afa0b933178ab6d25240d348b92cca9d6e091abb4f47c447a2c1b201d0f30b00",
+      "source_hash": "95983b51b43b26257e027bfe53238b8d8625ba49181bc7a4ecb2fa6f6406bb13",
       "status": "blocked"
     },
     "terminal.xe": {
@@ -4518,7 +4658,7 @@
       "status": "blocked"
     },
     "text_editor.xe": {
-      "artifact_hash": "c7623f052479c117baa9daa4cdadb56d6aa9d51bb28ebc13919e1328a19e77c5",
+      "artifact_hash": "900683c6a32b86c6d4ee600bac59b7f400c38bfd4326e9e6ebf34dd25dbdda7a",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -4909,12 +5049,33 @@
             "id": 254,
             "name": "APP_GRAPHICS_DRAW_CHAR_STYLED"
           }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_OS_CLIPBOARD_READ (292) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.os",
+            "id": 292,
+            "name": "APP_OS_CLIPBOARD_READ"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_OS_CLIPBOARD_WRITE (293) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.os",
+            "id": 293,
+            "name": "APP_OS_CLIPBOARD_WRITE"
+          }
         }
       ],
       "required_capabilities": [
         "app.compiler",
         "app.filesystem",
         "app.graphics",
+        "app.os",
         "app.string",
         "app.window",
         "core.io",
@@ -5135,13 +5296,23 @@
           "capability": "app.graphics",
           "id": 254,
           "name": "APP_GRAPHICS_DRAW_CHAR_STYLED"
+        },
+        {
+          "capability": "app.os",
+          "id": 292,
+          "name": "APP_OS_CLIPBOARD_READ"
+        },
+        {
+          "capability": "app.os",
+          "id": 293,
+          "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
-      "source_hash": "a048b2a4da1a28917f6c557434d81d435022164c79e3a9687c008ce8fb5c667a",
+      "source_hash": "ad66ac27dfa51216c9e9dc82b6074bb492b131e618333126fc2091a901ccfe51",
       "status": "blocked"
     },
     "xenon_ide.xe": {
-      "artifact_hash": "4e451a3183f21f3250eddeaa6b408eb2238dfb1a8a591028449a872649e851de",
+      "artifact_hash": "34e99c72f9529639ef12fab600cc920a26c13a745b344287c8c9d1070c8bad59",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -5722,12 +5893,33 @@
             "id": 291,
             "name": "APP_COMPILER_RUN_WORKSPACE"
           }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_OS_CLIPBOARD_READ (292) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.os",
+            "id": 292,
+            "name": "APP_OS_CLIPBOARD_READ"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_OS_CLIPBOARD_WRITE (293) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.os",
+            "id": 293,
+            "name": "APP_OS_CLIPBOARD_WRITE"
+          }
         }
       ],
       "required_capabilities": [
         "app.compiler",
         "app.filesystem",
         "app.graphics",
+        "app.os",
         "app.string",
         "app.window",
         "core.io",
@@ -6043,19 +6235,29 @@
           "capability": "app.compiler",
           "id": 291,
           "name": "APP_COMPILER_RUN_WORKSPACE"
+        },
+        {
+          "capability": "app.os",
+          "id": 292,
+          "name": "APP_OS_CLIPBOARD_READ"
+        },
+        {
+          "capability": "app.os",
+          "id": 293,
+          "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
-      "source_hash": "064f9801e5b90c6caec3280e3617fee801c11fd2183d31145d5899f1fa14b06a",
+      "source_hash": "48898e95c6fc80071dd741a68da19cb24673dbd748afc1bf8642de59387579e2",
       "status": "blocked"
     },
     "xenon_music.xe": {
-      "artifact_hash": "3706a5f3f871eccc63cc6b91bef485522ff2bff85c260e8a1cb1d50d917dbe22",
+      "artifact_hash": "c0b9395c603ebb303a46439436c26d01fe917d6225710d05484c306827af6873",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
       "dynamic_assets": [
-        "audio::load@xenon_music.xe:92",
-        "audio::load@xenon_music.xe:96"
+        "audio::load@xenon_music.xe:95",
+        "audio::load@xenon_music.xe:99"
       ],
       "exact": false,
       "issues": [
@@ -6066,12 +6268,12 @@
         },
         {
           "code": "dynamic-asset-reference",
-          "message": "Scratch export requires a literal portable asset path: audio::load@xenon_music.xe:92",
+          "message": "Scratch export requires a literal portable asset path: audio::load@xenon_music.xe:95",
           "severity": "error"
         },
         {
           "code": "dynamic-asset-reference",
-          "message": "Scratch export requires a literal portable asset path: audio::load@xenon_music.xe:96",
+          "message": "Scratch export requires a literal portable asset path: audio::load@xenon_music.xe:99",
           "severity": "error"
         },
         {
@@ -6620,11 +6822,11 @@
           "name": "APP_AUDIO_UPDATE"
         }
       ],
-      "source_hash": "37b836ede60a447aafd57bfaf19603eb7395c016797dc0bab42fea565c26263e",
+      "source_hash": "483ad29522d02da37e461e314fe2b0e3b8ba8631e3e830524d32fc8f4dcbfced",
       "status": "blocked"
     },
     "xenon_terminal.xe": {
-      "artifact_hash": "5ad0d00a63dc69e94052367bb9cc49f259ffad9e9682c5f796ef792ac1676efe",
+      "artifact_hash": "e43972bc828efde92efdc476bed2e6828332ce2c504ebdd4a6e5c1a40a7e3384",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -7145,6 +7347,26 @@
             "id": 266,
             "name": "APP_OS_NORMALIZE_PATH"
           }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_OS_CLIPBOARD_READ (292) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.os",
+            "id": 292,
+            "name": "APP_OS_CLIPBOARD_READ"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_OS_CLIPBOARD_WRITE (293) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.os",
+            "id": 293,
+            "name": "APP_OS_CLIPBOARD_WRITE"
+          }
         }
       ],
       "required_capabilities": [
@@ -7437,9 +7659,19 @@
           "capability": "app.filesystem",
           "id": 266,
           "name": "APP_OS_NORMALIZE_PATH"
+        },
+        {
+          "capability": "app.os",
+          "id": 292,
+          "name": "APP_OS_CLIPBOARD_READ"
+        },
+        {
+          "capability": "app.os",
+          "id": 293,
+          "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
-      "source_hash": "38ef97af46ddeb2edff031e918d58bd629948911eb3f56008b4e60a206937f93",
+      "source_hash": "918f39799919b23943f5637200227c2eadafb8bc681bc5b540636cda5b4eeb7e",
       "status": "blocked"
     }
   },

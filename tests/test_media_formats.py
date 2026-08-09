@@ -126,7 +126,14 @@ out << audio::duration(track)
 def test_xe_runtime_loads_portable_image_and_music_assets(tmp_path: Path) -> None:
 	drive = tmp_path / "drive"
 	drive.mkdir()
-	image = PortableImage(3, 2, (ImageFrame((0, 1, 2, 3, 4, 16)),))
+	image = PortableImage(
+		3,
+		2,
+		(
+			ImageFrame((0, 1, 2, 3, 4, 16), 80),
+			ImageFrame((5, 6, 7, 8, 9, 16), 125),
+		),
+	)
 	(drive / "sprite.ximg").write_text("\n".join(hex(word) for word in encode_ximg(image)), encoding="utf-8")
 	track = Track(120, 480, (NoteEvent(0, 960, 60),))
 	(drive / "demo.xmusic").write_text("\n".join(hex(word) for word in encode_xmusic(track)), encoding="utf-8")
@@ -138,10 +145,12 @@ def test_xe_runtime_loads_portable_image_and_music_assets(tmp_path: Path) -> Non
 var image: graphics::Image
 image = graphics::load_image("sprite.ximg")
 out << graphics::image_width(image)
+out << graphics::image_frame_count(image)
+out << graphics::image_frame_duration(image, 1)
 '''
 	_, error, _ = run("image_test.xe", image_source, context)
 	assert error is None
-	assert "".join(output) == "3"
+	assert "".join(output) == "32125"
 
 	context = RuntimeContext(filesystem_root=drive)
 	output = []

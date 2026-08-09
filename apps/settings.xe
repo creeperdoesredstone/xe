@@ -61,14 +61,13 @@ fn draw_step_button(x: int, y: int, right: bool) bool {
 	return clicked
 }
 
-proc reload_os_settings(master: int*, music: int*, effects: int*, background: int*, palette: int*, theme: int*, transparency: int*, corners: int*, icons: int*, clock: int*, enabled: bool*) {
+proc reload_os_settings(master: int*, music: int*, effects: int*, background: int*, palette: int*, theme: int*, corners: int*, icons: int*, clock: int*, enabled: bool*) {
 	*master = os::volume
 	*music = os::music_volume
 	*effects = os::sound_effect_volume
 	*background = os::background_id
 	*palette = os::palette
 	*theme = os::theme_mode
-	*transparency = os::window_transparency
 	*corners = os::window_corner_style
 	*icons = os::icon_size
 	*clock = os::clock_format
@@ -176,15 +175,15 @@ proc draw_preview_box(x: int, y: int, width: int, height: int, corner_style: int
 
 fn settings_preview_accent() int {
 	var variant: int
-	variant = os::palette % 3
+	variant = staged_palette % 3
 	if (variant == 1) { return graphics::COLOR_11 }
 	if (variant == 2) { return graphics::COLOR_10 }
 	return graphics::COLOR_13
 }
 
 fn settings_preview_background() int {
-	if (os::background_id == 1) { return graphics::COLOR_1 }
-	if (os::background_id == 2) { return graphics::COLOR_8 }
+	if (staged_background == 1) { return graphics::COLOR_1 }
+	if (staged_background == 2) { return graphics::COLOR_8 }
 	return graphics::COLOR_0
 }
 
@@ -196,9 +195,6 @@ proc draw_window_preview(x: int, y: int, width: int, height: int) {
 	var title_height: int
 	var accent: int
 	var background: int
-	var row: int
-	var column: int
-	var pattern: int
 	if (width < 34 || height < 24) { return }
 	if (width > 260) {
 		x += (width - 260) / 2
@@ -225,23 +221,7 @@ proc draw_window_preview(x: int, y: int, width: int, height: int) {
 	title_height = 7
 	if (preview_height >= 36) { title_height = 9 }
 	call graphics::fill_rect(settings_window, preview_x + 1, preview_y + 1, preview_width - 2, title_height - 1, accent)
-	if (staged_transparency >= 100) {
-		call graphics::fill_rect(settings_window, preview_x + 1, preview_y + title_height, preview_width - 2, preview_height - title_height - 1, background)
-	}
-	elseif (staged_transparency > 0) {
-		row = preview_y + title_height
-		while (row < preview_y + preview_height - 2) {
-			column = preview_x + 1
-			while (column < preview_x + preview_width - 2) {
-				pattern = (((column - preview_x) / 4) * 37 + ((row - preview_y) / 4) * 17) % 100
-				if (pattern < staged_transparency) {
-					call graphics::fill_rect(settings_window, column, row, 2, 2, background)
-				}
-				column += 4
-			}
-			row += 4
-		}
-	}
+	call graphics::fill_rect(settings_window, preview_x + 1, preview_y + title_height, preview_width - 2, preview_height - title_height - 1, graphics::COLOR_1)
 	if (preview_width >= 54) {
 		call graphics::draw_text_small(settings_window, preview_x + 4, preview_y + 2, "Window", graphics::WHITE)
 	}
@@ -249,6 +229,61 @@ proc draw_window_preview(x: int, y: int, width: int, height: int) {
 	call graphics::draw_rect(settings_window, preview_x + preview_width - 9, preview_y + 2, 4, 4, graphics::WHITE)
 	call graphics::draw_line(settings_window, preview_x + preview_width - 3, preview_y + 2, preview_x + preview_width - 1, preview_y + 4, graphics::WHITE)
 	call graphics::draw_line(settings_window, preview_x + preview_width - 1, preview_y + 2, preview_x + preview_width - 3, preview_y + 4, graphics::WHITE)
+}
+
+proc draw_palette_background_preview(x: int, y: int, width: int, height: int) {
+	var accent: int
+	var background: int
+	var sample_x: int
+	var sample_y: int
+	var sample_width: int
+	var sample_height: int
+	var swatch_top: int
+	var swatch_width: int
+	var swatch_height: int
+	var index: int
+	var column: int
+	var row: int
+	if (width < 38 || height < 24) { return }
+	if (width > 260) {
+		x += (width - 260) / 2
+		width = 260
+	}
+	if (height > 96) {
+		y += (height - 96) / 2
+		height = 96
+	}
+	accent = settings_preview_accent()
+	background = settings_preview_background()
+	call graphics::fill_rect(settings_window, x, y, width, height, background)
+	call graphics::draw_rect(settings_window, x, y, width, height, graphics::COLOR_8)
+	swatch_top = y + height - 12
+	swatch_width = (width - 4) / 8
+	if (swatch_width < 4) { swatch_width = 4 }
+	swatch_height = 5
+	index = 0
+	while (index < 16) {
+		column = index % 8
+		row = index / 8
+		call graphics::fill_rect(settings_window, x + 2 + column * swatch_width, swatch_top + row * swatch_height, swatch_width - 1, swatch_height - 1, index)
+		index += 1
+	}
+	sample_width = width * 2 / 5
+	if (sample_width < 28) { sample_width = 28 }
+	if (sample_width > 90) { sample_width = 90 }
+	sample_height = height - 18
+	if (sample_height > 48) { sample_height = 48 }
+	if (sample_height < 10) { sample_height = 10 }
+	sample_x = x + (width - sample_width) / 2
+	sample_y = y + (swatch_top - y - sample_height) / 2
+	call draw_preview_box(sample_x, sample_y, sample_width, sample_height, os::CORNER_ROUNDED, graphics::COLOR_1, accent)
+	call graphics::fill_rect(settings_window, sample_x + 1, sample_y + 1, sample_width - 2, 5, accent)
+	if (width >= 92 && height >= 40) {
+		call graphics::draw_text_small(settings_window, x + 4, y + 3, "BG", graphics::COLOR_7)
+		call graphics::draw_int_small(settings_window, x + 14, y + 3, staged_background, graphics::COLOR_14)
+		call graphics::draw_text_small(settings_window, x + width - 31, y + 3, "PAL", graphics::COLOR_7)
+		call graphics::draw_int_small(settings_window, x + width - 12, y + 3, staged_palette, graphics::COLOR_14)
+	}
 }
 
 proc draw_icon_silhouette(x: int, baseline: int, size: int, selected: bool, accent: int) {
@@ -405,7 +440,6 @@ var staged_effects: int
 var staged_background: int
 var staged_palette: int
 var staged_theme: int
-var staged_transparency: int
 var staged_corners: int
 var staged_icons: int
 var staged_clock: int
@@ -440,7 +474,10 @@ var current_ticks: int
 var delta_ms: int
 var drawer_step: int
 
-call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+# Transparency is no longer part of Settings. Clear any persisted legacy value so
+# all window surfaces remain opaque while retaining the old OS field for ABI safety.
+os::window_transparency = 0
+call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 background_count = os::background_count()
 palette_count = os::palette_count()
 active_tab = 0
@@ -568,24 +605,21 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 					if (staged_theme == os::THEME_DARK && staged_palette >= 3) { staged_palette = 0 }
 					if (staged_theme == os::THEME_LIGHT && staged_palette < 3) { staged_palette = 3 }
 				}
-				call graphics::draw_text(settings_window, panel_x + 4, 82, "Wallpaper support later", graphics::COLOR_8)
+				call draw_palette_background_preview(panel_x + 8, 82, panel_width - 16, action_y - 86)
 			}
 			elseif (active_tab == 2) {
 				call graphics::draw_text(settings_window, panel_x + 4, 8, "Window appearance", graphics::WHITE)
-				call draw_value_line("Transparency %", 23, staged_transparency, panel_x + 4, panel_width - 8)
-				staged_transparency = graphics::slider(settings_window, control_x, 31, control_width, staged_transparency, 0, 100)
-				call graphics::draw_text_small(settings_window, panel_x + 4, 43, "0 opaque - 100 clear", graphics::COLOR_8)
-				call graphics::draw_text(settings_window, panel_x + 4, 55, "Corner style", graphics::COLOR_7)
+				call graphics::draw_text(settings_window, panel_x + 4, 23, "Corner style", graphics::COLOR_7)
 				if (staged_corners == os::CORNER_SQUARE) {
-					if (settings_button_aligned(control_x, 65, control_width, 11, "Square", graphics::COLOR_5)) { staged_corners = os::CORNER_ROUNDED }
+					if (settings_button_aligned(control_x, 33, control_width, 11, "Square", graphics::COLOR_5)) { staged_corners = os::CORNER_ROUNDED }
 				}
 				elseif (staged_corners == os::CORNER_ROUNDED) {
-					if (settings_button_aligned(control_x, 65, control_width, 11, "Rounded", graphics::COLOR_5)) { staged_corners = os::CORNER_SOFT }
+					if (settings_button_aligned(control_x, 33, control_width, 11, "Rounded", graphics::COLOR_5)) { staged_corners = os::CORNER_SOFT }
 				}
 				else {
-					if (settings_button_aligned(control_x, 65, control_width, 11, "Soft", graphics::COLOR_5)) { staged_corners = os::CORNER_SQUARE }
+					if (settings_button_aligned(control_x, 33, control_width, 11, "Soft", graphics::COLOR_5)) { staged_corners = os::CORNER_SQUARE }
 				}
-				call draw_window_preview(panel_x + 8, 82, panel_width - 16, action_y - 86)
+				call draw_window_preview(panel_x + 8, 50, panel_width - 16, action_y - 54)
 			}
 			elseif (active_tab == 3) {
 				call graphics::draw_text(settings_window, panel_x + 4, 8, "Icons and time", graphics::WHITE)
@@ -621,13 +655,13 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 			}
 
 			if (settings_button_aligned(panel_x + 4, action_y, action_width, 11, "Apply", graphics::COLOR_2)) {
-				applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, staged_transparency, staged_corners, staged_icons, staged_clock, staged_enabled)
+				applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, 0, staged_corners, staged_icons, staged_clock, staged_enabled)
 				if (applied) {
-					call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+					call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 				}
 			}
 			if (settings_button_aligned(panel_x + 6 + action_width, action_y, action_width, 11, "Cancel", graphics::COLOR_5)) {
-				call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+				call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 				settings_window.close()
 			}
 		}
@@ -660,13 +694,12 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 			elseif (panel_width >= 18 && panel_height >= 12 && active_tab == 2) {
 				if (panel_width >= 34) {
 					call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Windows", graphics::WHITE)
-					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Transparency", graphics::COLOR_7)
+					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Corners", graphics::COLOR_7)
 				}
 				else {
 					call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Win", graphics::WHITE)
-					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Clr", graphics::COLOR_7)
+					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Edge", graphics::COLOR_7)
 				}
-				call graphics::draw_int_small(settings_window, panel_x + 3, 19, staged_transparency, graphics::COLOR_14)
 			}
 			elseif (panel_width >= 18 && panel_height >= 12 && active_tab == 3) {
 				if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Display", graphics::WHITE) }
@@ -735,21 +768,20 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 						if (staged_theme == os::THEME_LIGHT && staged_palette < 3) { staged_palette = 3 }
 					}
 				}
+				if (action_y >= 62) { call draw_palette_background_preview(panel_x + 5, 42, panel_width - 10, action_y - 46) }
 			}
 			elseif (active_tab == 2) {
 				call graphics::draw_text_small(settings_window, panel_x + 3, 7, "Appearance", graphics::WHITE)
-				call graphics::draw_text_small(settings_window, panel_x + 3, 14, "Transparency", graphics::COLOR_7)
-				staged_transparency = graphics::slider(settings_window, control_x, 20, control_width, staged_transparency, 0, 100)
 				if (staged_corners == os::CORNER_SQUARE) {
-					if (settings_flat_button_aligned(control_x, 28, control_width, 7, "Square corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_ROUNDED }
+					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Square corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_ROUNDED }
 				}
 				elseif (staged_corners == os::CORNER_ROUNDED) {
-					if (settings_flat_button_aligned(control_x, 28, control_width, 7, "Rounded corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_SOFT }
+					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Rounded corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_SOFT }
 				}
 				else {
-					if (settings_flat_button_aligned(control_x, 28, control_width, 7, "Soft corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_SQUARE }
+					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Soft corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_SQUARE }
 				}
-				if (action_y >= 58) { call draw_window_preview(panel_x + 5, 38, panel_width - 10, action_y - 42) }
+				if (action_y >= 45) { call draw_window_preview(panel_x + 5, 25, panel_width - 10, action_y - 29) }
 			}
 			elseif (active_tab == 3) {
 				call graphics::draw_text_small(settings_window, panel_x + 3, 7, "Icons and time", graphics::WHITE)
@@ -781,13 +813,13 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 			}
 
 			if (settings_button_aligned(panel_x + 3, action_y, action_width, 6, "Apply", graphics::COLOR_2)) {
-				applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, staged_transparency, staged_corners, staged_icons, staged_clock, staged_enabled)
+				applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, 0, staged_corners, staged_icons, staged_clock, staged_enabled)
 				if (applied) {
-					call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+					call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 				}
 			}
 			if (settings_button_aligned(panel_x + 4 + action_width, action_y, action_width, 6, "Cancel", graphics::COLOR_5)) {
-				call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_transparency, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+				call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 				settings_window.close()
 			}
 		}

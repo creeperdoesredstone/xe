@@ -51,6 +51,7 @@ array deletion_ghost_speed: int[64]
 array deletion_ghost_age: int[64]
 array deletion_shell_anchor: int[8]
 var cached_entry_count: int
+var cached_revision: int
 var cached_parent_path: string
 var paused_shell: int
 var hovered_shell: int
@@ -252,7 +253,7 @@ proc orbit_project_components(radius: int, cosine: float, sine: float) {
 	plane_y = sine * (float)radius * projection_tilt_cos
 	projected_x = (int)(plane_x * projection_roll_cos - plane_y * projection_roll_sin)
 	projected_y = (int)(plane_x * projection_roll_sin + plane_y * projection_roll_cos)
-	projected_depth = (int)(-sine * (float)radius * projection_depth_scale * 100.0)
+	projected_depth = (int)(sine * (float)radius * projection_depth_scale * 100.0)
 }
 
 proc orbit_project(radius: int, angle: float) {
@@ -320,9 +321,12 @@ proc draw_placeholder_nucleus(x: int, y: int, radius: int) {
 }
 
 proc update_view_orientation(elapsed_ms: int) {
+	var maximum_step: int
 	orientation_ease = elapsed_ms * 100 / 90
 	if (orientation_ease < 1) { orientation_ease = 1 }
 	if (orientation_ease > 55) { orientation_ease = 55 }
+	maximum_step = elapsed_ms * 240 / 1000
+	if (maximum_step < 1) { maximum_step = 1 }
 	orientation_difference = rotation_target - rotation
 	if (orientation_difference > 180) { orientation_difference -= 360 }
 	elseif (orientation_difference < -180) { orientation_difference += 360 }
@@ -330,6 +334,8 @@ proc update_view_orientation(elapsed_ms: int) {
 		orientation_step = orientation_difference * orientation_ease / 100
 		if (orientation_step == 0 && orientation_difference > 0) { orientation_step = 1 }
 		elseif (orientation_step == 0) { orientation_step = -1 }
+		if (orientation_step > maximum_step) { orientation_step = maximum_step }
+		elseif (orientation_step < -maximum_step) { orientation_step = -maximum_step }
 		rotation = (rotation + orientation_step) % 360
 		if (rotation < 0) { rotation += 360 }
 	}
@@ -338,6 +344,8 @@ proc update_view_orientation(elapsed_ms: int) {
 		orientation_step = orientation_difference * orientation_ease / 100
 		if (orientation_step == 0 && orientation_difference > 0) { orientation_step = 1 }
 		elseif (orientation_step == 0) { orientation_step = -1 }
+		if (orientation_step > maximum_step) { orientation_step = maximum_step }
+		elseif (orientation_step < -maximum_step) { orientation_step = -maximum_step }
 		tilt += orientation_step
 		if (tilt > 70) { tilt = 70 }
 		if (tilt < -70) { tilt = -70 }
@@ -546,8 +554,21 @@ proc explorer_insert_rename_character(value: char) {
 	call explorer_replace_rename_selection(rename_insert)
 }
 
+fn explorer_rename_fragment_is_valid(value: string) bool {
+	var index: int
+	var code: int
+	index = 0
+	while (index < xestring::strlen(value)) {
+		code = (int)(value[index])
+		if (code < 32 || code == 47 || code == 92) { return false }
+		index += 1
+	}
+	return true
+}
+
 proc explorer_copy_rename_selection() {
 	var index: int
+	var shared_ok: bool
 	if (!explorer_rename_has_selection()) { return }
 	call explorer_clear(rename_clipboard)
 	index = explorer_rename_selection_begin()
@@ -555,6 +576,7 @@ proc explorer_copy_rename_selection() {
 		call xestring::append_char(rename_clipboard, rename_text[index])
 		index += 1
 	}
+	shared_ok = os::clipboard_write(rename_clipboard)
 }
 
 proc explorer_cut_rename_selection() {
@@ -564,15 +586,12 @@ proc explorer_cut_rename_selection() {
 }
 
 proc explorer_paste_rename_selection() {
-	var index: int
-	var code: int
-	index = 0
-	while (index < xestring::strlen(rename_clipboard)) {
-		code = (int)(rename_clipboard[index])
-		if (code < 32 || code == 47 || code == 92) { return }
-		index += 1
+	var shared_clipboard: string
+	shared_clipboard = os::clipboard_read()
+	if (xestring::strlen(shared_clipboard) > 0 && xestring::strlen(shared_clipboard) <= 64 && explorer_rename_fragment_is_valid(shared_clipboard)) {
+		call explorer_set(rename_clipboard, shared_clipboard)
 	}
-	if (xestring::strlen(rename_text) - (explorer_rename_selection_finish() - explorer_rename_selection_begin()) + xestring::strlen(rename_clipboard) <= 64) {
+	if (explorer_rename_fragment_is_valid(rename_clipboard) && xestring::strlen(rename_text) - (explorer_rename_selection_finish() - explorer_rename_selection_begin()) + xestring::strlen(rename_clipboard) <= 64) {
 		call explorer_replace_rename_selection(rename_clipboard)
 	}
 }
@@ -819,6 +838,76 @@ fn find_entry_named(name: string) int {
 		index += 1
 	}
 	return -1
+}
+
+fn filesystem_entry_index(name: string) int {
+	var index: int
+	var count: int
+	count = os::entry_count(current_path)
+	if (count > 64) { count = 64 }
+	index = 0
+	while (index < count) {
+		if (explorer_strings_equal(os::entry_name(current_path, index), name)) { return index }
+		index += 1
+	}
+	return -1
+}
+
+proc remap_swapped_entry_indices(left: int, right: int) {
+	if (selected_entry == left) { selected_entry = right }
+	elseif (selected_entry == right) { selected_entry = left }
+	if (selection_anchor == left) { selection_anchor = right }
+	elseif (selection_anchor == right) { selection_anchor = left }
+	if (drag_entry == left) { drag_entry = right }
+	elseif (drag_entry == right) { drag_entry = left }
+	if (hovered_entry == left) { hovered_entry = right }
+	elseif (hovered_entry == right) { hovered_entry = left }
+	if (drop_folder_entry == left) { drop_folder_entry = right }
+	elseif (drop_folder_entry == right) { drop_folder_entry = left }
+	if (context_entry == left) { context_entry = right }
+	elseif (context_entry == right) { context_entry = left }
+	if (transition_entry == left) { transition_entry = right }
+	elseif (transition_entry == right) { transition_entry = left }
+	if (last_click_entry == left) { last_click_entry = right }
+	elseif (last_click_entry == right) { last_click_entry = left }
+}
+
+proc swap_cached_entry_records(left: int, right: int) {
+	var temporary: int
+	var temporary_name: string
+	var temporary_label: string
+	if (left == right || left < 0 || right < 0 || left >= cached_entry_count || right >= cached_entry_count) { return }
+	temporary_name = ""
+	temporary_label = ""
+	call explorer_set(temporary_name, entry_name_cache[left])
+	call explorer_set(entry_name_cache[left], entry_name_cache[right])
+	call explorer_set(entry_name_cache[right], temporary_name)
+	call explorer_set(temporary_label, entry_label_short_cache[left])
+	call explorer_set(entry_label_short_cache[left], entry_label_short_cache[right])
+	call explorer_set(entry_label_short_cache[right], temporary_label)
+	temporary = entry_shell[left]; entry_shell[left] = entry_shell[right]; entry_shell[right] = temporary
+	temporary = entry_render_x[left]; entry_render_x[left] = entry_render_x[right]; entry_render_x[right] = temporary
+	temporary = entry_render_y[left]; entry_render_y[left] = entry_render_y[right]; entry_render_y[right] = temporary
+	temporary = entry_render_depth[left]; entry_render_depth[left] = entry_render_depth[right]; entry_render_depth[right] = temporary
+	temporary = entry_node_radius[left]; entry_node_radius[left] = entry_node_radius[right]; entry_node_radius[right] = temporary
+	temporary = entry_slot_start_x[left]; entry_slot_start_x[left] = entry_slot_start_x[right]; entry_slot_start_x[right] = temporary
+	temporary = entry_slot_start_y[left]; entry_slot_start_y[left] = entry_slot_start_y[right]; entry_slot_start_y[right] = temporary
+	temporary = entry_slot_start_depth[left]; entry_slot_start_depth[left] = entry_slot_start_depth[right]; entry_slot_start_depth[right] = temporary
+	temporary = entry_slot_progress[left]; entry_slot_progress[left] = entry_slot_progress[right]; entry_slot_progress[right] = temporary
+	temporary = entry_slot_elapsed[left]; entry_slot_elapsed[left] = entry_slot_elapsed[right]; entry_slot_elapsed[right] = temporary
+	temporary = entry_slot_duration[left]; entry_slot_duration[left] = entry_slot_duration[right]; entry_slot_duration[right] = temporary
+	temporary = entry_label_short_width[left]; entry_label_short_width[left] = entry_label_short_width[right]; entry_label_short_width[right] = temporary
+	temporary = entry_label_full_width[left]; entry_label_full_width[left] = entry_label_full_width[right]; entry_label_full_width[right] = temporary
+	temporary = entry_name_length[left]; entry_name_length[left] = entry_name_length[right]; entry_name_length[right] = temporary
+	temporary = entry_directory_cache[left]; entry_directory_cache[left] = entry_directory_cache[right]; entry_directory_cache[right] = temporary
+	temporary = entry_child_count_cache[left]; entry_child_count_cache[left] = entry_child_count_cache[right]; entry_child_count_cache[right] = temporary
+	temporary = entry_position_cache[left]; entry_position_cache[left] = entry_position_cache[right]; entry_position_cache[right] = temporary
+	temporary = entry_selected[left]; entry_selected[left] = entry_selected[right]; entry_selected[right] = temporary
+	temporary = entry_delete_mark[left]; entry_delete_mark[left] = entry_delete_mark[right]; entry_delete_mark[right] = temporary
+	temporary = entry_preserved_angle[left]; entry_preserved_angle[left] = entry_preserved_angle[right]; entry_preserved_angle[right] = temporary
+	call remap_swapped_entry_indices(left, right)
+	depth_order_count = -1
+	orbit_stream_dirty = true
 }
 
 proc explorer_append_positive_int(target: string, value: int) {
@@ -1286,6 +1375,46 @@ proc reset_energy_shells() {
 	call clear_entry_selection()
 	selection_anchor = -1
 	slot_animation_active = false
+	cached_revision = os::revision()
+}
+
+fn cache_created_entry(name: string, is_directory: bool, target_shell: int, start_x: int, start_y: int, start_depth: int, duration: int) int {
+	var created: int
+	var canonical: int
+	if (cached_entry_count >= 64) { return -1 }
+	created = cached_entry_count
+	entry_name_cache[created] = name
+	call refresh_entry_label_cache(created)
+	if (is_directory) { entry_directory_cache[created] = 1 }
+	else { entry_directory_cache[created] = 0 }
+	entry_child_count_cache[created] = 0
+	entry_shell[created] = target_shell
+	entry_render_x[created] = start_x
+	entry_render_y[created] = start_y
+	entry_render_depth[created] = start_depth
+	entry_node_radius[created] = 0
+	entry_slot_start_x[created] = start_x
+	entry_slot_start_y[created] = start_y
+	entry_slot_start_depth[created] = start_depth
+	entry_slot_progress[created] = 0
+	entry_slot_elapsed[created] = 0
+	entry_slot_duration[created] = duration
+	entry_selected[created] = 0
+	entry_delete_mark[created] = 0
+	entry_preserved_angle[created] = 0
+	cached_entry_count += 1
+	canonical = filesystem_entry_index(name)
+	if (canonical < 0 || canonical >= cached_entry_count) {
+		call reset_energy_shells()
+		return find_entry_named(name)
+	}
+	while (created > canonical) {
+		call swap_cached_entry_records(created, created - 1)
+		created -= 1
+	}
+	cached_revision = os::revision()
+	call rebuild_shell_layout()
+	return created
 }
 
 proc move_entry_into_folder(source_index: int, folder_index: int) {
@@ -1554,12 +1683,32 @@ proc move_dragged_entries_to_path(destination_path: string) {
 proc refresh_compacted_entry_metadata() {
 	var actual_count: int
 	var index: int
+	var source: int
+	var expected_name: string
 	var entry_path: string
 	actual_count = os::entry_count(current_path)
-	if (actual_count != cached_entry_count) { return }
+	if (actual_count > 64) { actual_count = 64 }
+	if (actual_count != cached_entry_count) {
+		call reset_energy_shells()
+		context_entry = -1
+		return
+	}
 	index = 0
 	while (index < cached_entry_count) {
-		entry_name_cache[index] = os::entry_name(current_path, index)
+		expected_name = os::entry_name(current_path, index)
+		if (!explorer_strings_equal(entry_name_cache[index], expected_name)) {
+			source = index + 1
+			while (source < cached_entry_count && !explorer_strings_equal(entry_name_cache[source], expected_name)) { source += 1 }
+			if (source >= cached_entry_count) {
+				call reset_energy_shells()
+				context_entry = -1
+				return
+			}
+			while (source > index) {
+				call swap_cached_entry_records(source, source - 1)
+				source -= 1
+			}
+		}
 		call refresh_entry_label_cache(index)
 		if (os::entry_is_directory(current_path, index)) {
 			entry_directory_cache[index] = 1
@@ -1573,6 +1722,7 @@ proc refresh_compacted_entry_metadata() {
 		}
 		index += 1
 	}
+	cached_revision = os::revision()
 	orbit_stream_dirty = true
 }
 
@@ -2997,25 +3147,10 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 				slot_duration = insertion_slot_duration(shell_population_cache[target_shell] + 1)
 				call begin_slot_animation_for_shell(target_shell, slot_duration)
 				if (target_was_empty) { shell_incremental_layout[target_shell] = 1 }
-				created_entry = cached_entry_count
-				entry_name_cache[created_entry] = candidate_name
-				call refresh_entry_label_cache(created_entry)
-				if (drag_template == 2) { entry_directory_cache[created_entry] = 1 }
-				else { entry_directory_cache[created_entry] = 0 }
-				entry_child_count_cache[created_entry] = 0
-				entry_shell[created_entry] = target_shell
-				entry_slot_start_x[created_entry] = pointer_x
-				entry_slot_start_y[created_entry] = pointer_y
 				call orbit_project((30 + target_shell * shell_gap) * render_scale / 100, drop_angle)
 				drop_depth = projected_depth
-				entry_slot_start_depth[created_entry] = drop_depth
-				entry_slot_progress[created_entry] = 0
-				entry_slot_elapsed[created_entry] = 0
-				entry_slot_duration[created_entry] = slot_duration
-				entry_delete_mark[created_entry] = 0
-				cached_entry_count += 1
-				call rebuild_shell_layout()
-				if (target_was_empty) { call align_shell_entry_to_angle(target_shell, created_entry, drop_angle) }
+				created_entry = cache_created_entry(candidate_name, drag_template == 2, target_shell, pointer_x, pointer_y, drop_depth, slot_duration)
+				if (target_was_empty && created_entry >= 0) { call align_shell_entry_to_angle(target_shell, created_entry, drop_angle) }
 			}
 			else {
 				call explorer_set(status_text, "Could not create item")
@@ -3177,6 +3312,9 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 	if (delta_ms < 1) { delta_ms = 1 }
 	if (delta_ms > 50) { delta_ms = 50 }
 	previous_ticks = current_ticks
+	if (cached_revision != os::revision() && !rotating && !marquee_active && drag_entry < 0 && drag_template == 0 && transition_progress == 0 && !context_open && !rename_open && !delete_confirm && !viewer_open) {
+		call refresh_compacted_entry_metadata()
+	}
 	call update_deletion_ghosts(delta_ms)
 	if (rename_pointer_guard > 0) { rename_pointer_guard -= 1 }
 	animation_step = delta_ms * 100 / 220
@@ -3321,7 +3459,7 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 			marquee_current_y = graphics::pointer_y(explorer_window)
 		}
 		if (rotating && graphics::mouse_down()) {
-			rotation_target += (graphics::pointer_x(explorer_window) - last_pointer_x) * 2
+			rotation_target += graphics::pointer_x(explorer_window) - last_pointer_x
 			rotation_target %= 360
 			if (rotation_target < 0) { rotation_target += 360 }
 			tilt_target += graphics::pointer_y(explorer_window) - last_pointer_y

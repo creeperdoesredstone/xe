@@ -17,7 +17,7 @@ def test_file_explorer_compiles() -> None:
 def test_projection_uses_unsigned_tilt_depth() -> None:
     assert "projection_depth_scale = math::sin" in SOURCE
     assert "if (projection_depth_scale < 0.0)" in SOURCE
-    assert "projected_depth = (int)(-sine * (float)radius * projection_depth_scale" in SOURCE
+    assert "projected_depth = (int)(sine * (float)radius * projection_depth_scale" in SOURCE
 
 
 def test_nucleus_highlight_is_fixed_in_screen_space() -> None:
@@ -49,8 +49,10 @@ def test_trash_is_subdued_until_valid_drag_hover() -> None:
 
 def test_view_rotation_and_direct_hover_are_delta_time_eased() -> None:
     assert "proc update_view_orientation(elapsed_ms: int)" in SOURCE
+    assert "maximum_step = elapsed_ms * 240 / 1000" in SOURCE
     drag = SOURCE.split("if (rotating && graphics::mouse_down())", 1)[1].split("if (graphics::mouse_released())", 1)[0]
     assert "rotation_target +=" in drag
+    assert "last_pointer_x) * 2" not in drag
     assert "tilt_target +=" in drag
     assert "rotation += (graphics::pointer_x" not in drag
     hover = SOURCE.split("if (transition_progress == 0)", 1)[1].split("nucleus_phase =", 1)[0]
@@ -116,6 +118,171 @@ def _single_color_position(frame, color: int) -> tuple[int, int]:
     return matches[0]
 
 
+def _run_explorer_probe(
+    tmp_path: Path,
+    probe: str,
+    *,
+    clipboard_read_handler=None,
+    clipboard_write_handler=None,
+) -> str:
+    anchor = "while (explorer_window.state != graphics::WINDOW_CLOSED) {"
+    assert anchor in SOURCE
+    modified = SOURCE.replace(anchor, f"{probe}\nif (false) {{", 1)
+    artifact = compile_source(modified, "file-explorer-vfs-regression.xe")
+    assert artifact.success, artifact.diagnostics
+    output: list[str] = []
+    context = RuntimeContext(
+        filesystem_root=tmp_path,
+        clipboard_read_handler=clipboard_read_handler,
+        clipboard_write_handler=clipboard_write_handler,
+    )
+    context.output_handler = output.append
+    context.create_vm(list(artifact.program))
+    result = context.vm.run()
+    assert result.error is None, result.error
+    return "".join(output)
+
+
+def test_rename_clipboard_uses_host_and_keeps_local_fallback(tmp_path: Path) -> None:
+    writes: list[str] = []
+    host_output = _run_explorer_probe(
+        tmp_path / "host",
+        '''call explorer_set(rename_text, "copy-name.xe")
+rename_cursor = xestring::strlen(rename_text)
+call explorer_select_all_rename_text()
+call explorer_copy_rename_selection()
+call explorer_set(rename_text, "old.xe")
+rename_cursor = xestring::strlen(rename_text)
+call explorer_select_all_rename_text()
+        call explorer_paste_rename_selection()
+out << rename_text''',
+        clipboard_read_handler=lambda: "host-name.xe",
+        clipboard_write_handler=lambda value: not writes.append(value),
+    )
+    assert writes == ["copy-name.xe"]
+    assert host_output == "host-name.xe"
+
+    fallback_probe = '''call explorer_set(rename_clipboard, "fallback.xe")
+call explorer_set(rename_text, "old.xe")
+rename_cursor = xestring::strlen(rename_text)
+call explorer_select_all_rename_text()
+call explorer_paste_rename_selection()
+out << rename_text'''
+    assert _run_explorer_probe(tmp_path / "disabled", fallback_probe) == "fallback.xe"
+    assert _run_explorer_probe(
+        tmp_path / "invalid",
+        fallback_probe,
+        clipboard_read_handler=lambda: "bad/name",
+    ) == "fallback.xe"
+    assert _run_explorer_probe(
+        tmp_path / "oversized",
+        fallback_probe,
+        clipboard_read_handler=lambda: "x" * 65,
+    ) == "fallback.xe"
+
+
+def test_multi_delete_create_and_navigation_keep_cache_bound_to_vfs_identity(tmp_path: Path) -> None:
+    for directory in ("alpha-dir", "beta-dir", "keep-dir"):
+        (tmp_path / directory).mkdir()
+    for filename in ("alpha.xe", "delete-a.xe", "delete-b.xe", "keep.xe"):
+        (tmp_path / filename).write_text(filename, encoding="utf-8")
+
+    output = _run_explorer_probe(
+        tmp_path,
+        '''var probe_index: int
+var probe_created: int
+call clear_entry_selection()
+probe_index = find_entry_named("beta-dir")
+entry_selected[probe_index] = 1
+drag_entry = probe_index
+probe_index = find_entry_named("delete-a.xe")
+entry_selected[probe_index] = 1
+probe_index = find_entry_named("delete-b.xe")
+entry_selected[probe_index] = 1
+call delete_dragged_entries()
+probe_index = find_entry_named("keep.xe")
+entry_render_x[probe_index] = 777
+entry_slot_progress[probe_index] = 37
+entry_selected[probe_index] = 1
+selected_entry = probe_index
+selection_anchor = probe_index
+operation_ok = os::make_directory("new-folder")
+probe_created = cache_created_entry("new-folder", true, 0, 111, 77, 13, 220)
+out << "root:"
+probe_index = 0
+while (probe_index < cached_entry_count) {
+	out << entry_name_cache[probe_index]
+	out << "="
+	out << os::entry_name(current_path, probe_index)
+	out << ";"
+	probe_index += 1
+}
+probe_index = find_entry_named("keep.xe")
+out << "identity:"
+out << entry_render_x[probe_index]
+out << ","
+out << entry_slot_progress[probe_index]
+out << ","
+out << entry_selected[probe_index]
+out << ","
+out << (int)(selected_entry == probe_index)
+out << ","
+out << entry_slot_start_x[probe_created]
+out << "|"
+operation_ok = os::make_file("new-folder/child.xe")
+call begin_folder_transition(find_entry_named("new-folder"), 1)
+call commit_folder_transition()
+out << "child:"
+out << current_path
+out << ":"
+out << entry_name_cache[0]
+call begin_folder_transition(-1, -1)
+call commit_folder_transition()
+out << "|back:"
+probe_index = 0
+while (probe_index < cached_entry_count) {
+	out << entry_name_cache[probe_index]
+	out << "="
+	out << os::entry_name(current_path, probe_index)
+	out << ";"
+	probe_index += 1
+}
+operation_ok = os::make_file("aardvark.xe")
+call refresh_compacted_entry_metadata()
+out << "|revision:"
+probe_index = 0
+while (probe_index < cached_entry_count) {
+	out << entry_name_cache[probe_index]
+	out << "="
+	out << os::entry_name(current_path, probe_index)
+	out << ";"
+	probe_index += 1
+}
+out << "|gone:"
+out << (int)os::path_exists("beta-dir")
+out << (int)os::path_exists("delete-a.xe")
+out << (int)os::path_exists("delete-b.xe")''',
+    )
+
+    assert output == (
+        "root:alpha-dir=alpha-dir;keep-dir=keep-dir;new-folder=new-folder;"
+        "alpha.xe=alpha.xe;keep.xe=keep.xe;"
+        "identity:777,37,1,1,111|"
+        "child:new-folder:child.xe|"
+        "back:alpha-dir=alpha-dir;keep-dir=keep-dir;new-folder=new-folder;"
+        "alpha.xe=alpha.xe;keep.xe=keep.xe;|"
+        "revision:alpha-dir=alpha-dir;keep-dir=keep-dir;new-folder=new-folder;"
+        "aardvark.xe=aardvark.xe;alpha.xe=alpha.xe;keep.xe=keep.xe;|gone:000"
+    )
+    assert not (tmp_path / "beta-dir").exists()
+    assert not (tmp_path / "delete-a.xe").exists()
+    assert not (tmp_path / "delete-b.xe").exists()
+    trash_names = [path.name for path in (tmp_path / ".xenon-trash").iterdir()]
+    assert any(name.endswith("-beta-dir") for name in trash_names)
+    assert any(name.endswith("-delete-a.xe") for name in trash_names)
+    assert any(name.endswith("-delete-b.xe") for name in trash_names)
+
+
 def test_drag_rotation_is_smooth_and_nucleus_highlight_is_frame_fixed(tmp_path: Path) -> None:
     program = _bounded_explorer_program(
         setup=(
@@ -145,15 +312,16 @@ def test_drag_rotation_is_smooth_and_nucleus_highlight_is_frame_fixed(tmp_path: 
     assert len(frames) == 12
 
     highlights = [_single_color_position(frame, 12) for frame in frames]
-    assert len(set(highlights[1:])) == 1
+    assert len(set(highlights)) == 1
 
     positions = [_single_color_position(frame, 14) for frame in frames]
     displacements = [
         abs(right[0] - left[0]) + abs(right[1] - left[1])
         for left, right in zip(positions[1:], positions[2:])
     ]
-    assert max(displacements) <= 8
-    assert abs(positions[-1][0] - positions[1][0]) + abs(positions[-1][1] - positions[1][1]) >= 8
+    assert max(displacements) <= 4
+    assert sum(step > 0 for step in displacements) >= 4
+    assert abs(positions[-1][0] - positions[1][0]) + abs(positions[-1][1] - positions[1][1]) >= 6
 
 
 def _render_sidebar_state(tmp_path: Path, setup: str, pointer: tuple[int, int]):

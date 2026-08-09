@@ -141,6 +141,99 @@ out << (mine_finish_ticks >= mine_start_ticks)'''
 		)
 		self.assertEqual("2,1,-1", output)
 
+	def test_first_reveal_builds_the_board_and_reveals_a_safe_cell(self) -> None:
+		output = self.run_probe(
+			'''call mine_apply_difficulty(MINE_BEGINNER)
+mine_seed = 99
+call mine_reset()
+call mine_reveal_cell(4, 4)
+out << mine_first_reveal
+out << ","
+out << mine_cells[mine_index(4, 4)]
+out << ","
+out << mine_revealed[mine_index(4, 4)]
+out << ","
+out << mine_state'''
+		)
+		self.assertEqual("0,0,1,0", output)
+
+	def test_correct_chord_clears_neighbors_and_wrong_chord_loses(self) -> None:
+		output = self.run_probe(
+			'''call mine_apply_difficulty(MINE_BEGINNER)
+call mine_reset()
+mine_count = 1
+mine_first_reveal = false
+mine_cells[0] = 1
+mine_revealed[1] = 1
+mine_revealed_count = 1
+mine_flagged[0] = 1
+mine_flags_used = 1
+call mine_chord(1, 0)
+out << mine_state
+out << ","
+out << mine_revealed[2]
+out << ";"
+call mine_reset()
+mine_count = 1
+mine_first_reveal = false
+mine_cells[0] = 1
+mine_revealed[1] = 1
+mine_revealed_count = 1
+mine_flagged[2] = 1
+mine_flags_used = 1
+call mine_chord(1, 0)
+out << mine_state
+out << ","
+out << mine_revealed[0]'''
+		)
+		self.assertEqual("1,1;2,1", output)
+
+	def test_flag_limit_and_compact_frame_are_bounded(self) -> None:
+		output = self.run_probe(
+			'''var probe_flag: int
+call mine_apply_difficulty(MINE_BEGINNER)
+call mine_reset()
+probe_flag = 0
+while (probe_flag < 12) {
+	call mine_toggle_flag(probe_flag % mine_columns, probe_flag / mine_columns)
+	probe_flag += 1
+}
+out << mine_flags_used'''
+		)
+		self.assertEqual("10", output)
+
+		compact = self.source.replace("mine_window.width = 292", "mine_window.width = 120", 1)
+		compact = compact.replace("mine_window.height = 248", "mine_window.height = 82", 1)
+		compact = compact.replace(
+			"while (mine_window.state != graphics::WINDOW_CLOSED) {",
+			"var probe_frame: int\nprobe_frame = 0\nwhile (probe_frame < 1) {",
+			1,
+		)
+		compact = compact.replace(
+			"call graphics::update(mine_window)",
+			"call graphics::update(mine_window)\n\tprobe_frame += 1",
+			1,
+		)
+		frames = []
+		context = RuntimeContext(frame_handler=frames.append)
+		with redirect_stdout(StringIO()):
+			_, error, _ = run("minesweeper-compact.xe", compact, context)
+		self.assertIsNone(error, str(error))
+		self.assertEqual(1, len(frames))
+		self.assertEqual((480, 360), (frames[0].width, frames[0].height))
+		self.assertGreater(sum(color != 0 for color in frames[0].indices), 250)
+
+	def test_polished_tiles_and_keyboard_qol_are_present(self) -> None:
+		for marker in (
+			"mine_draw_flag",
+			"mine_draw_mine",
+			"mine_number_color",
+			"graphics::KEY_ENTER",
+			"graphics::KEY_SPACE",
+			"mine_focus_visible",
+		):
+			self.assertIn(marker, self.source)
+
 
 if __name__ == "__main__":
 	unittest.main()

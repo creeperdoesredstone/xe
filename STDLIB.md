@@ -355,6 +355,14 @@ Local calendar components are available as integer functions `year()`, `month()`
 `day()`, `hour()`, and `minute()`. `hour()` and `minute()` preserve the canonical
 raw syscalls `28` and `29`; the date components are high-level app extensions.
 
+The opt-in host bridge `clipboard_read() -> string` and
+`clipboard_write(text) -> bool` accesses the computer clipboard only when the
+visible **System clipboard** toggle in the desktop IDE is enabled. The toggle is
+enabled for this host release. When disabled or unavailable, reads return an empty
+string and writes return `false`; payloads are bounded to 32,768 characters. These
+syscalls are deliberately unsupported by the Scratch profile, so compatibility
+analysis blocks exact export rather than leaking host clipboard data into a project.
+
 Text files use the opaque `os::File` resource:
 
 ```xe
@@ -492,13 +500,19 @@ not claim that backend until it is implemented and differentially tested.
 
 The Python IDE contains host-level `Xe → SB3`, `Image Studio`, and `Help` tabs; these
 are workbench tools, not Xe windows. Image Studio edits an RGBA project with tools,
-layers, frames, durations, onion-skin preview, undo/redo, and deterministic exports.
+layers, frames, synchronized millisecond/FPS controls, onion-skin preview, undo/redo,
+a brush-footprint cursor, drag-to-pan canvas surround, and deterministic exports.
 `.xip` is the editable canonical ZIP container (sorted members, canonical JSON, fixed
 timestamps); `.ximg` is the compact 16-color runtime form. PNG/GIF/sprite-sheet
-exports preserve host artwork, while the Xe preview makes palette quantization and
-transparency explicit before export.
+exports preserve host artwork. `.sprite3` writes every flattened animation frame as
+a Scratch costume plus a green-flag playback stack; frame wait values are preserved,
+while the UI truthfully notes that Scratch's scheduler can introduce live timing
+jitter. The Xe preview makes palette quantization and transparency explicit before
+XIMG export.
 
-The Xe-to-SB3 converter compiles through the same side-effect-free compiler service
+The Xe-to-SB3 converter can analyze the active editor, a workspace, or any `.xe`
+source selected through the Xenon virtual-drive picker. It compiles through the same
+side-effect-free compiler service
 as Run. It injects XBN into a checksum-pinned Scratch VM template only after an exact
 compatibility gate verifies the address model, static budget, every syscall, and
 literal asset requirements. ZIP member names, duplicate project members, template

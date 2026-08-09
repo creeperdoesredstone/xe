@@ -128,6 +128,14 @@ array view_tilt_target: int[16]
 array view_orbit_phase: int[16]
 array view_orbit_speed: int[16]
 array view_orbit_target: int[16]
+array view_ring_cache_valid: int[16]
+array view_ring_cache_tilt: int[16]
+array view_ring_cache_outer_radius: int[16]
+array view_ring_cache_inner_radius: int[16]
+array view_ring_cache_gap: int[16]
+array view_ring_cache_count: int[16]
+array view_ring_cache_x: int[1280]
+array view_ring_cache_y: int[1280]
 array view_script_count: int[16]
 array view_script_name: string[256]
 array view_script_shell: int[256]
@@ -296,6 +304,7 @@ proc ide_insert_rename_character(value: char) {
 
 proc ide_copy_rename_selection() {
 	var index: int
+	var shared_ok: bool
 	if (!ide_rename_has_selection()) {
 		return
 	}
@@ -305,6 +314,7 @@ proc ide_copy_rename_selection() {
 		call xestring::append_char(clipboard_text, rename_text[index])
 		index += 1
 	}
+	shared_ok = os::clipboard_write(clipboard_text)
 }
 
 proc ide_cut_rename_selection() {
@@ -318,6 +328,19 @@ proc ide_cut_rename_selection() {
 proc ide_paste_rename_selection() {
 	var index: int
 	var value: int
+	var shared_clipboard: string
+	var shared_valid: bool
+	shared_clipboard = os::clipboard_read()
+	if (xestring::strlen(shared_clipboard) > 0) {
+		shared_valid = true
+		index = 0
+		while (index < xestring::strlen(shared_clipboard)) {
+			value = (int)(shared_clipboard[index])
+			if (value == 47 || value == 92) { shared_valid = false }
+			index += 1
+		}
+		if (shared_valid) { call ide_set(clipboard_text, shared_clipboard) }
+	}
 	index = 0
 	while (index < xestring::strlen(clipboard_text)) {
 		value = (int)(clipboard_text[index])
@@ -445,6 +468,7 @@ proc ide_delete() {
 
 proc ide_copy() {
 	var index: int
+	var shared_ok: bool
 	if (ide_has_selection()) {
 		call ide_clear(clipboard_text)
 		index = ide_selection_begin()
@@ -452,6 +476,7 @@ proc ide_copy() {
 			call xestring::append_char(clipboard_text, source[index])
 			index += 1
 		}
+		shared_ok = os::clipboard_write(clipboard_text)
 		call ide_report("Copied selection", false)
 	}
 	else {
@@ -471,6 +496,11 @@ proc ide_cut() {
 }
 
 proc ide_paste() {
+	var shared_clipboard: string
+	shared_clipboard = os::clipboard_read()
+	if (xestring::strlen(shared_clipboard) > 0) {
+		call ide_set(clipboard_text, shared_clipboard)
+	}
 	if (xestring::strlen(clipboard_text) == 0) {
 		call ide_report("Clipboard empty", false)
 		return
@@ -2291,10 +2321,12 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 	else {
 		call graphics::fill_rect(ide_window, x + 2, y + 1, panel_width - 32, 7, graphics::COLOR_1)
 	}
-	if (ide_tree_drop_allowed(".") && pointer_x >= x + 2 && pointer_x < x + panel_width - 30 && pointer_y >= y + 1 && pointer_y < y + 8) {
-		call ide_set(tree_drop_path, ".")
-		tree_drop_valid = true
-		call graphics::fill_rect(ide_window, x + 2, y + 1, panel_width - 32, 7, graphics::COLOR_5)
+	if (tree_dragging) {
+		if (ide_tree_drop_allowed(".") && pointer_x >= x + 2 && pointer_x < x + panel_width - 30 && pointer_y >= y + 1 && pointer_y < y + 8) {
+			call ide_set(tree_drop_path, ".")
+			tree_drop_valid = true
+			call graphics::fill_rect(ide_window, x + 2, y + 1, panel_width - 32, 7, graphics::COLOR_5)
+		}
 	}
 	call draw_ide_text_clipped(x + 3, y + 3, "root /", (panel_width - 36) / 4, graphics::COLOR_7)
 	if (interactive && !popup_open) {
@@ -2325,10 +2357,12 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 		row_x = x + 2
 		if (depth == 1) { row_x = x + 10 }
 		elseif (depth >= 2) { row_x = x + 20 }
-		if (root_is_folder && ide_tree_drop_allowed(child_path) && pointer_x >= row_x && pointer_x < x + panel_width - 14 && pointer_y >= row_y && pointer_y < row_y + 7) {
-			row_tone = graphics::COLOR_5
-			call ide_set(tree_drop_path, child_path)
-			tree_drop_valid = true
+		if (tree_dragging && root_is_folder) {
+			if (ide_tree_drop_allowed(child_path) && pointer_x >= row_x && pointer_x < x + panel_width - 14 && pointer_y >= row_y && pointer_y < row_y + 7) {
+				row_tone = graphics::COLOR_5
+				call ide_set(tree_drop_path, child_path)
+				tree_drop_valid = true
+			}
 		}
 		if (root_is_folder) {
 			folder_direction = 0
@@ -2370,8 +2404,13 @@ proc draw_workspace_explorer(x: int, y: int, panel_width: int, panel_height: int
 			else { call graphics::fill_rect(ide_window, body_x, row_y, row_width, 7, row_tone) }
 			call graphics::draw_text_small(ide_window, label_x - 6, row_y + 1, "F", graphics::COLOR_10)
 		}
-		if (rename_active && ide_strings_equal(rename_path, child_path)) {
-			call draw_ide_inline_rename(label_x - 1, row_y, x + panel_width - label_x - 3)
+		if (rename_active) {
+			if (ide_strings_equal(rename_path, child_path)) {
+				call draw_ide_inline_rename(label_x - 1, row_y, x + panel_width - label_x - 3)
+			}
+			else {
+				call draw_ide_text_clipped(label_x, row_y + 1, root_name, (x + panel_width - label_x - 6) / 4, graphics::COLOR_7)
+			}
 		}
 		else {
 			call draw_ide_text_clipped(label_x, row_y + 1, root_name, (x + panel_width - label_x - 6) / 4, graphics::COLOR_7)
@@ -2559,6 +2598,59 @@ proc draw_visual_orbit(slot: int, center_x: int, center_y: int, radius: int, col
 	}
 }
 
+fn ide_ring_cache_index(slot: int, shell: int, point: int) int {
+	return slot * 76 + shell * 19 + point
+}
+
+proc ide_rebuild_ring_cache(slot: int, outer_radius: int, inner_radius: int, shell_gap: int, shell_count: int) {
+	var shell: int
+	var point: int
+	var angle: int
+	var radius: int
+	var cache_index: int
+	shell = 0
+	while (shell < shell_count) {
+		radius = outer_radius
+		if (shell_count > 1) { radius = inner_radius + shell * shell_gap }
+		point = 0
+		angle = 0
+		while (point < 19) {
+			call ide_project_orbit_point(slot, (float)angle, radius)
+			cache_index = ide_ring_cache_index(slot, shell, point)
+			view_ring_cache_x[cache_index] = ide_projection_x
+			view_ring_cache_y[cache_index] = ide_projection_y
+			point += 1
+			angle += 20
+		}
+		shell += 1
+	}
+	view_ring_cache_tilt[slot] = view_tilt[slot]
+	view_ring_cache_outer_radius[slot] = outer_radius
+	view_ring_cache_inner_radius[slot] = inner_radius
+	view_ring_cache_gap[slot] = shell_gap
+	view_ring_cache_count[slot] = shell_count
+	view_ring_cache_valid[slot] = 1
+}
+
+proc ide_ensure_ring_cache(slot: int, outer_radius: int, inner_radius: int, shell_gap: int, shell_count: int) {
+	if (view_ring_cache_valid[slot] == 0 || view_ring_cache_tilt[slot] != view_tilt[slot] || view_ring_cache_outer_radius[slot] != outer_radius || view_ring_cache_inner_radius[slot] != inner_radius || view_ring_cache_gap[slot] != shell_gap || view_ring_cache_count[slot] != shell_count) {
+		call ide_rebuild_ring_cache(slot, outer_radius, inner_radius, shell_gap, shell_count)
+	}
+}
+
+proc draw_cached_visual_orbit(slot: int, shell: int, center_x: int, center_y: int, color: int) {
+	var point: int
+	var cache_index: int
+	var previous_index: int
+	point = 1
+	while (point < 19) {
+		previous_index = ide_ring_cache_index(slot, shell, point - 1)
+		cache_index = ide_ring_cache_index(slot, shell, point)
+		call graphics::draw_line(ide_window, center_x + view_ring_cache_x[previous_index], center_y + view_ring_cache_y[previous_index], center_x + view_ring_cache_x[cache_index], center_y + view_ring_cache_y[cache_index], color)
+		point += 1
+	}
+}
+
 fn document_shell_population(slot: int, shell: int, count: int) int {
 	var index: int
 	var population: int
@@ -2689,9 +2781,17 @@ proc draw_file_nucleus_view(slot: int, x: int, y: int, area_width: int, area_hei
 	orbit_phase = (view_orbit_phase[slot] / 600) % 360
 	center_x = x + area_width / 2
 	center_y = y + area_height / 2 + 3
+	pointer_x = graphics::pointer_x(ide_window)
+	pointer_y = graphics::pointer_y(ide_window)
+	dx = pointer_x - center_x
+	dy = pointer_y - center_y
 	if (area_width < 74 || area_height < 58) {
 		call draw_ide_file_nucleus_asset(center_x, center_y, 6, is_active, orbit_phase)
 		call graphics::draw_int_small(ide_window, center_x - 2, center_y - 2, count, graphics::WHITE)
+		if (dx * dx + dy * dy < 49) {
+			call graphics::fill_rect(ide_window, x + 3, y + area_height - 9, area_width - 6, 6, graphics::COLOR_8)
+			call draw_ide_text_clipped(x + 5, y + area_height - 8, "main", maximum_chars - 1, graphics::WHITE)
+		}
 		return
 	}
 	shell_count = 1
@@ -2710,17 +2810,12 @@ proc draw_file_nucleus_view(slot: int, x: int, y: int, area_width: int, area_hei
 	if (inner_radius < 12) { inner_radius = 12 }
 	shell_gap = 0
 	if (shell_count > 1) { shell_gap = (outer_radius - inner_radius) / (shell_count - 1) }
+	call ide_ensure_ring_cache(slot, outer_radius, inner_radius, shell_gap, shell_count)
 	shell = 0
 	while (shell < shell_count) {
-		radius = outer_radius
-		if (shell_count > 1) { radius = inner_radius + shell * shell_gap }
-		call draw_visual_orbit(slot, center_x, center_y, radius, graphics::COLOR_8)
+		call draw_cached_visual_orbit(slot, shell, center_x, center_y, graphics::COLOR_8)
 		shell += 1
 	}
-	pointer_x = graphics::pointer_x(ide_window)
-	pointer_y = graphics::pointer_y(ide_window)
-	dx = pointer_x - center_x
-	dy = pointer_y - center_y
 	hover_plane_x = (float)dx
 	hover_tilt_value = view_tilt[slot]
 	hover_tilt_cosine = math::cos((float)hover_tilt_value)
@@ -2747,7 +2842,11 @@ proc draw_file_nucleus_view(slot: int, x: int, y: int, area_width: int, area_hei
 		relationship += 1
 	}
 	call draw_ide_file_nucleus_asset(center_x, center_y, 8, is_active, orbit_phase)
-	call graphics::draw_text_small(ide_window, center_x - 8, center_y - 2, "main", graphics::WHITE)
+	if (dx * dx + dy * dy < 81) {
+		hovered_view = slot
+		call graphics::fill_rect(ide_window, x + 3, y + area_height - 10, area_width - 6, 7, graphics::COLOR_8)
+		call draw_ide_text_clipped(x + 5, y + area_height - 9, "main", maximum_chars - 1, graphics::WHITE)
+	}
 	index = 0
 	while (index < count && index < ide_max_shells * ide_max_shell_items) {
 		shell = view_script_shell[ide_script_cache_index(slot, index)]

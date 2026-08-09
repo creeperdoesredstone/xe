@@ -26,6 +26,8 @@ var mine_first_reveal: bool
 var mine_flag_mode: bool
 var mine_start_ticks: int
 var mine_finish_ticks: int
+var mine_focus_column: int
+var mine_focus_row: int
 
 proc mine_clear_board() {
 	var index: int
@@ -68,6 +70,8 @@ proc mine_reset() {
 	mine_flag_mode = false
 	mine_start_ticks = 0
 	mine_finish_ticks = 0
+	mine_focus_column = mine_columns / 2
+	mine_focus_row = mine_rows / 2
 	mine_random_state = mine_seed % 65536
 	if (mine_random_state < 0) { mine_random_state = -mine_random_state }
 }
@@ -263,7 +267,55 @@ fn mine_elapsed_seconds() int {
 	return (finish - mine_start_ticks) / 1000
 }
 
-proc mine_draw_cell(x: int, y: int, size: int, column: int, row: int, light: bool) {
+fn mine_small_text_width(text: string) int {
+	var index: int
+	var width: int
+	index = 0
+	width = 0
+	while (index < xestring::strlen(text)) {
+		width += graphics::char_advance(text[index], graphics::FONT_SMALL)
+		index += 1
+	}
+	return width
+}
+
+fn mine_number_color(value: int, light: bool) int {
+	if (value == 1) { return graphics::COLOR_10 }
+	if (value == 2) { return graphics::COLOR_8 }
+	if (value == 3) { return graphics::COLOR_14 }
+	if (value == 4) { return graphics::COLOR_11 }
+	if (value == 5) { return graphics::COLOR_6 }
+	if (value == 6) { return graphics::COLOR_12 }
+	if (value == 7) { return graphics::COLOR_7 }
+	if (light) { return graphics::COLOR_1 }
+	return graphics::WHITE
+}
+
+proc mine_draw_flag(x: int, y: int, size: int) {
+	var center_x: int
+	var top: int
+	center_x = x + size / 2
+	top = y + 1
+	call graphics::draw_line(mine_window, center_x - 1, top, center_x - 1, y + size - 2, graphics::COLOR_14)
+	call graphics::draw_line(mine_window, center_x - 1, top, center_x + size / 3, top + size / 4, graphics::COLOR_14)
+	call graphics::draw_line(mine_window, center_x - 2, y + size - 2, center_x + 2, y + size - 2, graphics::COLOR_7)
+}
+
+proc mine_draw_mine(x: int, y: int, size: int) {
+	var center_x: int
+	var center_y: int
+	center_x = x + size / 2
+	center_y = y + size / 2
+	if (size >= 9) {
+		call graphics::draw_circle(mine_window, center_x, center_y, 2, graphics::COLOR_6)
+		call graphics::draw_line(mine_window, center_x - 3, center_y, center_x + 3, center_y, graphics::COLOR_6)
+		call graphics::draw_line(mine_window, center_x, center_y - 3, center_x, center_y + 3, graphics::COLOR_6)
+		call graphics::set_pixel(mine_window, center_x - 1, center_y - 1, graphics::WHITE)
+	}
+	else { call graphics::set_pixel(mine_window, center_x, center_y, graphics::COLOR_6) }
+}
+
+proc mine_draw_cell(x: int, y: int, size: int, column: int, row: int, hovered: bool, focused: bool, light: bool) {
 	var index: int
 	var value: int
 	var fill: int
@@ -277,22 +329,28 @@ proc mine_draw_cell(x: int, y: int, size: int, column: int, row: int, light: boo
 		if (light) { fill = graphics::WHITE }
 		call graphics::fill_rect(mine_window, x, y, size, size, fill)
 		if (mine_cells[index] != 0) {
-			if (size >= 7) { call graphics::draw_text_small(mine_window, x + (size - 3) / 2, y + (size - 5) / 2, "x", graphics::COLOR_6) }
-			else { call graphics::set_pixel(mine_window, x + size / 2, y + size / 2, graphics::COLOR_6) }
+			call mine_draw_mine(x, y, size)
 		}
 		else {
 			value = mine_adjacent_count(column, row)
-			if (value > 0 && size >= 7) { call graphics::draw_int_small(mine_window, x + (size - 3) / 2, y + (size - 5) / 2, value, graphics::COLOR_10 + value % 5) }
+			if (value > 0 && size >= 7) { call graphics::draw_int_small(mine_window, x + (size - 3) / 2, y + (size - 5) / 2, value, mine_number_color(value, light)) }
 		}
 	}
 	else {
+		if (hovered) { fill = graphics::COLOR_8 }
 		call graphics::fill_rect(mine_window, x, y, size, size, fill)
-		if (size >= 4) { call graphics::draw_rect(mine_window, x, y, size, size, graphics::COLOR_8) }
+		if (size >= 4) {
+			call graphics::draw_line(mine_window, x, y, x + size - 1, y, graphics::COLOR_7)
+			call graphics::draw_line(mine_window, x, y, x, y + size - 1, graphics::COLOR_7)
+			call graphics::draw_line(mine_window, x, y + size - 1, x + size - 1, y + size - 1, graphics::COLOR_1)
+			call graphics::draw_line(mine_window, x + size - 1, y, x + size - 1, y + size - 1, graphics::COLOR_1)
+		}
 		if (mine_flagged[index] != 0) {
-			if (size >= 7) { call graphics::draw_text_small(mine_window, x + (size - 3) / 2, y + (size - 5) / 2, "F", graphics::COLOR_14) }
+			if (size >= 7) { call mine_draw_flag(x, y, size) }
 			else { call graphics::set_pixel(mine_window, x + size / 2, y + size / 2, graphics::COLOR_14) }
 		}
 	}
+	if (focused && size >= 5) { call graphics::draw_rect(mine_window, x + 1, y + 1, size - 2, size - 2, graphics::WHITE) }
 }
 
 mine_seed = 131
@@ -310,12 +368,20 @@ var mine_column: int
 var mine_row: int
 var mine_pointer_column: int
 var mine_pointer_row: int
+var mine_pointer_x: int
+var mine_pointer_y: int
 var mine_key: int
 var mine_light: bool
 var mine_button_width: int
+var mine_action_width: int
 var mine_status_color: int
 var mine_mode_label: string
 var mine_status_label: string
+var mine_status_width: int
+var mine_easy_label: string
+var mine_medium_label: string
+var mine_hard_label: string
+var mine_focus_visible: bool
 var mine_beginner_tone: int
 var mine_intermediate_tone: int
 var mine_expert_tone: int
@@ -327,12 +393,15 @@ mine_window.height = 248
 mine_window.title = "Xenon Minesweeper"
 mine_window.ui_scale = 1
 mine_window.state = graphics::WINDOW_NORMAL
+mine_focus_visible = false
 
 while (mine_window.state != graphics::WINDOW_CLOSED) {
 	call graphics::begin_draw(mine_window)
 	if (!mine_window.is_minimized()) {
 		mine_width = graphics::content_width(mine_window)
 		mine_height = graphics::content_height(mine_window)
+		mine_pointer_x = graphics::pointer_x(mine_window)
+		mine_pointer_y = graphics::pointer_y(mine_window)
 		mine_light = os::theme_mode == os::THEME_LIGHT
 		mine_status_color = graphics::COLOR_10
 		if (mine_light) { mine_status_color = graphics::COLOR_2 }
@@ -342,31 +411,54 @@ while (mine_window.state != graphics::WINDOW_CLOSED) {
 		if (mine_difficulty == MINE_BEGINNER) { mine_beginner_tone = graphics::COLOR_8 }
 		elseif (mine_difficulty == MINE_INTERMEDIATE) { mine_intermediate_tone = graphics::COLOR_8 }
 		else { mine_expert_tone = graphics::COLOR_8 }
+		mine_easy_label = "Beginner"
+		mine_medium_label = "Intermediate"
+		mine_hard_label = "Expert"
+		if (mine_width < 210) {
+			mine_easy_label = "B"
+			mine_medium_label = "I"
+			mine_hard_label = "E"
+		}
+		call graphics::fill_rect(mine_window, 2, 2, mine_width - 4, 20, graphics::COLOR_1)
+		call graphics::draw_rect(mine_window, 2, 2, mine_width - 4, 20, graphics::COLOR_5)
 		mine_button_width = (mine_width - 12) / 3
-		if (graphics::button_flat(mine_window, 3, 3, mine_button_width, 8, "Beginner", mine_beginner_tone)) {
+		if (graphics::button_flat(mine_window, 3, 3, mine_button_width, 8, mine_easy_label, mine_beginner_tone)) {
 			call mine_apply_difficulty(MINE_BEGINNER)
 			call mine_reset()
 		}
-		if (graphics::button_flat(mine_window, 6 + mine_button_width, 3, mine_button_width, 8, "Intermediate", mine_intermediate_tone)) {
+		if (graphics::button_flat(mine_window, 6 + mine_button_width, 3, mine_button_width, 8, mine_medium_label, mine_intermediate_tone)) {
 			call mine_apply_difficulty(MINE_INTERMEDIATE)
 			call mine_reset()
 		}
-		if (graphics::button_flat(mine_window, 9 + mine_button_width * 2, 3, mine_button_width, 8, "Expert", mine_expert_tone)) {
+		if (graphics::button_flat(mine_window, 9 + mine_button_width * 2, 3, mine_button_width, 8, mine_hard_label, mine_expert_tone)) {
 			call mine_apply_difficulty(MINE_EXPERT)
 			call mine_reset()
 		}
 		mine_mode_label = "Reveal"
 		if (mine_flag_mode) { mine_mode_label = "Flag" }
-		if (graphics::button_tone(mine_window, 3, 13, 54, 8, mine_mode_label, graphics::COLOR_8)) { mine_flag_mode = !mine_flag_mode }
-		if (graphics::button_flat(mine_window, 60, 13, 48, 8, "Restart", graphics::COLOR_8)) { call mine_reset() }
-		if (graphics::button_flat(mine_window, 111, 13, 42, 8, "New seed", graphics::COLOR_5)) {
-			mine_seed += 1
-			call mine_reset()
+		if (mine_width < 230) {
+			if (mine_flag_mode) { mine_mode_label = "F" }
+			else { mine_mode_label = "R" }
+			mine_action_width = (mine_width - 12) / 3
+			if (graphics::button_tone(mine_window, 3, 13, mine_action_width, 8, mine_mode_label, graphics::COLOR_8)) { mine_flag_mode = !mine_flag_mode }
+			if (graphics::button_flat(mine_window, 6 + mine_action_width, 13, mine_action_width, 8, "Reset", graphics::COLOR_8)) { call mine_reset() }
+			if (graphics::button_flat(mine_window, 9 + mine_action_width * 2, 13, mine_action_width, 8, "+ Seed", graphics::COLOR_5)) {
+				mine_seed += 1
+				call mine_reset()
+			}
 		}
-		call graphics::draw_text_small(mine_window, 158, 15, "M", mine_status_color)
-		call graphics::draw_int_small(mine_window, 163, 15, mine_count - mine_flags_used, mine_status_color)
-		call graphics::draw_text_small(mine_window, mine_width - 42, 15, "T", mine_status_color)
-		call graphics::draw_int_small(mine_window, mine_width - 36, 15, mine_elapsed_seconds(), mine_status_color)
+		else {
+			if (graphics::button_tone(mine_window, 3, 13, 48, 8, mine_mode_label, graphics::COLOR_8)) { mine_flag_mode = !mine_flag_mode }
+			if (graphics::button_flat(mine_window, 54, 13, 42, 8, "Reset", graphics::COLOR_8)) { call mine_reset() }
+			if (graphics::button_flat(mine_window, 99, 13, 42, 8, "+ Seed", graphics::COLOR_5)) {
+				mine_seed += 1
+				call mine_reset()
+			}
+			call graphics::draw_text_small(mine_window, 147, 15, "M", mine_status_color)
+			call graphics::draw_int_small(mine_window, 152, 15, mine_count - mine_flags_used, mine_status_color)
+			call graphics::draw_text_small(mine_window, mine_width - 42, 15, "T", mine_status_color)
+			call graphics::draw_int_small(mine_window, mine_width - 36, 15, mine_elapsed_seconds(), mine_status_color)
+		}
 
 		mine_board_y = 25
 		mine_cell_size = (mine_width - 8) / mine_columns
@@ -376,11 +468,17 @@ while (mine_window.state != graphics::WINDOW_CLOSED) {
 		mine_board_width = mine_cell_size * mine_columns
 		mine_board_height = mine_cell_size * mine_rows
 		mine_board_x = (mine_width - mine_board_width) / 2
+		mine_pointer_column = -1
+		mine_pointer_row = -1
+		if (mine_pointer_x >= mine_board_x && mine_pointer_x < mine_board_x + mine_board_width && mine_pointer_y >= mine_board_y && mine_pointer_y < mine_board_y + mine_board_height) {
+			mine_pointer_column = (mine_pointer_x - mine_board_x) / mine_cell_size
+			mine_pointer_row = (mine_pointer_y - mine_board_y) / mine_cell_size
+		}
 		mine_column = 0
 		while (mine_column < mine_columns) {
 			mine_row = 0
 			while (mine_row < mine_rows) {
-				call mine_draw_cell(mine_board_x + mine_column * mine_cell_size, mine_board_y + mine_row * mine_cell_size, mine_cell_size, mine_column, mine_row, mine_light)
+				call mine_draw_cell(mine_board_x + mine_column * mine_cell_size, mine_board_y + mine_row * mine_cell_size, mine_cell_size, mine_column, mine_row, mine_column == mine_pointer_column && mine_row == mine_pointer_row, mine_focus_visible && mine_column == mine_focus_column && mine_row == mine_focus_row, mine_light)
 				mine_row += 1
 			}
 			mine_column += 1
@@ -388,17 +486,23 @@ while (mine_window.state != graphics::WINDOW_CLOSED) {
 		if (mine_state != MINE_PLAYING) {
 			mine_status_label = "Board cleared"
 			if (mine_state == MINE_LOST) { mine_status_label = "Mine hit - press Restart" }
-			if (mine_board_width < 100) {
+			if (mine_board_width < 50) {
+				if (mine_state == MINE_LOST) { mine_status_label = "X" }
+				else { mine_status_label = "OK" }
+			}
+			elseif (mine_board_width < 100) {
 				if (mine_state == MINE_LOST) { mine_status_label = "Mine hit" }
 				else { mine_status_label = "Cleared" }
 			}
+			mine_status_width = mine_small_text_width(mine_status_label)
 			call graphics::fill_rect(mine_window, mine_board_x + 3, mine_board_y + mine_board_height / 2 - 6, mine_board_width - 6, 12, graphics::COLOR_1)
-			call graphics::draw_text_small(mine_window, mine_board_x + 7, mine_board_y + mine_board_height / 2 - 2, mine_status_label, graphics::WHITE)
+			call graphics::draw_text_small(mine_window, mine_board_x + (mine_board_width - mine_status_width) / 2, mine_board_y + mine_board_height / 2 - 2, mine_status_label, graphics::WHITE)
 		}
 
-		if ((graphics::mouse_pressed() || graphics::right_mouse_pressed()) && graphics::pointer_x(mine_window) >= mine_board_x && graphics::pointer_x(mine_window) < mine_board_x + mine_board_width && graphics::pointer_y(mine_window) >= mine_board_y && graphics::pointer_y(mine_window) < mine_board_y + mine_board_height) {
-			mine_pointer_column = (graphics::pointer_x(mine_window) - mine_board_x) / mine_cell_size
-			mine_pointer_row = (graphics::pointer_y(mine_window) - mine_board_y) / mine_cell_size
+		if ((graphics::mouse_pressed() || graphics::right_mouse_pressed()) && mine_pointer_column >= 0 && mine_pointer_row >= 0) {
+			mine_focus_column = mine_pointer_column
+			mine_focus_row = mine_pointer_row
+			mine_focus_visible = false
 			if (graphics::right_mouse_pressed() || mine_flag_mode) { call mine_toggle_flag(mine_pointer_column, mine_pointer_row) }
 			elseif (mine_revealed[mine_index(mine_pointer_column, mine_pointer_row)] != 0) { call mine_chord(mine_pointer_column, mine_pointer_row) }
 			else { call mine_reveal_cell(mine_pointer_column, mine_pointer_row) }
@@ -420,6 +524,27 @@ while (mine_window.state != graphics::WINDOW_CLOSED) {
 			}
 			elseif (mine_key == 70 || mine_key == 102) { mine_flag_mode = !mine_flag_mode }
 			elseif (mine_key == 82 || mine_key == 114) { call mine_reset() }
+			elseif (mine_key == graphics::KEY_LEFT) {
+				if (mine_focus_column > 0) { mine_focus_column -= 1 }
+				mine_focus_visible = true
+			}
+			elseif (mine_key == graphics::KEY_RIGHT) {
+				if (mine_focus_column + 1 < mine_columns) { mine_focus_column += 1 }
+				mine_focus_visible = true
+			}
+			elseif (mine_key == graphics::KEY_UP) {
+				if (mine_focus_row > 0) { mine_focus_row -= 1 }
+				mine_focus_visible = true
+			}
+			elseif (mine_key == graphics::KEY_DOWN) {
+				if (mine_focus_row + 1 < mine_rows) { mine_focus_row += 1 }
+				mine_focus_visible = true
+			}
+			elseif (mine_key == graphics::KEY_ENTER) {
+				if (mine_revealed[mine_index(mine_focus_column, mine_focus_row)] != 0) { call mine_chord(mine_focus_column, mine_focus_row) }
+				else { call mine_reveal_cell(mine_focus_column, mine_focus_row) }
+			}
+			elseif (mine_key == graphics::KEY_SPACE) { call mine_toggle_flag(mine_focus_column, mine_focus_row) }
 			mine_key = graphics::read_key()
 		}
 	}

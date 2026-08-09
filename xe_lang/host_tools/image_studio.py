@@ -14,6 +14,7 @@ from PyQt6.QtGui import (
 	QMouseEvent,
 	QPainter,
 	QPen,
+	QPolygon,
 	QPixmap,
 	QShortcut,
 	QWheelEvent,
@@ -64,6 +65,57 @@ TOOLS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+class StepperButton(QToolButton):
+	def __init__(self, points_up: bool, parent: QWidget | None = None):
+		super().__init__(parent)
+		self.points_up = points_up
+		self.setObjectName("StepperButton")
+
+	def paintEvent(self, event) -> None:
+		super().paintEvent(event)
+		painter = QPainter(self)
+		painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+		painter.setPen(Qt.PenStyle.NoPen)
+		painter.setBrush(self.palette().buttonText())
+		center_x = self.width() // 2
+		center_y = self.height() // 2
+		if self.points_up:
+			points = QPolygon((QPoint(center_x, center_y - 2), QPoint(center_x - 3, center_y + 2), QPoint(center_x + 3, center_y + 2)))
+		else:
+			points = QPolygon((QPoint(center_x - 3, center_y - 2), QPoint(center_x + 3, center_y - 2), QPoint(center_x, center_y + 2)))
+		painter.drawPolygon(points)
+		painter.end()
+
+
+class CompactStepper(QWidget):
+	"""A number field with deliberately aligned, accessible step buttons."""
+
+	def __init__(self, spinbox: QSpinBox, parent: QWidget | None = None):
+		super().__init__(parent)
+		self.spinbox = spinbox
+		self.spinbox.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+		layout = QHBoxLayout(self)
+		layout.setContentsMargins(0, 0, 0, 0)
+		layout.setSpacing(2)
+		layout.addWidget(self.spinbox, 1)
+		buttons = QVBoxLayout()
+		buttons.setContentsMargins(0, 0, 0, 0)
+		buttons.setSpacing(1)
+		self.up_button = StepperButton(True)
+		self.up_button.setAccessibleName("Increase value")
+		self.up_button.setAutoRepeat(True)
+		self.up_button.clicked.connect(self.spinbox.stepUp)
+		self.down_button = StepperButton(False)
+		self.down_button.setAccessibleName("Decrease value")
+		self.down_button.setAutoRepeat(True)
+		self.down_button.clicked.connect(self.spinbox.stepDown)
+		for button in (self.up_button, self.down_button):
+			button.setFixedSize(20, 14)
+		buttons.addWidget(self.up_button)
+		buttons.addWidget(self.down_button)
+		layout.addLayout(buttons)
+
+
 class ImageCanvas(QWidget):
 	document_changed = pyqtSignal()
 	color_picked = pyqtSignal(QColor)
@@ -84,6 +136,7 @@ class ImageCanvas(QWidget):
 		self._start_image_pos: QPoint | None = None
 		self._last_image_pos: QPoint | None = None
 		self._preview_image_pos: QPoint | None = None
+		self._hover_image_pos: QPoint | None = None
 		self.selection_rect = QRect()
 		self._moving_selection = None
 		self._selection_anchor = QPoint()
@@ -183,6 +236,21 @@ class ImageCanvas(QWidget):
 
 	def _paint_preview(self, painter: QPainter) -> None:
 		origin = self._canvas_origin()
+		if self._hover_image_pos is not None and self.tool in {"pencil", "eraser"}:
+			# Pixel tools operate on an integer-sized footprint. Draw its boundary on
+			# the same grid without smoothing so the preview is truthful at any zoom.
+			half = (self.brush_size - 1) / 2
+			left = origin.x() + (self._hover_image_pos.x() - half) * self.zoom
+			top = origin.y() + (self._hover_image_pos.y() - half) * self.zoom
+			size = max(1.0, self.brush_size * self.zoom)
+			brush_rect = QRectF(left, top, size, size)
+			painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+			painter.setBrush(Qt.BrushStyle.NoBrush)
+			painter.setPen(QPen(QColor(0, 0, 0, 210), 3))
+			painter.drawRect(brush_rect)
+			preview_color = QColor("#ffffff") if self.tool == "pencil" else QColor("#ff9ca8")
+			painter.setPen(QPen(preview_color, 1, Qt.PenStyle.DashLine))
+			painter.drawRect(brush_rect)
 		if self._start_image_pos is not None and self._preview_image_pos is not None and self.tool in {"line", "rect", "ellipse"}:
 			start = QPointF(
 				origin.x() + (self._start_image_pos.x() + 0.5) * self.zoom,
@@ -246,6 +314,11 @@ class ImageCanvas(QWidget):
 			return
 		position = self._to_image(event.position())
 		if position is None:
+			# The dark surround is a dedicated view-navigation surface. This keeps
+			# left-drag drawing unambiguous while removing scrollbar-only panning.
+			self._panning = True
+			self.setCursor(Qt.CursorShape.ClosedHandCursor)
+			event.accept()
 			return
 		self._pointer_down = True
 		self._start_image_pos = position
@@ -281,6 +354,7 @@ class ImageCanvas(QWidget):
 		self.update()
 
 	def mouseMoveEvent(self, event: QMouseEvent) -> None:
+		self._hover_image_pos = self._to_image(event.position())
 		if self._panning:
 			delta = event.position() - self._last_widget_pos
 			self.pan += delta
@@ -288,6 +362,7 @@ class ImageCanvas(QWidget):
 			self.update()
 			return
 		if not self._pointer_down:
+			self.update()
 			return
 		position = self._to_image(event.position(), clamp=True)
 		if position is None:
@@ -334,6 +409,11 @@ class ImageCanvas(QWidget):
 		self._last_image_pos = None
 		self._preview_image_pos = None
 		self.update()
+
+	def leaveEvent(self, event) -> None:
+		self._hover_image_pos = None
+		self.update()
+		super().leaveEvent(event)
 
 	def keyPressEvent(self, event) -> None:
 		if event.key() == Qt.Key.Key_Space:
@@ -428,9 +508,11 @@ class ImageStudioPane(QWidget):
 		self.brush_size = QSpinBox()
 		self.brush_size.setRange(1, 64)
 		self.brush_size.setValue(1)
-		self.brush_size.setMaximumWidth(64)
+		self.brush_size.setMaximumWidth(56)
 		self.brush_size.valueChanged.connect(self._set_brush_size)
-		toolbar_layout.addWidget(self.brush_size)
+		self.brush_stepper = CompactStepper(self.brush_size)
+		self.brush_stepper.setMaximumWidth(82)
+		toolbar_layout.addWidget(self.brush_stepper)
 		toolbar_layout.addStretch(1)
 		self.undo_button = QToolButton()
 		self.undo_button.setText("Undo")
@@ -514,23 +596,25 @@ class ImageStudioPane(QWidget):
 
 		timeline = QFrame()
 		timeline.setObjectName("ToolCard")
-		timeline_layout = QHBoxLayout(timeline)
+		timeline_layout = QVBoxLayout(timeline)
 		timeline_layout.setContentsMargins(8, 6, 8, 6)
+		timeline_layout.setSpacing(4)
+		frames_row = QHBoxLayout()
 		self.play_button = QToolButton()
 		self.play_button.setText("▶")
 		self.play_button.setToolTip("Play animation")
 		self.play_button.setCheckable(True)
 		self.play_button.toggled.connect(self._toggle_playback)
-		timeline_layout.addWidget(self.play_button)
+		frames_row.addWidget(self.play_button)
 		self.onion_checkbox = QCheckBox("Onion skin")
 		self.onion_checkbox.toggled.connect(self._toggle_onion)
-		timeline_layout.addWidget(self.onion_checkbox)
+		frames_row.addWidget(self.onion_checkbox)
 		self.frame_list = QListWidget()
 		self.frame_list.setFlow(QListWidget.Flow.LeftToRight)
 		self.frame_list.setWrapping(False)
 		self.frame_list.setMaximumHeight(58)
 		self.frame_list.currentRowChanged.connect(self._select_frame)
-		timeline_layout.addWidget(self.frame_list, 1)
+		frames_row.addWidget(self.frame_list, 1)
 		for text, tooltip, slot in (
 			("+", "Add blank frame", self.add_frame),
 			("Copy", "Duplicate current frame", self.copy_frame),
@@ -540,22 +624,41 @@ class ImageStudioPane(QWidget):
 			button.setText(text)
 			button.setToolTip(tooltip)
 			button.clicked.connect(slot)
-			timeline_layout.addWidget(button)
+			frames_row.addWidget(button)
+		timeline_layout.addLayout(frames_row)
+		controls_row = QHBoxLayout()
+		controls_row.addStretch(1)
 		self.zoom_label = QLabel("100%")
 		self.zoom_label.setMinimumWidth(52)
-		timeline_layout.addWidget(self.zoom_label)
+		controls_row.addWidget(self.zoom_label)
 		fit_button = QToolButton()
 		fit_button.setText("Fit")
 		fit_button.clicked.connect(self.canvas.fit_to_view)
-		timeline_layout.addWidget(fit_button)
-		timeline_layout.addWidget(QLabel("ms"))
+		controls_row.addWidget(fit_button)
+		controls_row.addWidget(QLabel("Frame"))
 		self.duration_spin = QSpinBox()
 		self.duration_spin.setRange(20, 60_000)
 		self.duration_spin.setSingleStep(10)
-		self.duration_spin.setMaximumWidth(78)
+		self.duration_spin.setMinimumWidth(80)
+		self.duration_spin.setMaximumWidth(84)
+		self.duration_spin.setSuffix(" ms")
 		self.duration_spin.setToolTip("Current frame duration in milliseconds")
 		self.duration_spin.editingFinished.connect(self._set_frame_duration)
-		timeline_layout.addWidget(self.duration_spin)
+		self.duration_stepper = CompactStepper(self.duration_spin)
+		self.duration_stepper.setMaximumWidth(110)
+		controls_row.addWidget(self.duration_stepper)
+		controls_row.addWidget(QLabel("FPS"))
+		self.fps_spin = QSpinBox()
+		self.fps_spin.setRange(1, 50)
+		self.fps_spin.setMaximumWidth(52)
+		self.fps_spin.setToolTip(
+			"Frames per second for the current frame; updates its millisecond duration"
+		)
+		self.fps_spin.editingFinished.connect(self._set_frame_fps)
+		self.fps_stepper = CompactStepper(self.fps_spin)
+		self.fps_stepper.setMaximumWidth(80)
+		controls_row.addWidget(self.fps_stepper)
+		timeline_layout.addLayout(controls_row)
 		root.addWidget(timeline)
 
 		QShortcut(QKeySequence.StandardKey.Undo, self.canvas, activated=self.undo)
@@ -638,7 +741,7 @@ class ImageStudioPane(QWidget):
 			self,
 			"Export image",
 			self.document.project.name,
-			"PNG image (*.png);;Animated GIF (*.gif);;Sprite sheet (*.png);;Xe image project (*.xip);;Xe runtime image (*.ximg)",
+			"PNG image (*.png);;Animated GIF (*.gif);;Sprite sheet (*.png);;Scratch sprite (*.sprite3);;Xe image project (*.xip);;Xe runtime image (*.ximg)",
 		)
 		if not path:
 			return
@@ -659,7 +762,20 @@ class ImageStudioPane(QWidget):
 			self.current_path = output
 			self.document.modified = False
 		self._refresh_all()
-		QMessageBox.information(self, "Export complete", f"Written to:\n{output}")
+		note = ""
+		if kind == "scratch-sprite":
+			note = (
+				"\n\nEvery visible frame was flattened into a Scratch costume and the requested "
+				"frame durations were written into a green-flag playback script. Scratch "
+				"schedules waits on its own tick, so live timing can vary slightly."
+			)
+		elif kind == "ximg":
+			note = (
+				"\n\nAnimation frames and durations are ready for graphics::load_image. "
+				"XIMG uses the portable 16-colour Xe/Scratch palette and reports an error "
+				"instead of exceeding the 200,000-word limit."
+			)
+		QMessageBox.information(self, "Export complete", f"Written to:\n{output}{note}")
 
 	def _confirm_discard_changes(self) -> bool:
 		if not self.document.modified:
@@ -678,6 +794,8 @@ class ImageStudioPane(QWidget):
 	def _export_selection(selected_filter: str) -> tuple[ExportKind, str]:
 		if "GIF" in selected_filter:
 			return "gif", ".gif"
+		if "Scratch sprite" in selected_filter:
+			return "scratch-sprite", ".sprite3"
 		if "Sprite" in selected_filter:
 			return "sprite-sheet", ".png"
 		if "project" in selected_filter:
@@ -773,6 +891,17 @@ class ImageStudioPane(QWidget):
 			project.frame_durations_ms[project.current_frame] = value
 			self._refresh_all()
 
+	def _set_frame_fps(self) -> None:
+		if self._refreshing:
+			return
+		project = self.document.project
+		value = max(1, self.fps_spin.value())
+		duration = max(20, min(60_000, round(1000 / value)))
+		if project.frame_durations_ms[project.current_frame] != duration:
+			self.document.checkpoint()
+			project.frame_durations_ms[project.current_frame] = duration
+			self._refresh_all()
+
 	def _select_frame(self, row: int) -> None:
 		if self._refreshing or not 0 <= row < self.document.project.frame_count:
 			return
@@ -844,7 +973,9 @@ class ImageStudioPane(QWidget):
 			self.frame_list.addItem(item)
 		self.frame_list.setCurrentRow(project.current_frame)
 		self.frame_list.scrollToItem(self.frame_list.currentItem())
-		self.duration_spin.setValue(project.frame_durations_ms[project.current_frame])
+		duration = project.frame_durations_ms[project.current_frame]
+		self.duration_spin.setValue(duration)
+		self.fps_spin.setValue(max(1, min(50, round(1000 / duration))))
 
 	def _refresh_preview(self) -> None:
 		if not hasattr(self, "preview"):

@@ -53,6 +53,7 @@ PALETTES = (
 BACKGROUND_NAMES = ("Black", "Navy", "Slate")
 BACKGROUND_COLORS = (0, 1, 8)
 SETTINGS_SCHEMA_VERSION = 1
+CLIPBOARD_TEXT_LIMIT = 32_768
 
 
 def default_settings_path() -> Path:
@@ -83,11 +84,44 @@ class OSDevice:
 		settings: OSSettings | None = None,
 		now_provider: Callable[[], datetime] | None = None,
 		settings_path: str | Path | None = None,
+		clipboard_reader: Callable[[], str] | None = None,
+		clipboard_writer: Callable[[str], bool] | None = None,
 	) -> None:
 		self._lock = RLock()
 		self._settings_path = Path(settings_path).resolve() if settings_path is not None else None
 		self._settings = settings or self._load_settings() or OSSettings()
 		self._now_provider = now_provider or datetime.now
+		self._clipboard_reader = clipboard_reader
+		self._clipboard_writer = clipboard_writer
+
+	def set_clipboard_handlers(
+		self,
+		reader: Callable[[], str] | None,
+		writer: Callable[[str], bool] | None,
+	) -> None:
+		with self._lock:
+			self._clipboard_reader = reader
+			self._clipboard_writer = writer
+
+	def clipboard_read(self) -> str:
+		with self._lock:
+			reader = self._clipboard_reader
+		if reader is None:
+			return ""
+		try:
+			return str(reader())[:CLIPBOARD_TEXT_LIMIT]
+		except Exception:
+			return ""
+
+	def clipboard_write(self, text: str) -> bool:
+		with self._lock:
+			writer = self._clipboard_writer
+		if writer is None:
+			return False
+		try:
+			return bool(writer(str(text)[:CLIPBOARD_TEXT_LIMIT]))
+		except Exception:
+			return False
 
 	@staticmethod
 	def _bounded(value: object, default: int, minimum: int, maximum: int) -> int:

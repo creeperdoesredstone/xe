@@ -237,7 +237,7 @@ def capability_for_syscall(syscall: int) -> str:
 		or 270 <= syscall <= 276
 	):
 		return "app.graphics"
-	if 130 <= syscall <= 141 or 180 <= syscall <= 196 or 250 <= syscall <= 252:
+	if 130 <= syscall <= 141 or 180 <= syscall <= 196 or 250 <= syscall <= 252 or 292 <= syscall <= 293:
 		return "app.os"
 	if 150 <= syscall <= 152:
 		return "app.window"

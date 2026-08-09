@@ -8,6 +8,7 @@ import unittest
 
 from runtime import RuntimeContext, run
 from xe_lang.compiler_service import compile_source
+from xe_lang.devices.input import LEFT_BUTTON
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -97,8 +98,125 @@ out << audio::position(music_audio_track)'''
 			self.assertIn(marker, self.source)
 		self.assertIn('"XMusic note playback"', self.source)
 		self.assertIn("music_small_text_width", self.source)
-		self.assertIn('"No .xmusic discs"', self.source)
+		self.assertIn('"Platter empty"', self.source)
 		self.assertNotRegex(self.source.lower(), r"socket|request\(|http|thread|subprocess")
+
+	def test_note_engine_remains_a_no_audio_fallback(self) -> None:
+		output = self.run_probe(
+			'''music_audio_available = false
+music_disc_inserted = true
+music_playing = true
+music_playhead_ms = 0
+music_delta_ms = 125
+call music_update_sequencer()
+out << music_playhead_ms
+out << ","
+out << music_current_step
+out << ","
+out << music_playing'''
+		)
+		self.assertEqual("125,0,-1", output)
+
+	def test_whole_disc_motion_and_real_tonearm_geometry_are_explicit(self) -> None:
+		for marker in (
+			"music_draw_tonearm",
+			"music_draw_empty_platter",
+			"music_render_disc_x",
+			"music_render_disc_y",
+			"music_disc_drag_offset_x",
+			"music_disc_drag_offset_y",
+			"music_disc_drag_was_playing",
+			"rotation + mark * 120",
+			"release outside to shelve",
+		):
+			self.assertIn(marker, self.source)
+		self.assertNotIn("marker_x", self.source)
+		self.assertNotIn("marker_y", self.source)
+
+		output = self.run_probe(
+			'''var probe_angle: float
+probe_angle = music_normalize_angle(350.0)
+out << (int)probe_angle
+out << ","
+probe_angle = music_normalize_angle(-350.0)
+out << (int)probe_angle'''
+		)
+		self.assertEqual("-10,10", output)
+
+	def test_lift_drag_moves_the_full_record_with_the_pointer(self) -> None:
+		source = self.source.replace(
+			"while (music_window.state != graphics::WINDOW_CLOSED) {",
+			"var probe_frame: int\nprobe_frame = 0\nwhile (probe_frame < 4) {",
+			1,
+		)
+		source = source.replace(
+			"call graphics::update(music_window)",
+			"call graphics::update(music_window)\n\tprobe_frame += 1",
+			1,
+		)
+		frames = []
+		context: RuntimeContext
+
+		def on_frame(frame) -> None:
+			frames.append(frame)
+			windows = context.vm.devices.windows
+			origin_x = windows.content_x(1)
+			origin_y = windows.content_y(1)
+			if len(frames) == 1:
+				context.vm.devices.input.move_pointer(origin_x + 149, origin_y + 105)
+				context.vm.devices.input.set_button(LEFT_BUTTON, True)
+			elif len(frames) == 2:
+				context.vm.devices.input.move_pointer(origin_x + 204, origin_y + 105)
+			elif len(frames) == 3:
+				context.vm.devices.input.set_button(LEFT_BUTTON, False)
+
+		with tempfile.TemporaryDirectory() as drive:
+			context = RuntimeContext(filesystem_root=drive, frame_handler=on_frame)
+			with redirect_stdout(StringIO()):
+				_, error, _ = run("xenon-music-drag.xe", source, context)
+		self.assertIsNone(error, str(error))
+		self.assertEqual(4, len(frames))
+
+		origin_x = context.vm.devices.windows.content_x(1)
+		origin_y = context.vm.devices.windows.content_y(1)
+		def accent_center(frame) -> float:
+			xs = []
+			for y in range(origin_y + 25, origin_y + 185):
+				for x in range(origin_x + 3, origin_x + 290):
+					if frame.indices[y * frame.width + x] == 10:
+						xs.append(x)
+			self.assertGreater(len(xs), 30)
+			return sum(xs) / len(xs)
+
+		self.assertGreater(accent_center(frames[2]) - accent_center(frames[0]), 35.0)
+
+	def test_normal_compact_and_open_library_frames_render(self) -> None:
+		for width, height, setup in (
+			(300, 224, ""),
+			(170, 106, ""),
+			(300, 224, "music_inventory_open = true\n"),
+		):
+			with self.subTest(width=width, height=height, setup=bool(setup)):
+				source = self.source.replace("music_window.width = 300", f"music_window.width = {width}", 1)
+				source = source.replace("music_window.height = 224", f"music_window.height = {height}", 1)
+				source = source.replace(
+					"while (music_window.state != graphics::WINDOW_CLOSED) {",
+					f"{setup}var probe_frame: int\nprobe_frame = 0\nwhile (probe_frame < 1) {{",
+					1,
+				)
+				source = source.replace(
+					"call graphics::update(music_window)",
+					"call graphics::update(music_window)\n\tprobe_frame += 1",
+					1,
+				)
+				frames = []
+				with tempfile.TemporaryDirectory() as drive:
+					context = RuntimeContext(filesystem_root=drive, frame_handler=frames.append)
+					with redirect_stdout(StringIO()):
+						_, error, _ = run("xenon-music-frame.xe", source, context)
+				self.assertIsNone(error, str(error))
+				self.assertEqual(1, len(frames))
+				self.assertGreater(sum(color != 0 for color in frames[0].indices), 300)
 
 
 if __name__ == "__main__":
