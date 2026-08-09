@@ -435,23 +435,27 @@ proc draw_icons_time_preview(x: int, y: int, width: int, height: int) {
 }
 
 proc draw_settings_icon(x: int, y: int, active_tab: int) {
+	var sound_icon: string
+	var personalization_icon: string
+	var appearance_icon: string
+	var icons_and_time_icon: string
+	var system_icon: string
+	var icon: string
+	
+	sound_icon           = "....B......B3.F.BBB33.8F33333..F33333..F88833.F8...83.8.....8..."
+	personalization_icon = "BBBBB.BB3888.33.3...33833...88.33333333388833888..3333....8888.."
+	appearance_icon      = "BBBBBBBB33333333388888833......33......33......33333333388888888"
+	icons_and_time_icon  = "..BBBB...B8888B.B8.FF.8B3..F...33......3.3....3..833338...8888.."
+	system_icon          = "BB.BB.BB83.33.38.833338.3338833388333388.383383.33.33.3388.88.88"
+	
 	switch (active_tab) {
-		case 0 {
-			call graphics::draw_icon(settings_window, x, y, 8, 8, "....B..." + "...B3.F." + "BBB33.8F" + "33333..F" + "33333..F" + "88833.F8" + "...83.8." + "....8...")
-		}
-		case 1 {
-			
-		}
-		case 2 {
-			
-		}
-		case 3 {
-			
-		}
-		case 4 {
-			call graphics::draw_icon(settings_window, x, y, 8, 8, "BB.BB.BB" + "83.33.38" + ".833338." + "33388333" + "88333388" + ".383383." + "33.33.33" + "88.88.88")
-		}
+		case 0  { icon = sound_icon }
+		case 1  { icon = personalization_icon }
+		case 2  { icon = appearance_icon }
+		case 3  { icon = icons_and_time_icon }
+		default { icon = system_icon }
 	}
+	call graphics::draw_icon(settings_window, x, y, 8, 8, icon)
 }
 
 var staged_master: int
@@ -582,7 +586,7 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 			call draw_settings_icon(panel_x + 4, 8, active_tab)
 
 			if (active_tab == 0) {
-				call graphics::draw_text(settings_window, panel_x + 20, 8, "Sound", graphics::COLOR_3)
+				call graphics::draw_text(settings_window, panel_x + 16, 8, "Sound", graphics::COLOR_3)
 				call draw_value_line("Master", 31, staged_master, panel_x + 4, panel_width - 8)
 				staged_master = graphics::slider(settings_window, control_x, 39, control_width, staged_master, 0, 100)
 				call draw_value_line("Music", 55, staged_music, panel_x + 4, panel_width - 8)
@@ -591,7 +595,7 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				staged_effects = graphics::slider(settings_window, control_x, 87, control_width, staged_effects, 0, 100)
 			}
 			elseif (active_tab == 1) {
-				call graphics::draw_text(settings_window, panel_x + 4, 8, "Personalization", graphics::COLOR_3)
+				call graphics::draw_text(settings_window, panel_x + 16, 8, "Personalization", graphics::COLOR_3)
 				call graphics::draw_text(settings_window, panel_x + 4, 23, "Theme", graphics::COLOR_7)
 				if (staged_theme == os::THEME_DARK) {
 					if (settings_button_aligned(panel_x + panel_width - 50, 19, 46, 11, "Dark", graphics::COLOR_5)) {
@@ -630,7 +634,7 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				call draw_palette_background_preview(panel_x + 8, 82, panel_width - 16, action_y - 86)
 			}
 			elseif (active_tab == 2) {
-				call graphics::draw_text(settings_window, panel_x + 4, 8, "Window appearance", graphics::COLOR_3)
+				call graphics::draw_text(settings_window, panel_x + 16, 8, "Window appearance", graphics::COLOR_3)
 				call graphics::draw_text(settings_window, panel_x + 4, 23, "Corner style", graphics::COLOR_7)
 				if (staged_corners == os::CORNER_SQUARE) {
 					if (settings_button_aligned(control_x, 33, control_width, 11, "Square", graphics::COLOR_5)) { staged_corners = os::CORNER_ROUNDED }
@@ -644,7 +648,7 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				call draw_window_preview(panel_x + 8, 50, panel_width - 16, action_y - 54)
 			}
 			elseif (active_tab == 3) {
-				call graphics::draw_text(settings_window, panel_x + 4, 8, "Icons and time", graphics::COLOR_3)
+				call graphics::draw_text(settings_window, panel_x + 16, 8, "Icons and time", graphics::COLOR_3)
 				call graphics::draw_text(settings_window, panel_x + 4, 23, "Icon size", graphics::COLOR_7)
 				if (staged_icons == os::ICON_SMALL) {
 					if (settings_button_aligned(control_x, 33, control_width, 11, "Small", graphics::COLOR_5)) { staged_icons = os::ICON_MEDIUM }
@@ -665,7 +669,7 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				call draw_icons_time_preview(panel_x + 8, 84, panel_width - 16, action_y - 88)
 			}
 			else {
-				call graphics::draw_text(settings_window, panel_x + 20, 8, "System", graphics::COLOR_3)
+				call graphics::draw_text(settings_window, panel_x + 16, 8, "System", graphics::COLOR_3)
 				call graphics::draw_text(settings_window, panel_x + 4, 23, "Settings access", graphics::COLOR_7)
 				if (staged_enabled) {
 					if (settings_button_aligned(control_x, 34, control_width, 11, "Enabled", graphics::COLOR_2)) { staged_enabled = false }
