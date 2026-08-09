@@ -42,6 +42,31 @@ def test_ximg_rejects_corruption_and_invalid_pixels() -> None:
 		decode_ximg(words)
 	with pytest.raises(XIMGError, match="palette"):
 		encode_ximg(PortableImage(1, 1, (ImageFrame((17,)),)))
+	with pytest.raises(XIMGError, match="integers"):
+		encode_ximg(PortableImage(1.5, 1, (ImageFrame((0,)),)))
+	with pytest.raises(XIMGError, match="integer"):
+		encode_ximg(PortableImage(1, 1, (ImageFrame((0,), 2.5),)))
+	reserved = list(encode_ximg(image))
+	reserved[11] = 1
+	# Recompute the public-format checksum so this specifically exercises flags.
+	from xe_lang.media.image_format import _crc
+	reserved[10] = _crc(reserved)
+	with pytest.raises(XIMGError, match="reserved"):
+		decode_ximg(reserved)
+
+
+def test_ximg_bounds_total_decoded_animation_pixels_and_word_types(monkeypatch) -> None:
+	from xe_lang.media import image_format
+
+	image = PortableImage(3, 2, (ImageFrame((0,) * 6), ImageFrame((1,) * 6)))
+	words = encode_ximg(image)
+	monkeypatch.setattr(image_format, "XIMG_MAX_DECODED_PIXELS", 8)
+	with pytest.raises(XIMGError, match="decode budget"):
+		encode_ximg(image)
+	with pytest.raises(XIMGError, match="decode budget"):
+		decode_ximg(words)
+	with pytest.raises(XIMGError, match="integer words"):
+		decode_ximg([0.0])
 
 
 def test_xip_is_byte_deterministic_and_path_safe(tmp_path: Path) -> None:
@@ -55,6 +80,9 @@ def test_xip_is_byte_deterministic_and_path_safe(tmp_path: Path) -> None:
 	assert read_xip(first) == (manifest, members)
 	with pytest.raises(XIMGError, match="Unsafe"):
 		write_xip(tmp_path / "bad.xip", manifest, {"../escape": b"x"})
+	for unsafe in (r"..\escape", "layers//ink.png", "./manifest-copy.json"):
+		with pytest.raises(XIMGError, match="Unsafe"):
+			write_xip(tmp_path / "bad.xip", manifest, {unsafe: b"x"})
 
 
 def test_xmusic_round_trip_and_delta_time_sequencer() -> None:
@@ -76,12 +104,45 @@ def test_xmusic_round_trip_and_delta_time_sequencer() -> None:
 	assert sequencer.active_notes() == (track.events[1],)
 	sequencer.seek_fraction(1)
 	assert sequencer.finished
+	reserved = list(words)
+	reserved[9] = 1
+	from xe_lang.media.music_format import _crc
+	reserved[8] = _crc(reserved)
+	with pytest.raises(XMusicError, match="reserved"):
+		decode_xmusic(reserved)
 
 
 def test_xmusic_rejects_unsorted_events() -> None:
 	track = Track(120, 480, (NoteEvent(10, 2, 60), NoteEvent(5, 2, 61)))
 	with pytest.raises(XMusicError, match="sorted"):
 		encode_xmusic(track)
+	with pytest.raises(XMusicError, match="integers"):
+		encode_xmusic(Track(120.5, 480, (NoteEvent(0, 2, 60),)))
+	with pytest.raises(XMusicError, match="32-bit"):
+		encode_xmusic(Track(120, 480, (NoteEvent(1 << 32, 1, 60),)))
+	with pytest.raises(XMusicError, match="32-bit"):
+		encode_xmusic(Track(120, 480, (NoteEvent(0xFFFFFFFF, 1, 60),)))
+	with pytest.raises(XMusicError, match="integer words"):
+		decode_xmusic([0.0])
+
+
+def test_xmusic_uses_full_delta_and_rejects_unreachable_loops() -> None:
+	track = Track(120, 480, (NoteEvent(0, 9_600, 60),))
+	sequencer = Sequencer(track)
+	sequencer.play()
+	sequencer.advance(1_000)
+	assert sequencer.position_ticks == pytest.approx(960)
+	with pytest.raises(XMusicError, match="exceeds"):
+		encode_xmusic(Track(120, 480, (NoteEvent(0, 480, 60),), 600, 900))
+	with pytest.raises(XMusicError, match="requires"):
+		encode_xmusic(Track(120, 480, (NoteEvent(0, 480, 60),), 100, 0))
+
+
+def test_xmusic_active_note_index_handles_long_ended_prefix() -> None:
+	events = tuple(NoteEvent(index * 10, 2, 60 + index % 12) for index in range(4_000))
+	sequencer = Sequencer(Track(120, 480, events))
+	sequencer.seek_ticks(39_991)
+	assert sequencer.active_notes() == (events[-1],)
 
 
 def test_portable_word_stream_supports_line_comments_and_enforces_budget() -> None:

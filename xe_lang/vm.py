@@ -5,13 +5,18 @@ import time
 import math
 import threading
 from bisect import bisect_right
+from operator import index as integer_index
 from xe_lang.helper import Result, VMError, Position
 from xe_lang.devices import DEFAULT_PALETTE, DeviceRuntime, FrameSnapshot, OSDevice
 from xe_lang.devices.input import normalize_tk_scroll_steps
 from xe_lang.devices.keymap import normalize_key_code
 from xe_lang.executable import MAX_STATIC_WORDS, decode_static_layout
+from xe_lang.memory import (
+	BankedMemory,
+	MAX_ADDRESS_COUNT,
+	WORKING_SET_WORDS,
+)
 from xe_lang.syscall_abi import SyscallID
-from disassemble import decode_instruction
 
 TRUE = 0xFFFFFFFF
 FALSE = 0
@@ -19,7 +24,6 @@ MAGIC = 0x58424E31  # "XBN1"
 VERSION = 1
 STACK_SIZE = 65_536
 MIN_DATA_WORDS = 65_536
-MAX_ADDRESS_COUNT = 200_000
 DEFAULT_DATA_WORDS = MAX_ADDRESS_COUNT
 HEAP_START = 0x2000
 GC_ALLOCATION_INTERVAL = 0x2000
@@ -42,11 +46,10 @@ def to_u32(value: int) -> int:
 def integer_power_overflows_u32(base: int, exponent: int) -> bool:
 	if exponent == 0 or base in (-1, 0, 1):
 		return False
-	if base < 0 and exponent % 2 == 1:
-		return False
 	if exponent > 63:
 		return True
-	return base ** exponent > TRUE
+	value = base ** exponent
+	return value < -0x80000000 or value > TRUE
 
 
 class VM:
@@ -65,6 +68,8 @@ class VM:
 	):
 		if len(program) < 4:
 			raise ValueError("Executable too small")
+		if any(type(value) is not int for value in program):
+			raise ValueError("Executable must contain integer words")
 
 		self.magic, self.version, self.text_size, self.data_size = program[:4]
 
@@ -73,12 +78,25 @@ class VM:
 
 		if self.version != VERSION:
 			raise ValueError(f"Unsupported executable version {self.version}")
+		if not 0 <= self.text_size <= MAX_STATIC_WORDS:
+			raise ValueError("Executable text section exceeds the 65536-word address space")
+		if not 0 <= self.data_size <= MAX_STATIC_WORDS + 4:
+			raise ValueError("Executable data section exceeds the static address space")
 
 		expected = 4 + self.text_size + self.data_size
 		if len(program) != expected:
 			raise ValueError("Corrupt executable")
+		if any(not 0 <= word <= 0xFFFFFFFFFFFFFFFF for word in program[4 : 4 + self.text_size]):
+			raise ValueError("Executable instruction word is outside the 64-bit range")
+		if any(not 0 <= word <= 0xFFFFFFFF for word in program[4 + self.text_size :]):
+			raise ValueError("Executable data word is outside the 32-bit range")
 
-		memory_words = int(memory_words)
+		try:
+			if isinstance(memory_words, bool):
+				raise TypeError
+			memory_words = integer_index(memory_words)
+		except TypeError as error:
+			raise ValueError("Data-memory size must be an integer address count") from error
 		if not MIN_DATA_WORDS <= memory_words <= MAX_ADDRESS_COUNT:
 			raise ValueError(
 				f"Data memory must contain {MIN_DATA_WORDS} to {MAX_ADDRESS_COUNT} addresses"
@@ -89,6 +107,8 @@ class VM:
 		self.program_memory, self.static_words = decode_static_layout(
 			program[4 + self.text_size :]
 		)
+		if len(self.program_memory) > MAX_STATIC_WORDS:
+			raise ValueError("Program data exceeds the 65536-word XAssembly address space")
 		if not 0 <= self.static_words <= MAX_STATIC_WORDS:
 			raise ValueError("Static data exceeds the 65536-word XAssembly address space")
 		if self.static_words > memory_words:
@@ -97,7 +117,10 @@ class VM:
 		self.stack = [0] * STACK_SIZE
 		self.call_stack: list = []
 		self.ip: int = 0
-		self.data_memory: list = [0] * memory_words
+		self.data_memory = BankedMemory(memory_words)
+		self.working_set_limit = min(WORKING_SET_WORDS, memory_words)
+		self.standby_start = self.working_set_limit
+		self.standby_active = False
 		self.free_list: list = self._fresh_free_list()
 		self.allocations: dict[int, int] = {}
 		self._managed_allocations: set[int] = set()
@@ -139,8 +162,6 @@ class VM:
 		self.clip_rect = self.devices.graphics.clip_rect
 
 		self._legacy_mouse_btn = 0
-		self.key_queue = self.devices.input.key_queue
-		self.keys_down = self.devices.input.keys_down
 
 		# for standalone execution
 		self.root = None
@@ -154,8 +175,29 @@ class VM:
 		self._binary_position = Position(0, 0, 0, "<bin>", "")
 
 	def _fresh_free_list(self) -> list[tuple[int, int]]:
-		available = len(self.data_memory) - self.heap_start
+		self.standby_active = False
+		available = self.working_set_limit - self.heap_start
 		return [] if available <= 0 else [(self.heap_start, available)]
+
+	def _activate_standby(self) -> bool:
+		if self.standby_active or self.standby_start >= len(self.data_memory):
+			return False
+		self.standby_active = True
+		reserve = (self.standby_start, len(self.data_memory) - self.standby_start)
+		if self.free_list and self.free_list[-1][0] + self.free_list[-1][1] == reserve[0]:
+			start, size = self.free_list[-1]
+			self.free_list[-1] = (start, size + reserve[1])
+		else:
+			self.free_list.append(reserve)
+		return True
+
+	@property
+	def key_queue(self):
+		return self.devices.input.key_queue
+
+	@property
+	def keys_down(self) -> set[int]:
+		return self.devices.input.keys_down
 
 	@property
 	def mouse_x(self) -> int:
@@ -513,7 +555,7 @@ class VM:
 		instruction_count = 0
 
 		try:
-			while self.ip < len(self.instructions):
+			while 0 <= self.ip < len(self.instructions):
 				if instruction_limit is not None and instruction_count >= instruction_limit:
 					return res.fail(self._error("Instruction limit exceeded"))
 				if self.execution_deadline is not None and time.monotonic() >= self.execution_deadline:
@@ -521,7 +563,10 @@ class VM:
 				if instruction_count & 0xFF == 0:
 					if self.cancel_event.is_set():
 						break
-				exec_res = self.execute(self.instructions[self.ip], execution_result)
+				try:
+					exec_res = self.execute(self.instructions[self.ip], execution_result)
+				except RuntimeError as error:
+					return res.fail(self._error(str(error)))
 				instruction_count += 1
 				# print(self.stack[: self.sp][:32])
 				# print(self.data_memory[8192 : 8192 + 16])
@@ -548,6 +593,8 @@ class VM:
 					except Exception:
 						pass
 
+			if self.ip < 0:
+				return res.fail(self._error("Instruction pointer out of bounds"))
 			return res.success(self.stack[:self.sp])
 		finally:
 			self.execution_deadline = None
@@ -643,7 +690,7 @@ class VM:
 				marked.add(allocation)
 				pending.append(allocation)
 
-		for value in self.data_memory[: min(self.heap_start, len(self.data_memory))]:
+		for value in self.data_memory.iter_nonzero(0, min(self.heap_start, len(self.data_memory))):
 			mark(value)
 		for value in self.stack[: self.sp]:
 			mark(value)
@@ -654,7 +701,7 @@ class VM:
 
 		while pending:
 			start = pending.pop()
-			for value in self.data_memory[start : start + self.allocations[start]]:
+			for value in self.data_memory.iter_nonzero(start, start + self.allocations[start]):
 				mark(value)
 
 		dead = [
@@ -676,13 +723,18 @@ class VM:
 		if words <= 0:
 			return res.fail(self._error("Invalid allocation size"))
 
+		collected = False
 		if self._words_since_gc >= GC_ALLOCATION_INTERVAL:
 			self.collect_garbage()
+			collected = True
 		if self._malloc_from_free_list(words, res, managed):
 			return res
 
-		self.collect_garbage()
+		if not collected:
+			self.collect_garbage()
 		if self._malloc_from_free_list(words, res, managed):
+			return res
+		if self._activate_standby() and self._malloc_from_free_list(words, res, managed):
 			return res
 		return res.fail(self._error("Out of memory"))
 
@@ -718,11 +770,13 @@ class VM:
 		res.error = None
 		pos = self._binary_position
 
+		if not isinstance(instruction, int) or not 0 <= instruction <= 0xFFFFFFFFF:
+			return res.fail(self._error("Invalid 36-bit instruction word"))
+
 		ins_type = instruction >> 32
 		ins_mod = (instruction >> 16) & 0xFFFF
 		ins_arg = instruction & 0xFFFF
 		ins_arg32 = (ins_mod << 16) | ins_arg
-		# print(decode_instruction(instruction))
 
 		if ins_type == 0:  # PUSH
 			self.push(ins_arg32)
@@ -826,9 +880,15 @@ class VM:
 						return res.fail(self._error("Stack frame store out of bounds"))
 					self.stack[stack_index] = value
 				case 16:  # LEAVE
+					if not 0 <= self.fp <= len(self.stack) - 2:
+						return res.fail(self._error("Frame pointer out of bounds"))
 					self.sp = self.fp + 2
+				case _:
+					return res.fail(self._error(f"Unknown stack instruction modifier {ins_mod}"))
 
 		elif ins_type == 2:  # Conversion
+			if (ins_mod, ins_arg) not in {(0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1)}:
+				return res.fail(self._error(f"Unknown conversion {ins_mod}:{ins_arg}"))
 			if not self._require_stack(res, 1):
 				return res
 			value = self.stack[self.sp - 1]
@@ -841,7 +901,10 @@ class VM:
 					FALSE if value == 0 else TRUE
 				)
 			elif ins_mod == 1 and ins_arg == 0:  # F2I
-				self.stack[self.sp - 1] = int(u32_to_float(value))
+				float_value = u32_to_float(value)
+				if not math.isfinite(float_value) or not -0x80000000 <= float_value <= 0x7FFFFFFF:
+					return res.fail(self._error("Float cannot be represented as an int"))
+				self.stack[self.sp - 1] = int(float_value) & TRUE
 			elif ins_mod == 1 and ins_arg == 2:  # F2B
 				self.stack[self.sp - 1] = FALSE if u32_to_float(value) == 0 else TRUE
 			elif ins_mod == 2 and ins_arg == 0:  # B2I
@@ -850,6 +913,14 @@ class VM:
 				self.stack[self.sp - 1] = float_to_u32(float(value))
 
 		elif ins_type == 3:  # Math
+			valid_args = {
+				0: {0, 1, 2, 3, 4, 5, 6, 7, 8, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17},
+				1: {0, 1, 2, 3, 4, 5, 6, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16},
+				2: {0, 1, 2, 3, 10},
+				3: {0, 1, 2, 4, 5, 6, 7, 8, 9, 10},
+			}
+			if ins_mod not in valid_args or ins_arg not in valid_args[ins_mod]:
+				return res.fail(self._error(f"Unknown math instruction {ins_mod}:{ins_arg}"))
 			is_float_op = ins_mod % 2 == 1
 			val = 0
 
@@ -952,6 +1023,8 @@ class VM:
 
 				if is_float_op:
 					a = u32_to_float(a)
+				elif a > 0x7FFFFFFF:
+					a -= 0x100000000
 
 				match ins_arg:
 					case 0:
@@ -1003,6 +1076,8 @@ class VM:
 			self.push(val & TRUE)
 
 		elif ins_type == 4:  # Branching
+			if ins_mod not in range(11):
+				return res.fail(self._error(f"Unknown branch instruction modifier {ins_mod}"))
 			addr = ins_arg
 			value = 0
 			if ins_mod in (1, 2, 5, 6, 9, 10):
@@ -1016,27 +1091,43 @@ class VM:
 
 			match ins_mod:
 				case 0:  # JUMP
+					if not 0 <= addr <= len(self.instructions):
+						return res.fail(self._error("Branch target out of bounds"))
 					self.ip = addr - 1
 				case 1:  # BRZ
 					if value == 0:
+						if not 0 <= addr <= len(self.instructions):
+							return res.fail(self._error("Branch target out of bounds"))
 						self.ip = addr - 1
 				case 2:  # BRNZ
 					if value != 0:
+						if not 0 <= addr <= len(self.instructions):
+							return res.fail(self._error("Branch target out of bounds"))
 						self.ip = addr - 1
 				case 3:  # JUMPIND
+					if not 0 <= addr <= len(self.instructions):
+						return res.fail(self._error("Branch target out of bounds"))
 					self.ip = addr - 1
 				case 4:  # CALL
+					if not 0 <= addr <= len(self.instructions):
+						return res.fail(self._error("Call target out of bounds"))
 					self.call_stack.append(self.ip)
 					self.ip = addr - 1
 				case 5:  # CALZ
 					if value == 0:
+						if not 0 <= addr <= len(self.instructions):
+							return res.fail(self._error("Call target out of bounds"))
 						self.call_stack.append(self.ip)
 						self.ip = addr - 1
 				case 6:  # CALN
 					if value != 0:
+						if not 0 <= addr <= len(self.instructions):
+							return res.fail(self._error("Call target out of bounds"))
 						self.call_stack.append(self.ip)
 						self.ip = addr - 1
 				case 7:  # CALLIND
+					if not 0 <= addr <= len(self.instructions):
+						return res.fail(self._error("Call target out of bounds"))
 					self.call_stack.append(self.ip)
 					self.ip = addr - 1
 				case 8:  # RET
@@ -1069,7 +1160,8 @@ class VM:
 					self.im = self._pop_value(res)
 					if res.error:
 						return res
-				# no interrupt handling yet
+				case 4 | 5 | 6:
+					return res.fail(self._error("Interrupt return instructions are not supported"))
 				case 7:  # SYS
 					match ins_arg:
 						case SyscallID.OUTPUT_CHARS:
@@ -1248,6 +1340,14 @@ class VM:
 								)
 							if res.error:
 								return res
+				case _:
+					return res.fail(self._error(f"Unknown system instruction modifier {ins_mod}"))
+
+		elif ins_type == 6:  # INT
+			return res.fail(self._error("Interrupt instructions are not supported"))
+
+		elif ins_type == 7:  # SETIM
+			self.im = ins_arg32
 
 		elif ins_type == 8:  # Other
 			match ins_mod:
@@ -1287,6 +1387,29 @@ class VM:
 					if dst < 0 or dst + ins_arg > len(self.program_memory):
 						return res.fail(self._error("Program memory out of bounds"))
 					self.program_memory[dst:dst + ins_arg] = self.data_memory[src:src + ins_arg]
+				case 2:  # MEMCPY
+					src = self._pop_value(res)
+					dst = self._pop_value(res)
+					if res.error:
+						return res
+					if src < 0 or src + ins_arg > len(self.data_memory):
+						return res.fail(self._error("Data memory source out of bounds"))
+					if dst < 0 or dst + ins_arg > len(self.data_memory):
+						return res.fail(self._error("Data memory destination out of bounds"))
+					self.data_memory[dst:dst + ins_arg] = self.data_memory[src:src + ins_arg]
+				case 3:  # MEMSET
+					value = self._pop_value(res)
+					dst = self._pop_value(res)
+					if res.error:
+						return res
+					if dst < 0 or dst + ins_arg > len(self.data_memory):
+						return res.fail(self._error("Data memory destination out of bounds"))
+					self.data_memory[dst:dst + ins_arg] = [value & TRUE] * ins_arg
+				case _:
+					return res.fail(self._error(f"Unknown memory instruction modifier {ins_mod}"))
+
+		else:
+			return res.fail(self._error(f"Unknown instruction type {ins_type}"))
 
 		res.value = True
 		return res

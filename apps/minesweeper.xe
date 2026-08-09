@@ -1,5 +1,10 @@
 # Xenon Minesweeper: deterministic, Scratch-portable board logic and UI.
 
+# App metadata and default geometry.
+const APP_TITLE = "Xenon Minesweeper"
+const APP_DEFAULT_WIDTH = 292
+const APP_DEFAULT_HEIGHT = 248
+
 const MINE_BEGINNER = 0
 const MINE_INTERMEDIATE = 1
 const MINE_EXPERT = 2
@@ -7,6 +12,7 @@ const MINE_PLAYING = 0
 const MINE_WON = 1
 const MINE_LOST = 2
 
+# Model and state.
 var mine_window: graphics::Window
 array mine_cells: int[480]
 array mine_revealed: int[480]
@@ -165,6 +171,7 @@ proc mine_finish_if_won() {
 	}
 }
 
+# Input and interaction.
 proc mine_reveal_cell(column: int, row: int) {
 	var start: int
 	var head: int
@@ -267,6 +274,7 @@ fn mine_elapsed_seconds() int {
 	return (finish - mine_start_ticks) / 1000
 }
 
+# Layout helpers.
 fn mine_small_text_width(text: string) int {
 	var index: int
 	var width: int
@@ -291,6 +299,7 @@ fn mine_number_color(value: int, light: bool) int {
 	return graphics::WHITE
 }
 
+# Paint and replaceable asset hooks.
 proc mine_draw_flag(x: int, y: int, size: int) {
 	var center_x: int
 	var top: int
@@ -385,15 +394,24 @@ var mine_focus_visible: bool
 var mine_beginner_tone: int
 var mine_intermediate_tone: int
 var mine_expert_tone: int
+var mine_view_column: int
+var mine_view_row: int
+var mine_visible_columns: int
+var mine_visible_rows: int
+var mine_available_width: int
+var mine_available_height: int
 
+# Application driver.
 mine_window.x = 74
 mine_window.y = 44
-mine_window.width = 292
-mine_window.height = 248
-mine_window.title = "Xenon Minesweeper"
+mine_window.width = APP_DEFAULT_WIDTH
+mine_window.height = APP_DEFAULT_HEIGHT
+mine_window.title = APP_TITLE
 mine_window.ui_scale = 1
 mine_window.state = graphics::WINDOW_NORMAL
 mine_focus_visible = false
+mine_view_column = 0
+mine_view_row = 0
 
 while (mine_window.state != graphics::WINDOW_CLOSED) {
 	call graphics::begin_draw(mine_window)
@@ -419,18 +437,20 @@ while (mine_window.state != graphics::WINDOW_CLOSED) {
 			mine_medium_label = "I"
 			mine_hard_label = "E"
 		}
-		call graphics::fill_rect(mine_window, 2, 2, mine_width - 4, 20, graphics::COLOR_1)
-		call graphics::draw_rect(mine_window, 2, 2, mine_width - 4, 20, graphics::COLOR_5)
+		if (mine_width >= 5) {
+			call graphics::fill_rect(mine_window, 2, 2, mine_width - 4, 20, graphics::COLOR_1)
+			call graphics::draw_rect(mine_window, 2, 2, mine_width - 4, 20, graphics::COLOR_5)
+		}
 		mine_button_width = (mine_width - 12) / 3
-		if (graphics::button_flat(mine_window, 3, 3, mine_button_width, 8, mine_easy_label, mine_beginner_tone)) {
+		if (mine_button_width >= 1 && graphics::button_flat(mine_window, 3, 3, mine_button_width, 8, mine_easy_label, mine_beginner_tone)) {
 			call mine_apply_difficulty(MINE_BEGINNER)
 			call mine_reset()
 		}
-		if (graphics::button_flat(mine_window, 6 + mine_button_width, 3, mine_button_width, 8, mine_medium_label, mine_intermediate_tone)) {
+		if (mine_button_width >= 1 && graphics::button_flat(mine_window, 6 + mine_button_width, 3, mine_button_width, 8, mine_medium_label, mine_intermediate_tone)) {
 			call mine_apply_difficulty(MINE_INTERMEDIATE)
 			call mine_reset()
 		}
-		if (graphics::button_flat(mine_window, 9 + mine_button_width * 2, 3, mine_button_width, 8, mine_hard_label, mine_expert_tone)) {
+		if (mine_button_width >= 1 && graphics::button_flat(mine_window, 9 + mine_button_width * 2, 3, mine_button_width, 8, mine_hard_label, mine_expert_tone)) {
 			call mine_apply_difficulty(MINE_EXPERT)
 			call mine_reset()
 		}
@@ -461,29 +481,47 @@ while (mine_window.state != graphics::WINDOW_CLOSED) {
 		}
 
 		mine_board_y = 25
-		mine_cell_size = (mine_width - 8) / mine_columns
-		if ((mine_height - mine_board_y - 6) / mine_rows < mine_cell_size) { mine_cell_size = (mine_height - mine_board_y - 6) / mine_rows }
-		if (mine_cell_size < 2) { mine_cell_size = 2 }
+		mine_available_width = mine_width - 8
+		mine_available_height = mine_height - mine_board_y - 6
+		if (mine_available_width < 1) { mine_available_width = 1 }
+		if (mine_available_height < 1) { mine_available_height = 1 }
+		mine_cell_size = mine_available_width / mine_columns
+		if (mine_available_height / mine_rows < mine_cell_size) { mine_cell_size = mine_available_height / mine_rows }
+		if (mine_cell_size < 1) { mine_cell_size = 1 }
 		if (mine_cell_size > 19) { mine_cell_size = 19 }
-		mine_board_width = mine_cell_size * mine_columns
-		mine_board_height = mine_cell_size * mine_rows
+		mine_visible_columns = mine_available_width / mine_cell_size
+		mine_visible_rows = mine_available_height / mine_cell_size
+		if (mine_visible_columns < 1) { mine_visible_columns = 1 }
+		if (mine_visible_rows < 1) { mine_visible_rows = 1 }
+		if (mine_visible_columns > mine_columns) { mine_visible_columns = mine_columns }
+		if (mine_visible_rows > mine_rows) { mine_visible_rows = mine_rows }
+		if (mine_focus_column < mine_view_column) { mine_view_column = mine_focus_column }
+		if (mine_focus_column >= mine_view_column + mine_visible_columns) { mine_view_column = mine_focus_column - mine_visible_columns + 1 }
+		if (mine_focus_row < mine_view_row) { mine_view_row = mine_focus_row }
+		if (mine_focus_row >= mine_view_row + mine_visible_rows) { mine_view_row = mine_focus_row - mine_visible_rows + 1 }
+		if (mine_view_column < 0) { mine_view_column = 0 }
+		if (mine_view_row < 0) { mine_view_row = 0 }
+		if (mine_view_column > mine_columns - mine_visible_columns) { mine_view_column = mine_columns - mine_visible_columns }
+		if (mine_view_row > mine_rows - mine_visible_rows) { mine_view_row = mine_rows - mine_visible_rows }
+		mine_board_width = mine_cell_size * mine_visible_columns
+		mine_board_height = mine_cell_size * mine_visible_rows
 		mine_board_x = (mine_width - mine_board_width) / 2
 		mine_pointer_column = -1
 		mine_pointer_row = -1
 		if (mine_pointer_x >= mine_board_x && mine_pointer_x < mine_board_x + mine_board_width && mine_pointer_y >= mine_board_y && mine_pointer_y < mine_board_y + mine_board_height) {
-			mine_pointer_column = (mine_pointer_x - mine_board_x) / mine_cell_size
-			mine_pointer_row = (mine_pointer_y - mine_board_y) / mine_cell_size
+			mine_pointer_column = mine_view_column + (mine_pointer_x - mine_board_x) / mine_cell_size
+			mine_pointer_row = mine_view_row + (mine_pointer_y - mine_board_y) / mine_cell_size
 		}
-		mine_column = 0
-		while (mine_column < mine_columns) {
-			mine_row = 0
-			while (mine_row < mine_rows) {
-				call mine_draw_cell(mine_board_x + mine_column * mine_cell_size, mine_board_y + mine_row * mine_cell_size, mine_cell_size, mine_column, mine_row, mine_column == mine_pointer_column && mine_row == mine_pointer_row, mine_focus_visible && mine_column == mine_focus_column && mine_row == mine_focus_row, mine_light)
+		mine_column = mine_view_column
+		while (mine_column < mine_view_column + mine_visible_columns) {
+			mine_row = mine_view_row
+			while (mine_row < mine_view_row + mine_visible_rows) {
+				call mine_draw_cell(mine_board_x + (mine_column - mine_view_column) * mine_cell_size, mine_board_y + (mine_row - mine_view_row) * mine_cell_size, mine_cell_size, mine_column, mine_row, mine_column == mine_pointer_column && mine_row == mine_pointer_row, mine_focus_visible && mine_column == mine_focus_column && mine_row == mine_focus_row, mine_light)
 				mine_row += 1
 			}
 			mine_column += 1
 		}
-		if (mine_state != MINE_PLAYING) {
+		if (mine_state != MINE_PLAYING && mine_board_width >= 8 && mine_board_height >= 8) {
 			mine_status_label = "Board cleared"
 			if (mine_state == MINE_LOST) { mine_status_label = "Mine hit - press Restart" }
 			if (mine_board_width < 50) {

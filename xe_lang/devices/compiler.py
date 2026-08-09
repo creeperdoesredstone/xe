@@ -55,6 +55,8 @@ class CompilerDevice:
 	def __init__(self) -> None:
 		self.snapshot = CompileSnapshot(False)
 		self.bytecode: tuple[int, ...] = ()
+		self.required_syscalls: tuple[int, ...] = ()
+		self.required_capabilities: tuple[str, ...] = ()
 		self.visual_source = ""
 		self.atoms: list[VisualAtom] = []
 		self.scripts: list[VisualScript] = []
@@ -66,6 +68,8 @@ class CompilerDevice:
 		if key == self._compile_key:
 			return self.snapshot.success
 		self.bytecode = ()
+		self.required_syscalls = ()
+		self.required_capabilities = ()
 		try:
 			success = self._compile(source, filename)
 			self._compile_key = key
@@ -93,6 +97,8 @@ class CompilerDevice:
 		if key == self._compile_key:
 			return self.snapshot.success
 		self.bytecode = ()
+		self.required_syscalls = ()
+		self.required_capabilities = ()
 		try:
 			artifact = compile_workspace_artifact(sources, entry_path)
 			success = self._store_artifact(artifact)
@@ -114,6 +120,8 @@ class CompilerDevice:
 				self.snapshot = CompileSnapshot(False, message, diagnostic.line, diagnostic.column)
 			return False
 		self.bytecode = artifact.program
+		self.required_syscalls = artifact.required_syscalls
+		self.required_capabilities = artifact.required_capabilities
 		self.snapshot = CompileSnapshot(True, assembly=artifact.assembly, bytecode_size=len(self.bytecode))
 		return True
 
@@ -170,14 +178,24 @@ class CompilerDevice:
 		if not 0 <= index < len(self.atoms):
 			return False
 		self.atoms[index].enabled = bool(enabled)
-		lines = self.visual_source.splitlines()
+		lines = self.visual_source.splitlines(keepends=True)
 		line_index = self.atoms[index].line - 1
 		if not 0 <= line_index < len(lines):
 			return False
-		content = self.atoms[index].text
-		indent = lines[line_index][:-len(lines[line_index].lstrip())]
-		lines[line_index] = indent + (content if enabled else "# disabled: " + content)
-		self.visual_source = "\n".join(lines)
+		raw_line = lines[line_index]
+		body = raw_line.rstrip("\r\n")
+		ending = raw_line[len(body):]
+		indent = body[:len(body) - len(body.lstrip())]
+		content = body[len(indent):]
+		prefix = "# disabled: "
+		if enabled:
+			if content.startswith(prefix):
+				content = content[len(prefix):]
+		else:
+			if not content.startswith(prefix):
+				content = prefix + content
+		lines[line_index] = indent + content + ending
+		self.visual_source = "".join(lines)
 		self.scripts = self._build_script_graph(self.visual_source)
 		return True
 

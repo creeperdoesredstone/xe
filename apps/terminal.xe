@@ -1,7 +1,15 @@
 # Xenon Terminal: a deterministic, sandboxed command workspace.
 
+# App metadata and default geometry.
+const APP_TITLE = "Xenon Terminal"
+const APP_DEFAULT_WIDTH = 360
+const APP_DEFAULT_HEIGHT = 270
+
+# Model and state.
 var terminal_window: graphics::Window
 var terminal_command: string
+var terminal_clipboard: string
+var terminal_selected_all: bool
 var tab_1_command: string
 var tab_2_command: string
 var tab_3_command: string
@@ -18,6 +26,7 @@ var terminal_echo: string
 array tab_theme: int[3]
 array tab_split: int[3]
 array tab_monitor: int[3]
+array tab_scroll_rows: int[3]
 var active_tab: int
 var tab_count: int
 var saved_list_open: bool
@@ -33,6 +42,7 @@ var options_open: bool
 var options_progress: int
 var options_page: int
 var options_flash: int
+var terminal_animation_step: int
 
 proc clear_terminal_text(text: string) {
 	if (xestring::strlen(text) > 0) {
@@ -44,6 +54,53 @@ proc clear_terminal_text(text: string) {
 proc set_terminal_text(target: string, source: string) {
 	call clear_terminal_text(target)
 	call xestring::append(target, source)
+}
+
+proc terminal_select_all() {
+	terminal_selected_all = xestring::strlen(terminal_command) > 0
+}
+
+proc terminal_copy_selection() {
+	var shared_ok: bool
+	if (terminal_selected_all) {
+		call set_terminal_text(terminal_clipboard, terminal_command)
+		shared_ok = os::clipboard_write(terminal_clipboard)
+	}
+}
+
+proc terminal_cut_selection() {
+	if (terminal_selected_all) {
+		call terminal_copy_selection()
+		call clear_terminal_text(terminal_command)
+		terminal_selected_all = false
+		history_position = 0
+	}
+}
+
+proc terminal_paste_clipboard() {
+	var shared_clipboard: string
+	shared_clipboard = os::clipboard_read()
+	if (xestring::strlen(shared_clipboard) > 0) { call set_terminal_text(terminal_clipboard, shared_clipboard) }
+	if (xestring::strlen(terminal_clipboard) > 0) {
+		if (terminal_selected_all) { call clear_terminal_text(terminal_command) }
+		call xestring::append(terminal_command, terminal_clipboard)
+		terminal_selected_all = false
+		history_position = 0
+	}
+}
+
+proc handle_terminal_control_shortcut(key: int) {
+	if (key == 1 || key == 65 || key == 97) { call terminal_select_all() }
+	elseif (key == 3 || key == 67 || key == 99) { call terminal_copy_selection() }
+	elseif (key == 24 || key == 88 || key == 120) { call terminal_cut_selection() }
+	elseif (key == 22 || key == 86 || key == 118) { call terminal_paste_clipboard() }
+}
+
+proc append_terminal_character(key: int) {
+	if (terminal_selected_all) { call clear_terminal_text(terminal_command) }
+	terminal_selected_all = false
+	call xestring::append_char(terminal_command, (char)key)
+	history_position = 0
 }
 
 fn terminal_starts_with(text: string, prefix: string) bool {
@@ -79,18 +136,30 @@ proc load_active_command() {
 	else {
 		call set_terminal_text(terminal_command, tab_3_command)
 	}
+	terminal_selected_all = false
 }
 
 proc set_active_output(text: string) {
+	if (xestring::strlen(text) == 0) {
+		if (active_tab == 0) { call clear_terminal_text(tab_1_output) }
+		elseif (active_tab == 1) { call clear_terminal_text(tab_2_output) }
+		else { call clear_terminal_text(tab_3_output) }
+		tab_scroll_rows[active_tab] = 0
+		return
+	}
 	if (active_tab == 0) {
-		call set_terminal_text(tab_1_output, text)
+		if (xestring::strlen(tab_1_output) > 0) { call xestring::append(tab_1_output, "\n") }
+		call xestring::append(tab_1_output, text)
 	}
 	elseif (active_tab == 1) {
-		call set_terminal_text(tab_2_output, text)
+		if (xestring::strlen(tab_2_output) > 0) { call xestring::append(tab_2_output, "\n") }
+		call xestring::append(tab_2_output, text)
 	}
 	else {
-		call set_terminal_text(tab_3_output, text)
+		if (xestring::strlen(tab_3_output) > 0) { call xestring::append(tab_3_output, "\n") }
+		call xestring::append(tab_3_output, text)
 	}
+	tab_scroll_rows[active_tab] = 0
 }
 
 proc switch_terminal_tab(next_tab: int) {
@@ -203,6 +272,7 @@ proc save_terminal_command(text: string) {
 	}
 }
 
+# Input and interaction.
 proc execute_terminal_command() {
 	var echo_index: int
 	if (xestring::strlen(terminal_command) == 0) {
@@ -283,11 +353,13 @@ proc execute_terminal_command() {
 	}
 	call push_terminal_history(terminal_command)
 	call clear_terminal_text(terminal_command)
+	terminal_selected_all = false
 	call save_active_command()
 	history_position = 0
 }
 
 proc autocomplete_terminal_command() {
+	terminal_selected_all = false
 	if (terminal_starts_with(terminal_command, "he")) {
 		call set_terminal_text(terminal_command, "help")
 	}
@@ -321,6 +393,7 @@ proc autocomplete_terminal_command() {
 }
 
 proc recall_terminal_history(direction: int) {
+	terminal_selected_all = false
 	if (direction < 0 && history_position < 3) { history_position += 1 }
 	elseif (direction > 0 && history_position > 0) { history_position -= 1 }
 	if (history_position == 0) {
@@ -339,6 +412,12 @@ proc recall_terminal_history(direction: int) {
 
 proc erase_terminal_character() {
 	var length: int
+	if (terminal_selected_all) {
+		call clear_terminal_text(terminal_command)
+		terminal_selected_all = false
+		history_position = 0
+		return
+	}
 	length = xestring::strlen(terminal_command)
 	if (length > 0) {
 		terminal_command[length - 1] = '\0'
@@ -346,6 +425,7 @@ proc erase_terminal_character() {
 	}
 }
 
+# Layout helpers.
 proc draw_terminal_line(x: int, y: int, width: int, text: string, color: int) {
 	var length: int
 	var visible: int
@@ -378,37 +458,89 @@ proc draw_terminal_line_small(x: int, y: int, width: int, text: string, color: i
 	}
 }
 
+fn terminal_wrapped_row_count(text: string, columns: int) int {
+	var index: int
+	var word_end: int
+	var word_length: int
+	var column: int
+	var rows: int
+	if (columns < 1) { columns = 1 }
+	index = 0
+	column = 0
+	rows = 1
+	while (index < xestring::strlen(text)) {
+		if ((int)(text[index]) == 10) { rows += 1; column = 0; index += 1 }
+		elseif ((int)(text[index]) == 32) {
+			if (column >= columns) { rows += 1; column = 0 }
+			column += 1
+			index += 1
+		}
+		else {
+			word_end = index
+			while (word_end < xestring::strlen(text) && (int)(text[word_end]) != 10 && (int)(text[word_end]) != 32) { word_end += 1 }
+			word_length = word_end - index
+			if (column > 0 && column + word_length > columns) { rows += 1; column = 0 }
+			if (word_length > columns) { column = columns }
+			else { column += word_length }
+			index = word_end
+		}
+	}
+	return rows
+}
+
 proc draw_terminal_wrapped(x: int, y: int, width: int, height: int, text: string, color: int) {
 	var columns: int
 	var rows: int
-	var capacity: int
-	var length: int
-	var start: int
+	var total_rows: int
+	var first_row: int
+	var maximum_scroll: int
 	var index: int
+	var word_end: int
+	var word_length: int
+	var word_index: int
 	var column: int
 	var row: int
 	columns = (width - 4) / 4
 	rows = (height - 4) / 6
 	if (columns < 1) { columns = 1 }
 	if (rows < 1) { rows = 1 }
-	capacity = columns * rows
-	length = xestring::strlen(text)
-	start = 0
-	if (length > capacity) { start = length - capacity }
-	index = start
+	total_rows = terminal_wrapped_row_count(text, columns)
+	maximum_scroll = total_rows - rows
+	if (maximum_scroll < 0) { maximum_scroll = 0 }
+	if (tab_scroll_rows[active_tab] < 0) { tab_scroll_rows[active_tab] = 0 }
+	if (tab_scroll_rows[active_tab] > maximum_scroll) { tab_scroll_rows[active_tab] = maximum_scroll }
+	first_row = total_rows - rows - tab_scroll_rows[active_tab]
+	if (first_row < 0) { first_row = 0 }
+	index = 0
 	column = 0
 	row = 0
-	while (index < length && row < rows) {
+	while (index < xestring::strlen(text) && row < total_rows) {
 		if ((int)(text[index]) == 10) {
 			column = 0
 			row += 1
+			index += 1
+		}
+		elseif ((int)(text[index]) == 32) {
+			if (column >= columns) { column = 0; row += 1 }
+			column += 1
+			index += 1
 		}
 		else {
-			call graphics::draw_char_small(terminal_window, x + 2 + column * 4, y + row * 6, text[index], color)
-			column += 1
-			if (column >= columns) { column = 0; row += 1 }
+			word_end = index
+			while (word_end < xestring::strlen(text) && (int)(text[word_end]) != 10 && (int)(text[word_end]) != 32) { word_end += 1 }
+			word_length = word_end - index
+			if (column > 0 && column + word_length > columns) { row += 1; column = 0 }
+			word_index = 0
+			while (word_index < word_length && column + word_index < columns) {
+				if (row >= first_row && row < first_row + rows) {
+					call graphics::draw_char_small(terminal_window, x + 2 + (column + word_index) * 4, y + (row - first_row) * 6, text[index + word_index], color)
+				}
+				word_index += 1
+			}
+			if (word_length > columns) { column = columns }
+			else { column += word_length }
+			index = word_end
 		}
-		index += 1
 	}
 }
 
@@ -418,6 +550,7 @@ fn terminal_ease_out(progress: int) int {
 	return 100 - remaining * remaining / 100
 }
 
+# Paint and replaceable asset hooks.
 proc draw_revealing_tab(x: int, target_width: int, label: string, progress: int, color: int) {
 	var width: int
 	var pixel_x: int
@@ -518,11 +651,11 @@ proc draw_terminal_options(x: int, y: int, target_width: int, target_height: int
 	var option_color: int
 	var blocker_clicked: bool
 	if (options_open && options_progress < 100) {
-		options_progress += 12
+		options_progress += terminal_animation_step
 		if (options_progress > 100) { options_progress = 100 }
 	}
 	elseif (!options_open && options_progress > 0) {
-		options_progress -= 12
+		options_progress -= terminal_animation_step
 		if (options_progress < 0) { options_progress = 0 }
 	}
 	eased = terminal_ease_out(options_progress)
@@ -615,6 +748,8 @@ proc set_and_execute_command(text: string) {
 }
 
 terminal_command = ""
+terminal_clipboard = ""
+terminal_selected_all = false
 tab_1_command = ""
 tab_2_command = ""
 tab_3_command = ""
@@ -639,6 +774,9 @@ tab_split[2] = 0
 tab_monitor[0] = 0
 tab_monitor[1] = 0
 tab_monitor[2] = 0
+tab_scroll_rows[0] = 0
+tab_scroll_rows[1] = 0
+tab_scroll_rows[2] = 0
 saved_list_open = false
 history_position = 0
 plus_x = 44
@@ -678,15 +816,33 @@ var options_x: int
 var options_y: int
 var options_width: int
 var options_height: int
+var previous_ticks: int
+var current_ticks: int
+var delta_ms: int
+var output_body_height: int
+var monitor_height: int
+var wheel_delta: int
+var command_color: int
 
+# Application driver.
 terminal_window.x = 40
 terminal_window.y = 25
-terminal_window.width = 360
-terminal_window.height = 270
-terminal_window.title = "Xenon Terminal"
+terminal_window.width = APP_DEFAULT_WIDTH
+terminal_window.height = APP_DEFAULT_HEIGHT
+terminal_window.title = APP_TITLE
 terminal_window.state = graphics::WINDOW_NORMAL
+previous_ticks = os::ticks()
+terminal_animation_step = 8
 
 while (terminal_window.state != graphics::WINDOW_CLOSED) {
+	current_ticks = os::ticks()
+	delta_ms = current_ticks - previous_ticks
+	if (delta_ms < 1) { delta_ms = 1 }
+	if (delta_ms > 50) { delta_ms = 50 }
+	previous_ticks = current_ticks
+	terminal_animation_step = delta_ms * 100 / 180
+	if (terminal_animation_step < 2) { terminal_animation_step = 2 }
+	if (terminal_animation_step > 28) { terminal_animation_step = 28 }
 	call graphics::begin_draw(terminal_window)
 	if (!terminal_window.is_minimized()) {
 		content_width = graphics::content_width(terminal_window)
@@ -697,12 +853,12 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 
 		tab_width = (content_width - 24) / 3
 		if (tab_width > 38) { tab_width = 38 }
-		if (tab_width < 14) { tab_width = 14 }
+		if (tab_width < 4) { tab_width = 4 }
 		tab_step = tab_width + 2
 		plus_width = 14
 		animation_eased = terminal_ease_out(tab_animation_progress)
 		if (tab_animation_progress < 100) {
-			tab_animation_progress += 14
+			tab_animation_progress += terminal_animation_step
 			if (tab_animation_progress > 100) { tab_animation_progress = 100 }
 			animation_eased = terminal_ease_out(tab_animation_progress)
 			if (tab_closing) {
@@ -790,23 +946,31 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 		call graphics::draw_rect(terminal_window, 4, body_y, main_width, body_height, graphics::COLOR_8)
 
 		if (body_height >= 8) {
-			if (active_terminal_split() && body_height >= 30) {
-				split_height = body_height / 2
+			monitor_height = 0
+			if (active_terminal_monitor() && body_height >= 22) { monitor_height = 12 }
+			output_body_height = body_height - monitor_height
+			wheel_delta = graphics::scroll_delta()
+			if (wheel_delta != 0 && terminal_pointer_inside(4, body_y, main_width, output_body_height)) {
+				tab_scroll_rows[active_tab] += wheel_delta * 3
+				if (tab_scroll_rows[active_tab] < 0) { tab_scroll_rows[active_tab] = 0 }
+			}
+			if (active_terminal_split() && output_body_height >= 30) {
+				split_height = output_body_height / 2
 				call draw_active_terminal_output(6, body_y + 3, main_width - 4, split_height - 4, output_color)
 				call graphics::draw_line(terminal_window, 4, body_y + split_height, 4 + main_width, body_y + split_height, graphics::COLOR_8)
-				call draw_secondary_terminal_output(6, body_y + split_height + 3, main_width - 4, body_height - split_height - 4, output_color)
+				call draw_secondary_terminal_output(6, body_y + split_height + 3, main_width - 4, output_body_height - split_height - 4, output_color)
 			}
 			else {
-				call draw_active_terminal_output(6, body_y + 3, main_width - 4, body_height - 4, output_color)
+				call draw_active_terminal_output(6, body_y + 3, main_width - 4, output_body_height - 4, output_color)
 			}
-			if (active_terminal_monitor() && body_height >= 22) {
+			if (monitor_height > 0) {
 				call graphics::draw_text_small(terminal_window, 7, body_y + body_height - 12, "ms", graphics::COLOR_8)
 				call graphics::draw_int_small(terminal_window, 17, body_y + body_height - 12, os::ticks(), output_color)
 				call graphics::draw_text_small(terminal_window, 7, body_y + body_height - 6, "VM 64K", graphics::COLOR_8)
 			}
 		}
 
-		if (side_width > 0) {
+		if (side_width > 0 && body_height >= 47) {
 			side_x = content_width - side_width - 4
 			if (!saved_list_open) {
 				if (graphics::button(terminal_window, side_x, body_y, side_width, 7, "Help")) {
@@ -842,6 +1006,7 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 		}
 
 		command_width = content_width - 8
+		if (command_width < 1) { command_width = 1 }
 		command_y = content_height - 10
 		command_height = 8
 		if (content_height < 32) {
@@ -851,7 +1016,9 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 		call graphics::fill_rect(terminal_window, 4, command_y, command_width, command_height, graphics::COLOR_1)
 		call graphics::draw_rect(terminal_window, 4, command_y, command_width, command_height, accent_color)
 		call graphics::draw_text_small(terminal_window, 7, command_y + 2, ">", accent_color)
-		call draw_terminal_line_small(12, command_y + 2, command_width - 10, terminal_command, graphics::WHITE)
+		command_color = graphics::WHITE
+		if (terminal_selected_all) { command_color = graphics::COLOR_14 }
+		call draw_terminal_line_small(12, command_y + 2, command_width - 10, terminal_command, command_color)
 
 		options_x = 4
 		options_y = 11
@@ -868,7 +1035,10 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 
 			key = graphics::read_key()
 			while (key != 0) {
-				if (key == graphics::KEY_BACKSPACE) {
+				if ((graphics::modifiers() & graphics::MOD_CTRL) != 0) {
+					call handle_terminal_control_shortcut(key)
+				}
+				elseif (key == graphics::KEY_BACKSPACE) {
 					call erase_terminal_character()
 				}
 				elseif (key == graphics::KEY_ENTER) {
@@ -884,8 +1054,7 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 					call autocomplete_terminal_command()
 				}
 				elseif (key >= 32 && key <= 126) {
-					call xestring::append_char(terminal_command, (char)key)
-					history_position = 0
+					call append_terminal_character(key)
 				}
 				key = graphics::read_key()
 			}

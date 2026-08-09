@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
 	QCheckBox,
@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 	QTextBrowser,
 	QVBoxLayout,
 	QWidget,
+	QScrollArea,
 )
 
 from .services import (
@@ -29,13 +30,50 @@ from .services import (
 	load_default_converter_service,
 )
 from .file_picker import select_xe_source
+from .render_helpers import ElidingPathLineEdit
 
 
 RequestProvider = Callable[[str], ConversionRequest]
 SourcePicker = Callable[[QWidget], Path | None]
+MAX_CONVERTER_SOURCE_BYTES = 2 * 1024 * 1024
+MAX_CONVERTER_SOURCE_CHARACTERS = 1_048_576
 
 
-class ConverterPane(QWidget):
+def read_xe_source(path: Path) -> str:
+	"""Read one bounded UTF-8 Xe snapshot without following an unbounded host file."""
+	try:
+		if path.stat().st_size > MAX_CONVERTER_SOURCE_BYTES:
+			raise ValueError("Xe source exceeds the 2 MiB converter input limit")
+		with path.open("rb") as handle:
+			payload = handle.read(MAX_CONVERTER_SOURCE_BYTES + 1)
+	except OSError as error:
+		raise ValueError(f"Cannot read Xe source: {error}") from error
+	if len(payload) > MAX_CONVERTER_SOURCE_BYTES:
+		raise ValueError("Xe source exceeds the 2 MiB converter input limit")
+	try:
+		source = payload.decode("utf-8")
+	except UnicodeDecodeError as error:
+		raise ValueError("Xe source is not valid UTF-8") from error
+	if len(source) > MAX_CONVERTER_SOURCE_CHARACTERS:
+		raise ValueError("Xe source exceeds the converter character limit")
+	return source
+
+
+class _ConverterJob(QThread):
+	def __init__(self, operation: Callable[[], ConversionReport], parent: QWidget):
+		super().__init__(parent)
+		self.operation = operation
+		self.report: ConversionReport | None = None
+		self.error: Exception | None = None
+
+	def run(self) -> None:
+		try:
+			self.report = self.operation()
+		except Exception as exc:
+			self.error = exc
+
+
+class ConverterPane(QScrollArea):
 	"""A conservative export UI: analyze first, write only on explicit export."""
 
 	def __init__(
@@ -46,12 +84,18 @@ class ConverterPane(QWidget):
 		parent: QWidget | None = None,
 	):
 		super().__init__(parent)
+		self.setWidgetResizable(True)
+		self.setFrameShape(QFrame.Shape.NoFrame)
+		self._content = QWidget()
+		self.setWidget(self._content)
 		self.service = service or load_default_converter_service()
 		self.request_provider = request_provider or self._empty_request
 		self.source_picker = source_picker or select_xe_source
 		self.selected_source_path: Path | None = None
 		self.last_report: ConversionReport | None = None
 		self._busy = False
+		self._job: _ConverterJob | None = None
+		self._generation = 0
 		self._build_ui()
 
 	@staticmethod
@@ -59,7 +103,7 @@ class ConverterPane(QWidget):
 		return ConversionRequest(scope="workspace" if scope == "workspace" else "active", source_text="")
 
 	def _build_ui(self) -> None:
-		root = QVBoxLayout(self)
+		root = QVBoxLayout(self._content)
 		root.setContentsMargins(22, 18, 22, 20)
 		root.setSpacing(14)
 
@@ -107,9 +151,9 @@ class ConverterPane(QWidget):
 		self.choose_source_button.hide()
 		source_row.addWidget(self.choose_source_button)
 		settings_layout.addLayout(source_row)
-		self.source_path_label = QLabel("No .xe file selected")
+		self.source_path_label = ElidingPathLineEdit("No .xe file selected")
 		self.source_path_label.setObjectName("MutedText")
-		self.source_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+		self.source_path_label.setAccessibleName("Selected Xe source path")
 		self.source_path_label.hide()
 		settings_layout.addWidget(self.source_path_label)
 
@@ -127,7 +171,7 @@ class ConverterPane(QWidget):
 		settings_layout.addLayout(profile_row)
 
 		self.fallback_checkbox = QCheckBox(
-			"Allow non-SB3 fallback (.xbn + .compatibility.json)"
+			"Allow labeled fallback bundle"
 		)
 		self.fallback_checkbox.setChecked(False)
 		self.fallback_checkbox.setToolTip(
@@ -147,11 +191,11 @@ class ConverterPane(QWidget):
 		action_row = QHBoxLayout()
 		self.analyze_button = QPushButton("Check compatibility")
 		self.analyze_button.setObjectName("SecondaryButton")
-		self.analyze_button.clicked.connect(self.analyze)
+		self.analyze_button.clicked.connect(self.analyze_async)
 		self.export_button = QPushButton("Export…")
 		self.export_button.setObjectName("PrimaryButton")
 		self.export_button.setEnabled(False)
-		self.export_button.clicked.connect(self.export)
+		self.export_button.clicked.connect(self.export_async)
 		action_row.addWidget(self.analyze_button)
 		action_row.addStretch(1)
 		action_row.addWidget(self.export_button)
@@ -208,7 +252,6 @@ class ConverterPane(QWidget):
 			return
 		self.selected_source_path = candidate
 		self.source_path_label.setText(str(candidate))
-		self.source_path_label.setToolTip(str(candidate))
 		self.invalidate()
 
 	def _request(self) -> ConversionRequest:
@@ -216,10 +259,7 @@ class ConverterPane(QWidget):
 			path = self.selected_source_path
 			if path is None:
 				return ConversionRequest(scope="active", source_text="")
-			try:
-				source = path.read_text(encoding="utf-8")
-			except (OSError, UnicodeError):
-				source = ""
+			source = read_xe_source(path)
 			return ConversionRequest(
 				scope="active",
 				source_text=source,
@@ -239,6 +279,7 @@ class ConverterPane(QWidget):
 		return request
 
 	def invalidate(self) -> None:
+		self._generation += 1
 		self.last_report = None
 		self._set_status("Not analyzed", "idle")
 		if hasattr(self, "report_view"):
@@ -292,8 +333,62 @@ class ConverterPane(QWidget):
 		self._show_report(report)
 		return report
 
+	def _start_job(
+		self,
+		operation: Callable[[], ConversionReport],
+		callback: Callable[[ConversionReport | None, Exception | None], None],
+	) -> bool:
+		if self._job is not None or self._busy:
+			return False
+		self._set_busy(True)
+		job = _ConverterJob(operation, self)
+		self._job = job
+		def deliver() -> None:
+			if self._job is job:
+				self._job = None
+			callback(job.report, job.error)
+			job.deleteLater()
+		job.finished.connect(deliver)
+		job.start()
+		return True
+
+	def analyze_async(self) -> None:
+		try:
+			request = self._request()
+		except Exception as exc:
+			self._show_report(
+				ConversionReport.unavailable(f"Compatibility check failed safely: {exc}")
+			)
+			return
+		if not request.source_text.strip():
+			self._show_report(ConversionReport.unavailable("There is no Xe source to analyze."))
+			return
+		generation = self._generation
+		self._start_job(
+			lambda: self.service.analyze(request),
+			lambda report, error: self._analysis_completed(generation, report, error),
+		)
+
+	def _analysis_completed(
+		self,
+		generation: int,
+		report: ConversionReport | None,
+		error: Exception | None,
+	) -> None:
+		self._set_busy(False)
+		if generation != self._generation:
+			return
+		if error is not None:
+			report = ConversionReport.unavailable(f"Compatibility check failed safely: {error}")
+		self._show_report(report or ConversionReport.unavailable("Compatibility check returned no report."))
+
 	def export(self) -> ConversionReport | None:
-		request = self._request()
+		try:
+			request = self._request()
+		except Exception as exc:
+			report = ConversionReport.unavailable(f"Export failed safely: {exc}")
+			self._show_report(report)
+			return report
 		if not request.source_text.strip():
 			report = ConversionReport.unavailable("There is no Xe source to export.")
 			self._show_report(report)
@@ -355,6 +450,76 @@ class ConverterPane(QWidget):
 			QMessageBox.information(self, title, f"Written to:\n{written}{note}")
 		return report
 
+	def export_async(self) -> None:
+		try:
+			request = self._request()
+		except Exception as exc:
+			self._show_report(ConversionReport.unavailable(f"Export failed safely: {exc}"))
+			return
+		if not request.source_text.strip():
+			self._show_report(ConversionReport.unavailable("There is no Xe source to export."))
+			return
+		generation = self._generation
+		self._start_job(
+			lambda: self.service.analyze(request),
+			lambda report, error: self._export_preflight_completed(generation, request, report, error),
+		)
+
+	def _export_preflight_completed(
+		self,
+		generation: int,
+		request: ConversionRequest,
+		preflight: ConversionReport | None,
+		error: Exception | None,
+	) -> None:
+		self._set_busy(False)
+		if generation != self._generation:
+			return
+		if error is not None:
+			preflight = ConversionReport.unavailable(f"Compatibility check failed safely: {error}")
+		preflight = preflight or ConversionReport.unavailable("Compatibility check returned no report.")
+		self._show_report(preflight)
+		exact = preflight.exact and not preflight.blocked
+		fallback = preflight.blocked and bool(preflight.artifact_hash) and self.fallback_checkbox.isChecked()
+		if not exact and not fallback:
+			return
+		stem = request.source_path.stem if request.source_path else "xenon-project"
+		default_name = stem + (".sb3" if exact else ".xbn")
+		dialog_title = "Export Scratch project" if exact else "Export Xe fallback bundle"
+		dialog_filter = "Scratch Project (*.sb3);;All files (*)" if exact else "Xe fallback bundle (*.xbn);;All files (*)"
+		output, _ = QFileDialog.getSaveFileName(self, dialog_title, default_name, dialog_filter)
+		if not output:
+			return
+		path = Path(output)
+		expected_suffix = ".sb3" if exact else ".xbn"
+		if path.suffix.lower() != expected_suffix:
+			path = path.with_suffix(expected_suffix)
+		allow_fallback = self.fallback_checkbox.isChecked()
+		self._start_job(
+			lambda: self.service.export(
+				request,
+				path,
+				allow_fallback=allow_fallback,
+			),
+			self._export_write_completed,
+		)
+
+	def _export_write_completed(
+		self,
+		report: ConversionReport | None,
+		error: Exception | None,
+	) -> None:
+		self._set_busy(False)
+		if error is not None:
+			report = ConversionReport.unavailable(f"Export failed safely: {error}")
+		report = report or ConversionReport.unavailable("Export returned no report.")
+		self._show_report(report)
+		if report.output_path or report.fallback_path:
+			written = report.output_path or report.fallback_path
+			title = "Scratch export complete" if report.output_path else "Fallback bundle written"
+			note = "" if report.output_path else "\n\nThis is not an SB3 Scratch project."
+			QMessageBox.information(self, title, f"Written to:\n{written}{note}")
+
 	def _show_report(self, report: ConversionReport) -> None:
 		self.last_report = report
 		if report.exact and not report.blocked:
@@ -385,3 +550,10 @@ class ConverterPane(QWidget):
 					f"[{issue.severity.upper()}] {issue.code}{where}: {issue.message}"
 				)
 		self.report_view.setPlainText("\n".join(lines))
+
+	def shutdown(self, timeout_ms: int = 2_000) -> bool:
+		job = self._job
+		if job is None or not job.isRunning():
+			return True
+		job.requestInterruption()
+		return job.wait(max(0, int(timeout_ms)))

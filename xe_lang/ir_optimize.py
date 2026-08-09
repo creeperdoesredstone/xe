@@ -30,9 +30,9 @@ BINARY_FOLDABLE = {
 	"DIVI": lambda a, b: int(a / b),
 	"MODI": lambda a, b: a % b,
 	"POWI": _pow_i32,
-	"ANDI": lambda a, b: a & b,
-	"ORI": lambda a, b: a | b,
-	"XORI": lambda a, b: a ^ b,
+	"AND": lambda a, b: a & b,
+	"OR": lambda a, b: a | b,
+	"XOR": lambda a, b: a ^ b,
 }
 
 NOOP_OPCODES = {"NOP"}
@@ -70,7 +70,7 @@ def _referenced_labels(instructions: list[Instruction]) -> set[str]:
 def remove_nops(instructions: list[Instruction]) -> list[Instruction]:
 	instr = []
 	for i in instructions:
-		if _opcode(i) == "POP" and i[-1] == 0:
+		if _opcode(i) in NOOP_OPCODES or (_opcode(i) == "POP" and i[-1] == 0):
 			continue
 		instr.append(i)
 	return instr
@@ -212,7 +212,7 @@ def remove_unreachable_after_halt(instructions: list[Instruction]) -> list[Instr
 
 		out.append(instr)
 
-		if _opcode(instr) in ("HALT", "JMP"):
+		if _opcode(instr) in ("HALT", "JUMP"):
 			dead = True
 
 	return out

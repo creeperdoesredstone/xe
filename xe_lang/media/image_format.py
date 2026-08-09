@@ -19,6 +19,7 @@ XIMG_MAX_COLOR = 16
 XIMG_MAX_FRAMES = 4096
 XIMG_MAX_DIMENSION = 4096
 XIMG_MAX_WORDS = 200_000
+XIMG_MAX_DECODED_PIXELS = XIMG_MAX_WORDS * 6
 XIMG_MAX_DELTA_CHAIN = 16
 
 ENCODING_RAW = 0
@@ -57,23 +58,27 @@ def _crc(words: list[int]) -> int:
 
 
 def _validate_image(image: PortableImage) -> int:
+	if any(type(value) is not int for value in (image.width, image.height, image.loop_count)):
+		raise XIMGError("Image dimensions and loop count must be integers")
 	width = int(image.width)
 	height = int(image.height)
 	if not 1 <= width <= XIMG_MAX_DIMENSION or not 1 <= height <= XIMG_MAX_DIMENSION:
 		raise XIMGError(f"Image dimensions must be 1..{XIMG_MAX_DIMENSION}")
 	pixel_count = width * height
-	if pixel_count > XIMG_MAX_WORDS * 6:
+	if pixel_count * len(image.frames) > XIMG_MAX_DECODED_PIXELS:
 		raise XIMGError("Decoded image exceeds the portable decode budget")
 	if not 1 <= len(image.frames) <= XIMG_MAX_FRAMES:
 		raise XIMGError(f"Frame count must be 1..{XIMG_MAX_FRAMES}")
 	if not 0 <= int(image.loop_count) <= 0xFFFFFFFF:
 		raise XIMGError("Loop count is outside the 32-bit range")
 	for frame in image.frames:
+		if type(frame.duration_ms) is not int:
+			raise XIMGError("Frame duration must be an integer")
 		if len(frame.pixels) != pixel_count:
 			raise XIMGError(f"Frame has {len(frame.pixels)} pixels; expected {pixel_count}")
 		if not 1 <= int(frame.duration_ms) <= 0xFFFFFFFF:
 			raise XIMGError("Frame duration must be a positive 32-bit millisecond value")
-		if any(not 0 <= int(pixel) <= XIMG_MAX_COLOR for pixel in frame.pixels):
+		if any(type(pixel) is not int or not 0 <= pixel <= XIMG_MAX_COLOR for pixel in frame.pixels):
 			raise XIMGError("Pixels must be palette indices 0..15 or transparent index 16")
 	return pixel_count
 
@@ -222,11 +227,17 @@ def encode_ximg(image: PortableImage, *, max_words: int = XIMG_MAX_WORDS) -> tup
 
 
 def decode_ximg(words: tuple[int, ...] | list[int], *, max_words: int = XIMG_MAX_WORDS) -> PortableImage:
+	if len(words) > int(max_words):
+		raise XIMGError("XIMG length exceeds the decode budget")
+	if any(type(word) is not int for word in words):
+		raise XIMGError("XIMG streams must contain integer words")
 	values = [int(word) & 0xFFFFFFFF for word in words]
 	if len(values) < XIMG_HEADER_WORDS:
 		raise XIMGError("XIMG header is truncated")
 	if values[0] != XIMG_MAGIC or values[1] != XIMG_VERSION:
 		raise XIMGError("Unsupported XIMG magic or version")
+	if values[2] != 0 or values[11] != 0:
+		raise XIMGError("Unsupported XIMG flags or reserved fields")
 	width, height, frame_count, loop_count = values[3:7]
 	table_offset, data_offset, total_words, expected_crc = values[7:11]
 	if total_words != len(values) or total_words > int(max_words):
@@ -270,12 +281,17 @@ def _validate_image_dimensions_only(image: PortableImage, frame_count: int) -> i
 	if not 1 <= frame_count <= XIMG_MAX_FRAMES:
 		raise XIMGError("XIMG frame count is invalid")
 	pixel_count = image.width * image.height
-	if pixel_count > XIMG_MAX_WORDS * 6:
+	if pixel_count * frame_count > XIMG_MAX_DECODED_PIXELS:
 		raise XIMGError("Decoded image exceeds the portable decode budget")
 	return pixel_count
 
 
 def _safe_xip_name(name: str) -> str:
+	if not name or "\\" in name or name.startswith("/"):
+		raise XIMGError(f"Unsafe XIP member name: {name!r}")
+	raw_parts = name.split("/")
+	if any(part in {"", ".", ".."} for part in raw_parts):
+		raise XIMGError(f"Unsafe XIP member name: {name!r}")
 	value = PurePosixPath(name)
 	if value.is_absolute() or ".." in value.parts or str(value) in {"", "."}:
 		raise XIMGError(f"Unsafe XIP member name: {name!r}")
@@ -286,7 +302,12 @@ def write_xip(path: str | Path, manifest: dict[str, object], members: dict[str, 
 	output = Path(path)
 	if output.exists() and not overwrite:
 		raise XIMGError(f"Output already exists: {output}")
-	payloads = {_safe_xip_name(name): bytes(value) for name, value in members.items()}
+	payloads: dict[str, bytes] = {}
+	for name, value in members.items():
+		safe_name = _safe_xip_name(name)
+		if safe_name in payloads:
+			raise XIMGError(f"Duplicate XIP member: {safe_name}")
+		payloads[safe_name] = bytes(value)
 	if "manifest.json" in payloads:
 		raise XIMGError("manifest.json is reserved")
 	payloads["manifest.json"] = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")

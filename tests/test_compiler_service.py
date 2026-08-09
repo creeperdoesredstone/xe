@@ -11,7 +11,7 @@ def test_compile_source_is_deterministic_and_reports_contract() -> None:
 	assert first.program == second.program
 	assert first.artifact_hash == second.artifact_hash
 	assert first.required_syscalls == (1, 5, 21, 22)
-	assert first.memory.address_limit == 200_000
+	assert first.memory.address_limit == 2_000_000
 	assert compile_source("out << 17", r"C:\projects\demo\program.xe").units[0].path == "program.xe"
 	assert capability_for_syscall(276) == "app.graphics"
 

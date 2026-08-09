@@ -1456,7 +1456,7 @@ class SemanticAnalyzer:
 		if expr_type.pointer_layers != 0 or target_type.pointer_layers != 0:
 			return res.fail(
 				SemanticError(
-					f"Cannot cast pointer types.",
+					"Cannot cast pointer types.",
 					node.start_pos,
 					node.end_pos,
 				)
@@ -1794,7 +1794,11 @@ class SemanticAnalyzer:
 
 		if isinstance(struct_or_class_symbol, (StructSymbol, ClassSymbol)):
 			member_name = node.member.value
-			field: VariableSymbol | None = struct_or_class_symbol.fields.get(member_name)
+			field: VariableSymbol | None
+			if isinstance(struct_or_class_symbol, ClassSymbol):
+				field = struct_or_class_symbol.lookup_field(member_name)
+			else:
+				field = struct_or_class_symbol.fields.get(member_name)
 
 			if field is None:
 				return res.fail(
@@ -1810,26 +1814,6 @@ class SemanticAnalyzer:
 			node.struct_symbol = struct_or_class_symbol
 			node.const_value = field.const_value
 			return res.success(field.type)
-
-		if parent_type.base in self.classes:
-			member_name = node.member.value
-			current_class = parent_type.base
-
-			while current_class is not None:
-				class_info = self.classes.get(current_class)
-				if class_info and member_name in class_info["members"]:
-					result_type = class_info["members"][member_name]
-					node.type = result_type
-					return res.success(result_type)
-				current_class = class_info["parent"] if class_info else None
-
-			return res.fail(
-				SemanticError(
-					f"Class '{parent_type.base}' has no member named '{member_name}'.",
-					node.member.start_pos,
-					node.member.end_pos,
-				)
-			)
 
 		return res.fail(
 			SemanticError(
@@ -1857,7 +1841,11 @@ class SemanticAnalyzer:
 		field_type: Type | None = None
 
 		if isinstance(struct_or_class_symbol, (StructSymbol, ClassSymbol)):
-			field: VariableSymbol | None = struct_or_class_symbol.fields.get(member_name)
+			field: VariableSymbol | None
+			if isinstance(struct_or_class_symbol, ClassSymbol):
+				field = struct_or_class_symbol.lookup_field(member_name)
+			else:
+				field = struct_or_class_symbol.fields.get(member_name)
 			if field is None:
 				return res.fail(
 					SemanticError(
@@ -1870,23 +1858,6 @@ class SemanticAnalyzer:
 			node.field_address = field.address
 			node.struct_symbol = struct_or_class_symbol
 
-		elif parent_type.base in self.classes:
-			current_class = parent_type.base
-			while current_class is not None:
-				class_info = self.classes.get(current_class)
-				if class_info and member_name in class_info["members"]:
-					field_type = class_info["members"][member_name]
-					break
-				current_class = class_info["parent"] if class_info else None
-
-			if field_type is None:
-				return res.fail(
-					SemanticError(
-						f"Class '{parent_type.base}' has no member named '{member_name}'.",
-						node.member.start_pos,
-						node.member.end_pos,
-					)
-				)
 		else:
 			return res.fail(
 				SemanticError(
@@ -2042,7 +2013,7 @@ class SemanticAnalyzer:
 				if member.name == "init" and not is_proc:
 					return res.fail(
 						SemanticError(
-							f"'init' must be declared as a procedure (proc), not a function (fn), since it has no return value.",
+							"'init' must be declared as a procedure (proc), not a function (fn), since it has no return value.",
 							member.start_pos,
 							member.end_pos,
 						)

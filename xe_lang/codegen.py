@@ -1,7 +1,6 @@
 from xe_lang.helper import TT, Result, AssemblyError
 from xe_lang.nodes import *
 from xe_lang.rules import BINARY_OPCODE_MAP
-from math import sin, cos, tan, asin, acos, atan, sqrt, ceil
 from xe_lang.stdlib import (
 	BUILTIN_SYSCALLS,
 	METHOD_SYSCALLS,
@@ -12,7 +11,6 @@ from xe_lang.stdlib import (
 from xe_lang.syscall_abi import GRAPHICS_SCREEN_REFERENCE_TAG, SyscallID
 from xe_lang.executable import static_layout_trailer
 
-from pathlib import Path
 import struct
 
 Instruction = tuple
@@ -533,7 +531,7 @@ def emit_VariableAssign(node: VariableAssign) -> Result:
 					):
 						return res.fail(
 							AssemblyError(
-								f"Cannot assign a value of this form to a by-value struct/class variable.",
+								"Cannot assign a value of this form to a by-value struct/class variable.",
 								node.value.start_pos,
 								node.value.end_pos,
 							)

@@ -1,5 +1,11 @@
 # Xenon Text Editor: safe, responsive file editing with optional Xe syntax feedback.
 
+# App metadata and default geometry.
+const APP_TITLE = "Text Editor"
+const APP_DEFAULT_WIDTH = 300
+const APP_DEFAULT_HEIGHT = 210
+
+# Model and state.
 var editor_window: graphics::Window
 var editor_text: string
 var editor_path: string
@@ -9,6 +15,7 @@ var editor_clipboard: string
 var undo_text: string
 var editor_scratch: string
 var editor_insert: string
+var editor_footer_path: string
 var editor_file: os::File
 var xe_mode: bool
 var dirty: bool
@@ -26,6 +33,7 @@ var effective_font_size: int
 var text_style: int
 var scroll_line: int
 var scroll_column: int
+var editor_follow_cursor: bool
 var key: int
 var width: int
 var height: int
@@ -182,6 +190,7 @@ proc record_undo() {
 proc mark_content_changed() {
 	dirty = true
 	compile_pending = xe_mode
+	editor_follow_cursor = true
 }
 
 proc replace_editor_selection(value: string) {
@@ -547,6 +556,7 @@ fn editor_row_height() int {
 	return 8
 }
 
+# Layout helpers.
 fn editor_character_width() int {
 	return graphics::char_advance('M', effective_font_size)
 }
@@ -580,6 +590,19 @@ proc keep_editor_cursor_visible(draw_width: int, draw_height: int) {
 	if (scroll_column < 0) { scroll_column = 0 }
 }
 
+proc clamp_editor_scroll(draw_width: int, draw_height: int) {
+	var rows: int
+	var maximum_line: int
+	rows = draw_height / editor_row_height()
+	if (rows < 1) { rows = 1 }
+	maximum_line = editor_line_count() - rows
+	if (maximum_line < 0) { maximum_line = 0 }
+	if (scroll_line < 0) { scroll_line = 0 }
+	if (scroll_line > maximum_line) { scroll_line = maximum_line }
+	if (scroll_column < 0) { scroll_column = 0 }
+}
+
+# Paint and replaceable asset hooks.
 proc draw_editor_character(x: int, y: int, character: char, color: int) {
 	call graphics::draw_char_styled(editor_window, x, y, character, color, effective_font_size, text_style)
 }
@@ -625,6 +648,7 @@ proc adjust_font_size(amount: int) {
 	if (font_size == graphics::FONT_SMALL) { call set_text(editor_status, "Font size: small") }
 	elseif (font_size == graphics::FONT_NORMAL) { call set_text(editor_status, "Font size: normal") }
 	else { call set_text(editor_status, "Font size: large") }
+	editor_follow_cursor = true
 }
 
 fn editor_text_advance(value: string, size: int) int {
@@ -718,6 +742,7 @@ proc draw_editor_source(x: int, y: int, draw_width: int, draw_height: int) {
 	var advance: int
 	var selection_x: int
 	var selection_width: int
+	var escape_next: bool
 
 	row_height = editor_row_height()
 	gutter = editor_gutter_width()
@@ -738,6 +763,7 @@ proc draw_editor_source(x: int, y: int, draw_width: int, draw_height: int) {
 	in_string = false
 	in_comment = false
 	in_char = false
+	escape_next = false
 
 	while (index < xestring::strlen(editor_text)) {
 		current_char = editor_text[index]
@@ -751,6 +777,7 @@ proc draw_editor_source(x: int, y: int, draw_width: int, draw_height: int) {
 			column = 0
 			in_string = false
 			in_comment = false
+			escape_next = false
 		}
 		else {
 			if (current_char == 9) {
@@ -766,8 +793,8 @@ proc draw_editor_source(x: int, y: int, draw_width: int, draw_height: int) {
 			}
 			else {
 				if (current_char == '#' && !in_string) { in_comment = true }
-				if (current_char == '"' && !in_comment && !in_char) { in_string = !in_string }
-				if (current_char == '\'' && !in_string && !in_comment) { in_char = !in_char }
+				if (current_char == '"' && !in_comment && !in_char && !escape_next) { in_string = !in_string }
+				if (current_char == '\'' && !in_string && !in_comment && !escape_next) { in_char = !in_char }
 				advance = graphics::char_advance(current_char, effective_font_size)
 				if (line >= scroll_line && line < scroll_line + visible_rows && column + advance > scroll_column && column < scroll_column + visible_width) {
 					color = graphics::WHITE
@@ -789,6 +816,8 @@ proc draw_editor_source(x: int, y: int, draw_width: int, draw_height: int) {
 					}
 					if (column >= scroll_column) { call draw_editor_character(x + gutter + column - scroll_column, y + (line - scroll_line) * row_height, current_char, color) }
 				}
+				if ((in_string || in_char) && (int)current_char == 92 && !escape_next) { escape_next = true }
+				else { escape_next = false }
 				column += advance
 			}
 		}
@@ -814,25 +843,19 @@ proc draw_editor_source(x: int, y: int, draw_width: int, draw_height: int) {
 		if (cursor_style == CursorStyle.LINE) {
 			call graphics::draw_line(editor_window, x + gutter + cursor_x - scroll_column, y + (cursor_y - scroll_line) * row_height, x + gutter + cursor_x - scroll_column, y + (cursor_y - scroll_line) * row_height + row_height - 2, graphics::COLOR_13)
 		} else {
-			if (font_size == graphics::FONT_SMALL) { cursor_size = 3 }
-			elseif (font_size == graphics::FONT_LARGE) { cursor_size = 10 }
+			if (effective_font_size == graphics::FONT_SMALL) { cursor_size = 3 }
+			elseif (effective_font_size == graphics::FONT_LARGE) { cursor_size = 10 }
 			else { cursor_size = 5 }
 			call graphics::fill_rect(editor_window, x + gutter + cursor_x - scroll_column, y + (cursor_y - scroll_line) * row_height, cursor_size, row_height, graphics::COLOR_13)
 		}	
 	}
 }
 
-fn editor_index_at(pointer_x: int, pointer_y: int, x: int, y: int) int {
-	var target_line: int
-	var target_column: int
+fn editor_index_for_position(target_line: int, target_column: int) int {
 	var index: int
 	var line: int
 	var column: int
 	var advance: int
-	target_line = scroll_line + (pointer_y - y) / editor_row_height()
-	if (target_line < 0) { target_line = 0 }
-	target_column = scroll_column + pointer_x - x - editor_gutter_width()
-	if (target_column < 0) { target_column = 0 }
 	index = 0
 	line = 0
 	column = 0
@@ -845,11 +868,20 @@ fn editor_index_at(pointer_x: int, pointer_y: int, x: int, y: int) int {
 			line += 1
 			column = 0
 		}
-		elseif (editor_text[index] == 9) { column += advance }
 		else { column += advance }
 		index += 1
 	}
 	return xestring::strlen(editor_text)
+}
+
+fn editor_index_at(pointer_x: int, pointer_y: int, x: int, y: int) int {
+	var target_line: int
+	var target_column: int
+	target_line = scroll_line + (pointer_y - y) / editor_row_height()
+	if (target_line < 0) { target_line = 0 }
+	target_column = scroll_column + pointer_x - x - editor_gutter_width()
+	if (target_column < 0) { target_column = 0 }
+	return editor_index_for_position(target_line, target_column)
 }
 
 fn control_is_down() bool {
@@ -861,6 +893,7 @@ proc select_all_editor_text() {
 	selection_end = xestring::strlen(editor_text)
 	cursor_index = selection_end
 	selected_all = selection_end > 0
+	editor_follow_cursor = true
 	if (selected_all) {
 		call set_text(editor_status, "Selected all")
 	}
@@ -869,6 +902,7 @@ proc select_all_editor_text() {
 	}
 }
 
+# Input and interaction.
 proc handle_control_shortcut(shortcut: int) {
 	if (shortcut == 1 || shortcut == 65 || shortcut == 97) {
 		call select_all_editor_text()
@@ -889,7 +923,7 @@ proc handle_control_shortcut(shortcut: int) {
 		call open_editor_file()
 	}
 	elseif (shortcut == 14 || shortcut == 78 || shortcut == 110) {
-		call new_editor_file()
+		call request_new_editor_file()
 	}
 	elseif (shortcut == 26 || shortcut == 90 || shortcut == 122) {
 		call undo_editor_change()
@@ -912,7 +946,30 @@ proc handle_control_shortcut(shortcut: int) {
 }
 
 proc apply_editor_key(input_key: int) {
-	if (input_key == graphics::KEY_BACKSPACE) {
+	if (input_key == graphics::KEY_LEFT) {
+		if (editor_has_selection()) { cursor_index = editor_selection_begin() }
+		elseif (cursor_index > 0) { cursor_index -= 1 }
+		call clear_editor_selection()
+		editor_follow_cursor = true
+	}
+	elseif (input_key == graphics::KEY_RIGHT) {
+		if (editor_has_selection()) { cursor_index = editor_selection_finish() }
+		elseif (cursor_index < xestring::strlen(editor_text)) { cursor_index += 1 }
+		call clear_editor_selection()
+		editor_follow_cursor = true
+	}
+	elseif (input_key == graphics::KEY_UP || input_key == graphics::KEY_DOWN) {
+		var target_line: int
+		target_line = editor_cursor_line()
+		if (input_key == graphics::KEY_UP) { target_line -= 1 }
+		else { target_line += 1 }
+		if (target_line < 0) { target_line = 0 }
+		if (target_line >= editor_line_count()) { target_line = editor_line_count() - 1 }
+		cursor_index = editor_index_for_position(target_line, editor_cursor_column())
+		call clear_editor_selection()
+		editor_follow_cursor = true
+	}
+	elseif (input_key == graphics::KEY_BACKSPACE) {
 		call erase_editor_character()
 	}
 	elseif (input_key == graphics::KEY_DELETE) {
@@ -1121,22 +1178,37 @@ proc draw_dirty_prompt() {
 	var panel_width: int
 	var panel_x: int
 	var panel_y: int
+	var button_width: int
+	var save_label: string
+	var discard_label: string
+	var cancel_label: string
 	panel_width = width - 16
 	if (panel_width > 210) { panel_width = 210 }
-	if (panel_width < 102) { panel_width = 102 }
+	if (panel_width < 44) { panel_width = width - 4 }
 	panel_x = (width - panel_width) / 2
 	panel_y = height / 2 - 18
 	call graphics::fill_rect(editor_window, panel_x, panel_y, panel_width, 36, graphics::COLOR_8)
 	call graphics::draw_rect(editor_window, panel_x, panel_y, panel_width, 36, graphics::COLOR_10)
-	call graphics::draw_text_small(editor_window, panel_x + 5, panel_y + 5, "Save changes?", graphics::WHITE)
-	if (graphics::button_flat(editor_window, panel_x + 5, panel_y + 21, 40, 9, "Save", graphics::COLOR_10)) {
-		call resolve_dirty_prompt(1)
+	call copy_text_prefix(editor_scratch, "Save changes?", (panel_width - 10) / 4)
+	call graphics::draw_text_small(editor_window, panel_x + 5, panel_y + 5, editor_scratch, graphics::WHITE)
+	if (panel_width >= 110) {
+		if (graphics::button_flat(editor_window, panel_x + 5, panel_y + 21, 40, 9, "Save", graphics::COLOR_10)) { call resolve_dirty_prompt(1) }
+		if (graphics::button_flat(editor_window, panel_x + 48, panel_y + 21, 56, 9, "Don't save", graphics::COLOR_1)) { call resolve_dirty_prompt(2) }
+		if (graphics::button_flat(editor_window, panel_x + panel_width - 48, panel_y + 21, 43, 9, "Cancel", graphics::COLOR_1)) { call resolve_dirty_prompt(0) }
 	}
-	if (graphics::button_flat(editor_window, panel_x + 48, panel_y + 21, 56, 9, "Don't save", graphics::COLOR_1)) {
-		call resolve_dirty_prompt(2)
-	}
-	if (graphics::button_flat(editor_window, panel_x + panel_width - 48, panel_y + 21, 43, 9, "Cancel", graphics::COLOR_1)) {
-		call resolve_dirty_prompt(0)
+	else {
+		button_width = (panel_width - 10) / 3
+		save_label = "Save"
+		discard_label = "No"
+		cancel_label = "Cancel"
+		if (button_width < 24) {
+			save_label = "S"
+			discard_label = "N"
+			cancel_label = "X"
+		}
+		if (graphics::button_flat(editor_window, panel_x + 3, panel_y + 21, button_width, 9, save_label, graphics::COLOR_10)) { call resolve_dirty_prompt(1) }
+		if (graphics::button_flat(editor_window, panel_x + 5 + button_width, panel_y + 21, button_width, 9, discard_label, graphics::COLOR_1)) { call resolve_dirty_prompt(2) }
+		if (graphics::button_flat(editor_window, panel_x + 7 + button_width * 2, panel_y + 21, button_width, 9, cancel_label, graphics::COLOR_1)) { call resolve_dirty_prompt(0) }
 	}
 }
 
@@ -1148,6 +1220,7 @@ editor_clipboard = ""
 undo_text = ""
 editor_scratch = ""
 editor_insert = ""
+editor_footer_path = ""
 xe_mode = false
 dirty = false
 compile_pending = false
@@ -1163,6 +1236,7 @@ effective_font_size = graphics::FONT_NORMAL
 text_style = 0
 scroll_line = 0
 scroll_column = 0
+editor_follow_cursor = true
 compile_ok = true
 edit_menu_open = false
 edit_menu_progress = 0
@@ -1181,11 +1255,12 @@ dirty_prompt_open = false
 dirty_prompt_action = 0
 editor_scroll_delta = 0
 
+# Application driver.
 editor_window.x = 70
 editor_window.y = 46
-editor_window.width = 300
-editor_window.height = 210
-editor_window.title = "Text Editor"
+editor_window.width = APP_DEFAULT_WIDTH
+editor_window.height = APP_DEFAULT_HEIGHT
+editor_window.title = APP_TITLE
 editor_window.ui_scale = 1
 editor_window.state = graphics::WINDOW_NORMAL
 previous_ticks = os::ticks()
@@ -1309,12 +1384,18 @@ while (editor_window.state != graphics::WINDOW_CLOSED) {
 		if (body_width < 8) { body_width = 8 }
 		effective_font_size = font_size
 		if (width < 126 || height < 76) { effective_font_size = graphics::FONT_SMALL }
+		if (!edit_menu_open && !file_dialog_open && !dirty_prompt_open && editor_scroll_delta != 0 && pointer_x >= 3 && pointer_x < 3 + body_width && pointer_y >= body_y && pointer_y < body_y + body_height) {
+			if ((graphics::modifiers() & graphics::MOD_SHIFT) != 0) { scroll_column -= editor_scroll_delta * 8 }
+			else { scroll_line -= editor_scroll_delta * 3 }
+			editor_follow_cursor = false
+		}
 		if (!edit_menu_open && !file_dialog_open && !dirty_prompt_open && graphics::mouse_pressed() && pointer_x >= 3 && pointer_x < 3 + body_width && pointer_y >= body_y && pointer_y < body_y + body_height) {
 			cursor_index = editor_index_at(pointer_x, pointer_y, 3, body_y + 2)
 			selection_start = cursor_index
 			selection_end = cursor_index
 			selected_all = false
 			selection_dragging = true
+			editor_follow_cursor = false
 		}
 		if (selection_dragging && graphics::mouse_down() && !edit_menu_open && !file_dialog_open && !dirty_prompt_open) {
 			selection_end = editor_index_at(pointer_x, pointer_y, 3, body_y + 2)
@@ -1325,19 +1406,26 @@ while (editor_window.state != graphics::WINDOW_CLOSED) {
 			selection_dragging = false
 			edit_toggle_lock = false
 		}
-		call keep_editor_cursor_visible(body_width, body_height - 4)
+		if (editor_follow_cursor) {
+			call keep_editor_cursor_visible(body_width, body_height - 4)
+			editor_follow_cursor = false
+		}
+		else { call clamp_editor_scroll(body_width, body_height - 4) }
 		call graphics::fill_rect(editor_window, 3, body_y, body_width, body_height, graphics::COLOR_0)
 		call graphics::draw_line(editor_window, 3 + editor_gutter_width() - 2, body_y, 3 + editor_gutter_width() - 2, body_y + body_height - 1, graphics::COLOR_8)
 		call draw_editor_source(3, body_y + 2, body_width, body_height - 4)
 		if (!file_dialog_open && editor_scroll_button(width - 8, body_y, 6, 7, -1)) {
 			if (scroll_line > 0) { scroll_line -= 1 }
+			editor_follow_cursor = false
 		}
 		if (!file_dialog_open && editor_scroll_button(width - 8, body_y + body_height - 7, 6, 7, 1)) {
 			if (scroll_line < editor_line_count() - 1) { scroll_line += 1 }
+			editor_follow_cursor = false
 		}
 		call graphics::draw_text_small(editor_window, 4, height - 9, editor_status, graphics::COLOR_7)
 		if (width >= 180) {
-			call graphics::draw_text_small(editor_window, width - xestring::strlen(editor_path) * 4 - 4, height - 9, editor_path, graphics::COLOR_8)
+			call copy_text_prefix(editor_footer_path, editor_path, (width / 2 - 8) / 4)
+			call graphics::draw_text_small(editor_window, width - xestring::strlen(editor_footer_path) * 4 - 4, height - 9, editor_footer_path, graphics::COLOR_8)
 		}
 
 		if (edit_menu_progress > 0) {

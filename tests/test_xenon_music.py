@@ -197,8 +197,8 @@ out << (int)probe_angle'''
 			(300, 224, "music_inventory_open = true\n"),
 		):
 			with self.subTest(width=width, height=height, setup=bool(setup)):
-				source = self.source.replace("music_window.width = 300", f"music_window.width = {width}", 1)
-				source = source.replace("music_window.height = 224", f"music_window.height = {height}", 1)
+				source = self.source.replace("music_window.width = APP_DEFAULT_WIDTH", f"music_window.width = {width}", 1)
+				source = source.replace("music_window.height = APP_DEFAULT_HEIGHT", f"music_window.height = {height}", 1)
 				source = source.replace(
 					"while (music_window.state != graphics::WINDOW_CLOSED) {",
 					f"{setup}var probe_frame: int\nprobe_frame = 0\nwhile (probe_frame < 1) {{",
@@ -217,6 +217,43 @@ out << (int)probe_angle'''
 				self.assertIsNone(error, str(error))
 				self.assertEqual(1, len(frames))
 				self.assertGreater(sum(color != 0 for color in frames[0].indices), 300)
+
+	def test_narrow_header_elides_track_before_reserved_play_status(self) -> None:
+		self.assertIn("proc draw_music_text_elided", self.source)
+		self.assertIn("music_header_right = music_deck_width - 42", self.source)
+		self.assertIn("if (music_deck_width >= 140)", self.source)
+		source = self.source.replace('return "Neon Orbit"', 'return "A Very Long Demonstration Record"', 1)
+		source = source.replace("music_window.width = APP_DEFAULT_WIDTH", "music_window.width = 150", 1)
+		source = source.replace("music_window.height = APP_DEFAULT_HEIGHT", "music_window.height = 106", 1)
+		source = source.replace(
+			"while (music_window.state != graphics::WINDOW_CLOSED) {",
+			"var header_frame: int\nheader_frame = 0\nwhile (header_frame < 1) {",
+			1,
+		)
+		source = source.replace(
+			"call graphics::update(music_window)",
+			"call graphics::update(music_window)\n\theader_frame += 1",
+			1,
+		)
+		frames = []
+		with tempfile.TemporaryDirectory() as drive:
+			context = RuntimeContext(filesystem_root=drive, frame_handler=frames.append)
+			with redirect_stdout(StringIO()):
+				_, error, _ = run("xenon-music-header.xe", source, context)
+		self.assertIsNone(error, str(error))
+		self.assertEqual(1, len(frames))
+		origin_x = context.vm.devices.windows.content_x(1)
+		origin_y = context.vm.devices.windows.content_y(1)
+		frame = frames[0]
+		track_pixels = 0
+		reserved_pixels = 0
+		for y in range(origin_y + 4, origin_y + 11):
+			for x in range(origin_x + 64, origin_x + 108):
+				track_pixels += frame.indices[y * frame.width + x] == 10
+			for x in range(origin_x + 108, origin_x + 146):
+				reserved_pixels += frame.indices[y * frame.width + x] == 10
+		self.assertGreater(track_pixels, 0)
+		self.assertEqual(0, reserved_pixels)
 
 
 if __name__ == "__main__":

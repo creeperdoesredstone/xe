@@ -17,6 +17,8 @@ from PyQt6.QtWidgets import (
 	QTextBrowser,
 	QVBoxLayout,
 	QWidget,
+	QScrollArea,
+	QFrame,
 )
 
 from .help_content import HELP_TOPICS, OFFICIAL_DOCS_URL, HelpTopic
@@ -125,15 +127,19 @@ def _inline_markup(text: str) -> str:
 	return result
 
 
-class HelpPane(QWidget):
+class HelpPane(QScrollArea):
 	def __init__(self, parent: QWidget | None = None):
 		super().__init__(parent)
+		self.setWidgetResizable(True)
+		self.setFrameShape(QFrame.Shape.NoFrame)
+		self._content = QWidget()
+		self.setWidget(self._content)
 		self._visible_topics: list[HelpTopic] = []
 		self._build_ui()
 		self._filter_topics("")
 
 	def _build_ui(self) -> None:
-		root = QVBoxLayout(self)
+		root = QVBoxLayout(self._content)
 		root.setContentsMargins(18, 16, 18, 18)
 		root.setSpacing(12)
 		header = QHBoxLayout()

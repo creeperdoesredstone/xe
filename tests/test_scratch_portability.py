@@ -39,7 +39,7 @@ def test_pinned_template_profile_is_truthful_and_legacy_bounded() -> None:
 	assert set(audit["sys_dispatch"]) == set(profile.supported_syscalls)
 	assert len(profile.supported_syscalls) == 48
 	assert profile.address_limit == profile.static_limit == 65_536
-	assert MAX_ADDRESS_COUNT == 200_000
+	assert MAX_ADDRESS_COUNT == 2_000_000
 	assert profile.address_limit != MAX_ADDRESS_COUNT
 	assert {capability_for_syscall(value) for value in profile.supported_syscalls} == set(profile.capabilities)
 

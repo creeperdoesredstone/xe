@@ -10,6 +10,7 @@ import pytest
 import xe_lang.sb3_exporter as sb3_exporter
 
 from xe_lang.compiler_service import compile_source
+from xe_lang.memory import MAX_ADDRESS_COUNT
 from xe_lang.sb3_exporter import (
 	SB3ExportError,
 	analyze_compatibility,
@@ -45,7 +46,7 @@ def _profile(template_hash: str, syscalls: tuple[int, ...]) -> ScratchVMProfile:
 		"1",
 		template_hash,
 		frozenset(syscalls),
-		200_000,
+		MAX_ADDRESS_COUNT,
 		65_536,
 		frozenset(("core.io", "core.os")),
 	)
@@ -89,7 +90,7 @@ def test_export_rejects_template_hash_mismatch(tmp_path: Path) -> None:
 		export_sb3(artifact, tmp_path / "bad.sb3", template, profile)
 
 
-def test_bundled_legacy_profile_is_pinned_and_never_claims_200k_parity() -> None:
+def test_bundled_legacy_profile_is_pinned_and_never_claims_banked_memory_parity() -> None:
 	profile = load_bundled_profile()
 	assert profile.verify_template(bundled_template_path())
 	report = analyze_compatibility(compile_source("out << 17"), profile)
@@ -111,7 +112,7 @@ def test_exact_gate_rejects_unavailable_or_dynamic_assets(tmp_path: Path) -> Non
 		"1",
 		digest,
 		frozenset(dynamic_asset.required_syscalls),
-		200_000,
+		MAX_ADDRESS_COUNT,
 		65_536,
 		frozenset(("asset-rom",)),
 	)

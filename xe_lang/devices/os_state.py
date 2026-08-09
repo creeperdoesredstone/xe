@@ -5,6 +5,7 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import tempfile
 from threading import RLock
 from typing import Callable
 
@@ -168,9 +169,9 @@ class OSDevice:
 			return None
 		return self._settings_from_payload(payload)
 
-	def _persist_locked(self) -> None:
+	def _persist_locked(self) -> bool:
 		if self._settings_path is None:
-			return
+			return True
 		settings = self._settings
 		payload = {
 			"version": SETTINGS_SCHEMA_VERSION,
@@ -186,23 +187,45 @@ class OSDevice:
 			"clock_format": settings.clock_format,
 			"settings_enabled": settings.settings_enabled,
 		}
-		temporary = self._settings_path.with_name(f".{self._settings_path.name}.{os.getpid()}.tmp")
+		temporary: Path | None = None
+		fd: int | None = None
 		try:
 			self._settings_path.parent.mkdir(parents=True, exist_ok=True)
-			temporary.write_text(
-				json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
-				encoding="utf-8",
+			fd, temporary_name = tempfile.mkstemp(
+				prefix=f".{self._settings_path.name}.",
+				suffix=".tmp",
+				dir=self._settings_path.parent,
+				text=True,
 			)
+			temporary = Path(temporary_name)
+			stream = os.fdopen(fd, "w", encoding="utf-8", newline="")
+			fd = None
+			with stream:
+				stream.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+				stream.flush()
+				os.fsync(stream.fileno())
 			os.replace(temporary, self._settings_path)
+			return True
 		except (OSError, UnicodeError):
-			try:
-				temporary.unlink(missing_ok=True)
-			except OSError:
-				pass
+			if fd is not None:
+				try:
+					os.close(fd)
+				except OSError:
+					pass
+			if temporary is not None:
+				try:
+					temporary.unlink(missing_ok=True)
+				except OSError:
+					pass
+			return False
 
-	def _store_locked(self, settings: OSSettings) -> None:
+	def _store_locked(self, settings: OSSettings) -> bool:
+		previous = self._settings
 		self._settings = settings
-		self._persist_locked()
+		if self._persist_locked():
+			return True
+		self._settings = previous
+		return False
 
 	def now(self) -> datetime:
 		return self._now_provider()
@@ -270,37 +293,32 @@ class OSDevice:
 
 	def set_volume(self, volume: int) -> bool:
 		with self._lock:
-			self._store_locked(replace(self._settings, volume=max(0, min(100, int(volume)))))
-		return True
+			return self._store_locked(replace(self._settings, volume=max(0, min(100, int(volume)))))
 
 	def set_background(self, background_id: int) -> bool:
 		if not 0 <= int(background_id) < self.background_count:
 			return False
 		with self._lock:
-			self._store_locked(replace(self._settings, background_id=int(background_id)))
-		return True
+			return self._store_locked(replace(self._settings, background_id=int(background_id)))
 
 	def set_palette(self, palette_id: int) -> bool:
 		if not 0 <= int(palette_id) < self.palette_count:
 			return False
 		with self._lock:
 			palette_id = int(palette_id)
-			self._store_locked(replace(
+			return self._store_locked(replace(
 				self._settings,
 				palette_id=palette_id,
 				theme_mode=1 if palette_id >= 3 else 0,
 			))
-		return True
 
 	def set_music_volume(self, value: int) -> bool:
 		with self._lock:
-			self._store_locked(replace(self._settings, music_volume=max(0, min(100, int(value)))))
-		return True
+			return self._store_locked(replace(self._settings, music_volume=max(0, min(100, int(value)))))
 
 	def set_sound_effect_volume(self, value: int) -> bool:
 		with self._lock:
-			self._store_locked(replace(self._settings, sound_effect_volume=max(0, min(100, int(value)))))
-		return True
+			return self._store_locked(replace(self._settings, sound_effect_volume=max(0, min(100, int(value)))))
 
 	def set_theme_mode(self, value: int) -> bool:
 		value = int(value)
@@ -312,42 +330,36 @@ class OSDevice:
 				palette_id += 3
 			elif value == 0 and palette_id >= 3:
 				palette_id -= 3
-			self._store_locked(replace(self._settings, theme_mode=value, palette_id=palette_id))
-		return True
+			return self._store_locked(replace(self._settings, theme_mode=value, palette_id=palette_id))
 
 	def set_window_transparency(self, value: int) -> bool:
 		with self._lock:
-			self._store_locked(replace(self._settings, window_transparency=max(0, min(100, int(value)))))
-		return True
+			return self._store_locked(replace(self._settings, window_transparency=max(0, min(100, int(value)))))
 
 	def set_window_corner_style(self, value: int) -> bool:
 		value = int(value)
 		if value not in (0, 1, 2):
 			return False
 		with self._lock:
-			self._store_locked(replace(self._settings, window_corner_style=value))
-		return True
+			return self._store_locked(replace(self._settings, window_corner_style=value))
 
 	def set_icon_size(self, value: int) -> bool:
 		value = int(value)
 		if value not in (0, 1, 2):
 			return False
 		with self._lock:
-			self._store_locked(replace(self._settings, icon_size=value))
-		return True
+			return self._store_locked(replace(self._settings, icon_size=value))
 
 	def set_clock_format(self, value: int) -> bool:
 		value = int(value)
 		if value not in (0, 1):
 			return False
 		with self._lock:
-			self._store_locked(replace(self._settings, clock_format=value))
-		return True
+			return self._store_locked(replace(self._settings, clock_format=value))
 
 	def set_settings_enabled(self, value: bool | int) -> bool:
 		with self._lock:
-			self._store_locked(replace(self._settings, settings_enabled=bool(value)))
-		return True
+			return self._store_locked(replace(self._settings, settings_enabled=bool(value)))
 
 	def apply(self, volume: int, background_id: int, palette_id: int) -> bool:
 		background_id = int(background_id)
@@ -357,14 +369,13 @@ class OSDevice:
 		if not 0 <= palette_id < self.palette_count:
 			return False
 		with self._lock:
-			self._store_locked(replace(
+			return self._store_locked(replace(
 				self._settings,
 				volume=max(0, min(100, int(volume))),
 				background_id=background_id,
 				palette_id=palette_id,
 				theme_mode=1 if palette_id >= 3 else 0,
 			))
-		return True
 
 	def apply_preferences(
 		self,
@@ -403,7 +414,7 @@ class OSDevice:
 		elif theme_mode == 0 and palette_id >= 3:
 			palette_id -= 3
 		with self._lock:
-			self._store_locked(OSSettings(
+			return self._store_locked(OSSettings(
 				max(0, min(100, int(volume))),
 				background_id,
 				palette_id,
@@ -416,7 +427,6 @@ class OSDevice:
 				clock_format,
 				bool(settings_enabled),
 			))
-		return True
 
 	def draw_background(self, graphics: GraphicsDevice) -> None:
 		graphics.reset_clip()

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -18,6 +19,17 @@ from PyQt6.QtGui import QColor, QImage, QImageReader, QPainter, QPen
 
 class ImageStudioError(RuntimeError):
 	pass
+
+
+MAX_PROJECT_PIXELS = 4096 * 4096
+MAX_PROJECT_LAYERS = 256
+MAX_PROJECT_FRAMES = 4095
+MAX_PROJECT_CELS = 4095
+MAX_XIP_ARCHIVE_BYTES = MAX_PROJECT_PIXELS * 4 + 8 * 1024 * 1024
+
+
+def _valid_project_label(value: object) -> bool:
+	return isinstance(value, str) and 0 < len(value) <= 256 and not any(ord(character) < 32 for character in value)
 
 
 def _blank_image(width: int, height: int) -> QImage:
@@ -110,17 +122,37 @@ class ImageProject:
 		)
 
 	def normalize(self) -> None:
-		if not self.layers:
-			self.layers.append(
-				RasterLayer("Layer 1", [_blank_image(self.width, self.height) for _ in range(self.frame_count or 1)])
-			)
+		if not 1 <= self.width <= 4096 or not 1 <= self.height <= 4096:
+			raise ImageStudioError("Canvas dimensions must be between 1 and 4096 pixels.")
 		if not self.frame_durations_ms:
 			self.frame_durations_ms.append(100)
+		if len(self.frame_durations_ms) > MAX_PROJECT_FRAMES:
+			raise ImageStudioError(f"Projects support at most {MAX_PROJECT_FRAMES} frames.")
+		if not self.layers:
+			self.layers.append(
+				RasterLayer("Layer 1", [_blank_image(self.width, self.height) for _ in range(self.frame_count)])
+			)
+		if len(self.layers) > MAX_PROJECT_LAYERS:
+			raise ImageStudioError(f"Projects support at most {MAX_PROJECT_LAYERS} layers.")
+		if len(self.layers) * self.frame_count > MAX_PROJECT_CELS:
+			raise ImageStudioError("Project layer/frame count exceeds the decoded cel budget.")
+		if not _valid_project_label(self.name):
+			raise ImageStudioError("Project name is invalid or too long.")
+		if self.width * self.height * len(self.layers) * self.frame_count > MAX_PROJECT_PIXELS:
+			raise ImageStudioError("Project layers and frames exceed the 64 MiB decoded pixel budget.")
+		if any(duration <= 0 or duration > 0xFFFFFFFF for duration in self.frame_durations_ms):
+			raise ImageStudioError("Frame durations must be positive 32-bit millisecond values.")
 		for layer in self.layers:
+			if not _valid_project_label(layer.name):
+				raise ImageStudioError("Layer name is invalid or too long.")
+			if not math.isfinite(float(layer.opacity)):
+				raise ImageStudioError("Layer opacity must be finite.")
 			while len(layer.frames) < self.frame_count:
 				layer.frames.append(_blank_image(self.width, self.height))
 			if len(layer.frames) > self.frame_count:
 				del layer.frames[self.frame_count :]
+			if any(frame.size() != QSize(self.width, self.height) for frame in layer.frames):
+				raise ImageStudioError("Every layer frame must match the canvas dimensions.")
 		self.current_layer = min(max(self.current_layer, 0), len(self.layers) - 1)
 		self.current_frame = min(max(self.current_frame, 0), self.frame_count - 1)
 		self.invalidate()
@@ -148,13 +180,39 @@ class ImageProject:
 
 
 class ImageStudioDocument:
-	def __init__(self, project: ImageProject | None = None, undo_limit: int = 64):
+	def __init__(
+		self,
+		project: ImageProject | None = None,
+		undo_limit: int = 64,
+		undo_byte_limit: int = 128 * 1024 * 1024,
+	):
 		self.project = project or ImageProject.blank()
 		self.project.normalize()
 		self.undo_limit = max(1, undo_limit)
-		self._undo: list[ImageProject] = []
-		self._redo: list[ImageProject] = []
-		self.modified = False
+		self.undo_byte_limit = max(4 * 1024 * 1024, int(undo_byte_limit))
+		self._undo: list[tuple[ImageProject, int]] = []
+		self._redo: list[tuple[ImageProject, int]] = []
+		self._redo_before_checkpoint: list[tuple[ImageProject, int]] | None = None
+		self._revision = 0
+		self._saved_revision = 0
+		self._next_revision = 1
+
+	@property
+	def modified(self) -> bool:
+		return self._revision != self._saved_revision
+
+	@modified.setter
+	def modified(self, value: bool) -> None:
+		if value:
+			if self._revision == self._saved_revision:
+				self._revision = self._fresh_revision()
+		else:
+			self._saved_revision = self._revision
+
+	def _fresh_revision(self) -> int:
+		revision = self._next_revision
+		self._next_revision += 1
+		return revision
 
 	@property
 	def can_undo(self) -> bool:
@@ -165,26 +223,48 @@ class ImageStudioDocument:
 		return bool(self._redo)
 
 	def checkpoint(self) -> None:
-		self._undo.append(self.project.clone())
-		if len(self._undo) > self.undo_limit:
+		self._undo.append((self.project.clone(), self._revision))
+		while len(self._undo) > self.undo_limit:
 			del self._undo[0]
-		self._redo.clear()
-		self.modified = True
+		while len(self._undo) > 1 and self._history_bytes(self._undo) > self.undo_byte_limit:
+			del self._undo[0]
+		self._redo_before_checkpoint = self._redo
+		self._redo = []
+		self._revision = self._fresh_revision()
+
+	def discard_checkpoint(self) -> None:
+		"""Drop the newest checkpoint after an interaction was cancelled exactly."""
+		if self._undo:
+			_previous, previous_revision = self._undo.pop()
+			self._revision = previous_revision
+			if self._redo_before_checkpoint is not None:
+				self._redo = self._redo_before_checkpoint
+		self._redo_before_checkpoint = None
+
+	@staticmethod
+	def _project_bytes(project: ImageProject) -> int:
+		return project.width * project.height * 4 * sum(len(layer.frames) for layer in project.layers)
+
+	@classmethod
+	def _history_bytes(cls, entries: list[tuple[ImageProject, int]]) -> int:
+		return sum(cls._project_bytes(project) for project, _revision in entries)
 
 	def undo(self) -> bool:
 		if not self._undo:
 			return False
-		self._redo.append(self.project.clone())
-		self.project = self._undo.pop()
-		self.modified = True
+		self._redo.append((self.project.clone(), self._revision))
+		self._redo_before_checkpoint = None
+		self.project, self._revision = self._undo.pop()
 		return True
 
 	def redo(self) -> bool:
 		if not self._redo:
 			return False
-		self._undo.append(self.project.clone())
-		self.project = self._redo.pop()
-		self.modified = True
+		self._undo.append((self.project.clone(), self._revision))
+		self._redo_before_checkpoint = None
+		while len(self._undo) > 1 and self._history_bytes(self._undo) > self.undo_byte_limit:
+			del self._undo[0]
+		self.project, self._revision = self._redo.pop()
 		return True
 
 	def replace_project(self, project: ImageProject, *, modified: bool = False) -> None:
@@ -192,15 +272,21 @@ class ImageStudioDocument:
 		self.project = project
 		self._undo.clear()
 		self._redo.clear()
-		self.modified = modified
+		self._redo_before_checkpoint = None
+		self._revision = self._fresh_revision() if modified else 0
+		self._saved_revision = 0
 
 	def current_image(self) -> QImage:
 		project = self.project
 		return project.layers[project.current_layer].frames[project.current_frame]
 
 	def add_layer(self, name: str | None = None) -> int:
-		self.checkpoint()
 		project = self.project
+		if len(project.layers) >= MAX_PROJECT_LAYERS or (len(project.layers) + 1) * project.frame_count > MAX_PROJECT_CELS:
+			raise ImageStudioError("Adding this layer would exceed the project layer/cel limit.")
+		if project.width * project.height * (len(project.layers) + 1) * project.frame_count > MAX_PROJECT_PIXELS:
+			raise ImageStudioError("Adding this layer would exceed the project pixel budget.")
+		self.checkpoint()
 		index = len(project.layers)
 		project.layers.append(
 			RasterLayer(
@@ -222,8 +308,12 @@ class ImageStudioDocument:
 		return True
 
 	def add_frame(self, *, copy_current: bool = False) -> int:
-		self.checkpoint()
 		project = self.project
+		if project.frame_count >= MAX_PROJECT_FRAMES or len(project.layers) * (project.frame_count + 1) > MAX_PROJECT_CELS:
+			raise ImageStudioError("Adding this frame would exceed the project frame/cel limit.")
+		if project.width * project.height * len(project.layers) * (project.frame_count + 1) > MAX_PROJECT_PIXELS:
+			raise ImageStudioError("Adding this frame would exceed the project pixel budget.")
+		self.checkpoint()
 		insert_at = project.current_frame + 1
 		for layer in project.layers:
 			frame = layer.frames[project.current_frame].copy() if copy_current else _blank_image(project.width, project.height)
@@ -249,9 +339,38 @@ class ImageStudioDocument:
 		painter = QPainter(image)
 		if erase:
 			painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
-		painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-		painter.setPen(QPen(color, max(1, width), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-		painter.drawLine(start, end)
+		size = max(1, int(width))
+		x, y = start.x(), start.y()
+		target_x, target_y = end.x(), end.y()
+		dx = abs(target_x - x)
+		sx = 1 if x < target_x else -1
+		dy = -abs(target_y - y)
+		sy = 1 if y < target_y else -1
+		error = dx + dy
+		while True:
+			painter.fillRect(QRect(x - size // 2, y - size // 2, size, size), color)
+			if x == target_x and y == target_y:
+				break
+			twice_error = 2 * error
+			if twice_error >= dy:
+				error += dy
+				x += sx
+			if twice_error <= dx:
+				error += dx
+				y += sy
+		painter.end()
+		self.project.invalidate()
+
+	def draw_dab(self, point: QPoint, color: QColor, width: int = 1, erase: bool = False) -> None:
+		"""Paint the exact square pixel footprint shown by the brush cursor."""
+		image = self.current_image()
+		size = max(1, int(width))
+		left = point.x() - size // 2
+		top = point.y() - size // 2
+		painter = QPainter(image)
+		if erase:
+			painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+		painter.fillRect(QRect(left, top, size, size), color)
 		painter.end()
 		self.project.invalidate()
 
@@ -282,21 +401,33 @@ class ImageStudioDocument:
 		image = self.current_image()
 		if not (0 <= point.x() < image.width() and 0 <= point.y() < image.height()):
 			return False
-		image.convertTo(QImage.Format.Format_ARGB32)
 		target = image.pixelColor(point)
 		if target.rgba() == color.rgba():
 			return False
 		stack = [(point.x(), point.y())]
-		visited: set[tuple[int, int]] = set()
 		while stack:
 			x, y = stack.pop()
-			if (x, y) in visited or not (0 <= x < image.width() and 0 <= y < image.height()):
+			if not (0 <= x < image.width() and 0 <= y < image.height()):
 				continue
-			visited.add((x, y))
 			if image.pixelColor(x, y).rgba() != target.rgba():
 				continue
-			image.setPixelColor(x, y, color)
-			stack.extend(((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)))
+			left = x
+			while left > 0 and image.pixelColor(left - 1, y).rgba() == target.rgba():
+				left -= 1
+			right = x
+			while right + 1 < image.width() and image.pixelColor(right + 1, y).rgba() == target.rgba():
+				right += 1
+			for fill_x in range(left, right + 1):
+				image.setPixelColor(fill_x, y, color)
+			for neighbour_y in (y - 1, y + 1):
+				if not 0 <= neighbour_y < image.height():
+					continue
+				in_span = False
+				for scan_x in range(left, right + 1):
+					matches = image.pixelColor(scan_x, neighbour_y).rgba() == target.rgba()
+					if matches and not in_span:
+						stack.append((scan_x, neighbour_y))
+					in_span = matches
 		self.project.invalidate()
 		return True
 
@@ -369,10 +500,13 @@ class QtImageProjectCodec:
 		)
 
 	def export_file(self, project: ImageProject, path: Path, kind: ExportKind) -> None:
+		project.normalize()
 		if kind == "png":
 			self._save_image(project.composite(), path, "PNG")
 			return
 		if kind == "sprite-sheet":
+			if project.width * project.frame_count > 32_767:
+				raise ImageStudioError("Sprite sheet width exceeds the safe image export limit.")
 			sheet = _blank_image(project.width * project.frame_count, project.height)
 			painter = QPainter(sheet)
 			for index in range(project.frame_count):
@@ -397,12 +531,16 @@ class QtImageProjectCodec:
 	@staticmethod
 	def _save_image(image: QImage, path: Path, format_name: str) -> None:
 		path.parent.mkdir(parents=True, exist_ok=True)
-		temporary = path.with_name(f".{path.name}.tmp")
-		if not image.save(str(temporary), format_name):
+		fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+		os.close(fd)
+		temporary = Path(temporary_name)
+		try:
+			if not image.save(str(temporary), format_name):
+				raise ImageStudioError(f"Qt could not encode {format_name}.")
+			os.replace(temporary, path)
+		finally:
 			if temporary.exists():
 				temporary.unlink()
-			raise ImageStudioError(f"Qt could not encode {format_name}.")
-		temporary.replace(path)
 
 	@staticmethod
 	def _save_gif(project: ImageProject, path: Path) -> None:
@@ -418,7 +556,9 @@ class QtImageProjectCodec:
 			buffer = bytes(qimage.constBits().asstring(qimage.sizeInBytes()))
 			frames.append(Image.frombytes("RGBA", (qimage.width(), qimage.height()), buffer))
 		path.parent.mkdir(parents=True, exist_ok=True)
-		temporary = path.with_name(f".{path.name}.tmp")
+		fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+		os.close(fd)
+		temporary = Path(temporary_name)
 		try:
 			frames[0].save(
 				temporary,
@@ -430,7 +570,7 @@ class QtImageProjectCodec:
 				disposal=2,
 				optimize=False,
 			)
-			temporary.replace(path)
+			os.replace(temporary, path)
 		finally:
 			if temporary.exists():
 				temporary.unlink()
@@ -573,6 +713,9 @@ class QtImageProjectCodec:
 	@classmethod
 	def _to_portable(cls, project: ImageProject):
 		from xe_lang.media import ImageFrame, PortableImage
+		from xe_lang.media.image_format import XIMG_MAX_DECODED_PIXELS, XIMG_MAX_FRAMES
+		if project.frame_count > XIMG_MAX_FRAMES or project.width * project.height * project.frame_count > XIMG_MAX_DECODED_PIXELS:
+			raise ImageStudioError("Animation exceeds the portable XIMG decoded-pixel budget.")
 		palette = cls._portable_palette()
 		frames = []
 		for index in range(project.frame_count):
@@ -614,10 +757,26 @@ class QtImageProjectCodec:
 	@classmethod
 	def _load_ximg(cls, path: Path) -> ImageProject:
 		from xe_lang.media import decode_ximg
+		from xe_lang.media.image_format import XIMG_MAX_WORDS
+		maximum_text_bytes = XIMG_MAX_WORDS * 16
+		try:
+			if path.stat().st_size > maximum_text_bytes:
+				raise ImageStudioError("XIMG text exceeds the portable file-size budget.")
+			with path.open("r", encoding="ascii") as handle:
+				text = handle.read(maximum_text_bytes + 1)
+		except (OSError, UnicodeError) as error:
+			raise ImageStudioError(f"Cannot read XIMG: {error}") from error
+		if len(text) > maximum_text_bytes:
+			raise ImageStudioError("XIMG text exceeds the portable file-size budget.")
 		words: list[int] = []
-		for line in path.read_text(encoding="ascii").splitlines():
+		for line in text.splitlines():
 			for raw in line.split("#", 1)[0].replace(",", " ").split():
-				words.append(int(raw, 0))
+				if len(words) >= XIMG_MAX_WORDS:
+					raise ImageStudioError("XIMG word count exceeds the portable decode budget.")
+				try:
+					words.append(int(raw, 0))
+				except ValueError as error:
+					raise ImageStudioError(f"Invalid XIMG word {raw!r}.") from error
 		return cls._from_portable(decode_ximg(words), path.stem)
 
 	@staticmethod
@@ -635,6 +794,7 @@ class QtImageProjectCodec:
 	@classmethod
 	def _save_xip(cls, project: ImageProject, path: Path) -> None:
 		from xe_lang.media import write_xip
+		project.normalize()
 		members: dict[str, bytes] = {}
 		layers: list[dict[str, object]] = []
 		for layer_index, layer in enumerate(project.layers):
@@ -665,29 +825,54 @@ class QtImageProjectCodec:
 	@classmethod
 	def _load_xip(cls, path: Path) -> ImageProject:
 		from xe_lang.media import read_xip
-		manifest, members = read_xip(path)
-		if manifest.get("format") != "xip" or manifest.get("version") != 1:
+		manifest, members = read_xip(
+			path,
+			member_limit=MAX_PROJECT_CELS + 1,
+			byte_limit=MAX_XIP_ARCHIVE_BYTES,
+		)
+		if (
+			manifest.get("format") != "xip"
+			or type(manifest.get("version")) is not int
+			or manifest.get("version") != 1
+		):
 			raise ImageStudioError("Unsupported XIP project version.")
 		try:
-			width = int(manifest["width"])
-			height = int(manifest["height"])
-			durations = [int(value) for value in manifest["frame_durations_ms"]]
-			layer_specs = list(manifest["layers"])
-		except (KeyError, TypeError, ValueError) as exc:
+			width = manifest["width"]
+			height = manifest["height"]
+			durations = manifest["frame_durations_ms"]
+			layer_specs = manifest["layers"]
+		except KeyError as exc:
 			raise ImageStudioError("XIP project manifest is incomplete.") from exc
-		if not durations or not layer_specs or any(value <= 0 for value in durations):
+		if (
+			type(width) is not int
+			or type(height) is not int
+			or not isinstance(durations, list)
+			or any(type(value) is not int for value in durations)
+			or not isinstance(layer_specs, list)
+		):
+			raise ImageStudioError("XIP project dimensions, durations, and layers have invalid types.")
+		if not durations or not layer_specs or any(value <= 0 or value > 0xFFFFFFFF for value in durations):
 			raise ImageStudioError("XIP project has no valid layers or frames.")
 		if not 1 <= width <= 4096 or not 1 <= height <= 4096:
 			raise ImageStudioError("XIP project dimensions exceed the supported range.")
-		if width * height * len(durations) * len(layer_specs) > 4096 * 4096:
+		if width * height * len(durations) * len(layer_specs) > MAX_PROJECT_PIXELS:
 			raise ImageStudioError("XIP project exceeds the 64 MiB decoded layer budget.")
 		layers: list[RasterLayer] = []
+		project_name = str(manifest.get("name", path.stem))
+		if len(project_name) > 256 or any(ord(character) < 32 for character in project_name):
+			raise ImageStudioError("XIP project name is invalid or too long.")
 		for spec in layer_specs:
 			if not isinstance(spec, dict):
 				raise ImageStudioError("XIP layer record is invalid.")
 			paths = spec.get("frames")
 			if not isinstance(paths, list) or len(paths) != len(durations):
 				raise ImageStudioError("XIP layer frame count is inconsistent.")
+			layer_name = str(spec.get("name", f"Layer {len(layers) + 1}"))
+			if len(layer_name) > 256 or any(ord(character) < 32 for character in layer_name):
+				raise ImageStudioError("XIP layer name is invalid or too long.")
+			visible = spec.get("visible", True)
+			if not isinstance(visible, bool):
+				raise ImageStudioError("XIP layer visibility must be a boolean.")
 			frames: list[QImage] = []
 			for member in paths:
 				payload = members.get(str(member))
@@ -695,12 +880,18 @@ class QtImageProjectCodec:
 				if image.isNull() or image.size() != QSize(width, height):
 					raise ImageStudioError("XIP layer image is missing or has the wrong dimensions.")
 				frames.append(image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied))
+			try:
+				opacity = float(spec.get("opacity", 1.0))
+			except (TypeError, ValueError) as exc:
+				raise ImageStudioError("XIP layer opacity is invalid.") from exc
+			if not math.isfinite(opacity):
+				raise ImageStudioError("XIP layer opacity must be finite.")
 			layers.append(
 				RasterLayer(
-					name=str(spec.get("name", f"Layer {len(layers) + 1}")),
+					name=layer_name,
 					frames=frames,
-					visible=bool(spec.get("visible", True)),
-					opacity=min(max(float(spec.get("opacity", 1.0)), 0.0), 1.0),
+					visible=visible,
+					opacity=min(max(opacity, 0.0), 1.0),
 				)
 			)
 		return ImageProject(
@@ -708,7 +899,7 @@ class QtImageProjectCodec:
 			height=height,
 			layers=layers,
 			frame_durations_ms=durations,
-			name=str(manifest.get("name", path.stem)),
+			name=project_name,
 		)
 
 	@staticmethod

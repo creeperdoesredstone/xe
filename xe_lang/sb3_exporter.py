@@ -4,16 +4,19 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import tempfile
 import zipfile
 
+from xe_lang.archive_safety import ArchiveSafetyError, load_safe_zip_members, normalize_archive_member
+
 from xe_lang.compiler_service import CompileArtifact, syscall_name
+from xe_lang.memory import MAX_ADDRESS_COUNT
 from xe_lang.scratch_profile import ScratchVMProfile
 
 
 FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
-XVM_ADDRESS_LIMIT = 200_000
+XVM_ADDRESS_LIMIT = MAX_ADDRESS_COUNT
 
 
 @dataclass(frozen=True)
@@ -99,34 +102,34 @@ def analyze_compatibility(artifact: CompileArtifact, profile: ScratchVMProfile) 
 
 
 def _safe_member_name(name: str) -> str:
-	value = PurePosixPath(name)
-	if value.is_absolute() or ".." in value.parts or not value.parts:
-		raise SB3ExportError(f"Unsafe template member name: {name!r}")
-	return str(value)
+	try:
+		return normalize_archive_member(name)
+	except ArchiveSafetyError as error:
+		raise SB3ExportError(str(error)) from error
 
 
 def _load_template(path: Path, profile: ScratchVMProfile, allow_unpinned: bool) -> tuple[dict[str, object], dict[str, bytes]]:
 	if not path.is_file():
 		raise SB3ExportError(f"Scratch VM template not found: {path}")
-	digest = hashlib.sha256(path.read_bytes()).hexdigest()
+	try:
+		payload = path.read_bytes()
+		members = load_safe_zip_members(payload)
+	except (OSError, ArchiveSafetyError) as error:
+		raise SB3ExportError(f"Invalid Scratch VM template: {error}") from error
+	digest = hashlib.sha256(payload).hexdigest()
 	if not allow_unpinned and digest != profile.template_sha256:
 		raise SB3ExportError(f"Scratch VM template hash mismatch: expected {profile.template_sha256}, got {digest}")
 	assets: dict[str, bytes] = {}
-	with zipfile.ZipFile(path, "r") as archive:
-		seen: set[str] = set()
-		for info in archive.infolist():
-			name = _safe_member_name(info.filename)
-			if name in seen:
-				raise SB3ExportError(f"Duplicate template member: {name}")
-			seen.add(name)
-			data = archive.read(info)
-			if name == "project.json":
-				try:
-					project = json.loads(data)
-				except (UnicodeDecodeError, json.JSONDecodeError) as error:
-					raise SB3ExportError(f"Invalid project.json: {error}") from error
-			else:
-				assets[name] = data
+	for name, data in members:
+		if name == "project.json":
+			try:
+				project = json.loads(data)
+			except (UnicodeDecodeError, json.JSONDecodeError) as error:
+				raise SB3ExportError(f"Invalid project.json: {error}") from error
+			if not isinstance(project, dict):
+				raise SB3ExportError("Template project.json must contain an object")
+		else:
+			assets[name] = data
 	if "project" not in locals():
 		raise SB3ExportError("Scratch VM template has no project.json")
 	return project, assets

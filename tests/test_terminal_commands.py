@@ -114,6 +114,34 @@ out << tab_1_output''',
 		self.assertNotIn("deterministic Xe shell", legacy_source)
 		self.assertIn('set_active_output("Placeholder")', legacy_source)
 
+	def test_legacy_terminal_ctrl_clipboard_has_host_and_local_fallback(self) -> None:
+		legacy_source = (ROOT / "apps" / "terminal.xe").read_text(encoding="utf-8")
+		anchor = "terminal_animation_step = 8\n\nwhile (terminal_window.state != graphics::WINDOW_CLOSED)"
+		self.assertIn(anchor, legacy_source)
+		probe = '''call set_terminal_text(terminal_command, "copy me")
+call terminal_select_all()
+call terminal_copy_selection()
+call terminal_cut_selection()
+out << terminal_command
+out << "|"
+call terminal_paste_clipboard()
+out << terminal_command
+out << "|"
+call terminal_select_all()
+call append_terminal_character(33)
+out << terminal_command'''
+		modified = legacy_source.replace(anchor, f"terminal_animation_step = 8\n{probe}\nwhile (false)", 1)
+		parts: list[str] = []
+		context = RuntimeContext()
+		context.output_handler = parts.append
+		with redirect_stdout(StringIO()):
+			_, error, _ = run("legacy-terminal-clipboard.xe", modified, context)
+		self.assertIsNone(error, str(error))
+		self.assertEqual("|copy me|!", "".join(parts))
+		self.assertIn("graphics::MOD_CTRL", legacy_source)
+		self.assertIn("os::clipboard_read()", legacy_source)
+		self.assertIn("os::clipboard_write(terminal_clipboard)", legacy_source)
+
 	def test_scrolled_tab_tracks_new_output_until_following_latest(self) -> None:
 		output = self.run_probe(
 			'''call terminal_scroll_output(5)

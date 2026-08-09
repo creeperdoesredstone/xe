@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import math
+import time
 from pathlib import Path
+from typing import Callable
 
-from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import (
 	QColor,
 	QIcon,
@@ -22,6 +24,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
 	QButtonGroup,
 	QAbstractItemView,
+	QAbstractSpinBox,
 	QCheckBox,
 	QColorDialog,
 	QComboBox,
@@ -37,10 +40,12 @@ from PyQt6.QtWidgets import (
 	QSlider,
 	QSizePolicy,
 	QSpinBox,
+	QDoubleSpinBox,
 	QSplitter,
 	QToolButton,
 	QVBoxLayout,
 	QWidget,
+	QScrollArea,
 )
 
 from .image_document import (
@@ -48,21 +53,32 @@ from .image_document import (
 	ImageProject,
 	ImageProjectCodec,
 	ImageStudioDocument,
+	ImageStudioError,
 	load_default_image_codec,
 	quantize_xvm_image,
 )
-
-
-TOOLS: tuple[tuple[str, str, str], ...] = (
-	("pencil", "Pencil", "P"),
-	("eraser", "Eraser", "E"),
-	("fill", "Fill", "F"),
-	("eyedropper", "Pick", "I"),
-	("line", "Line", "L"),
-	("rect", "Rectangle", "R"),
-	("ellipse", "Ellipse", "O"),
-	("select", "Select / move", "M"),
+from .image_specs import (
+	IMAGE_TOOLS,
+	export_dialog_filter,
+	export_spec_from_filter,
 )
+from .render_helpers import visible_checker_cells
+
+
+class _ImageCodecJob(QThread):
+	"""Run one codec operation without allowing worker-thread widget access."""
+
+	def __init__(self, operation: Callable[[], object], parent: QWidget):
+		super().__init__(parent)
+		self.operation = operation
+		self.value: object | None = None
+		self.error: Exception | None = None
+
+	def run(self) -> None:
+		try:
+			self.value = self.operation()
+		except Exception as error:
+			self.error = error
 
 
 class StepperButton(QToolButton):
@@ -90,7 +106,7 @@ class StepperButton(QToolButton):
 class CompactStepper(QWidget):
 	"""A number field with deliberately aligned, accessible step buttons."""
 
-	def __init__(self, spinbox: QSpinBox, parent: QWidget | None = None):
+	def __init__(self, spinbox: QAbstractSpinBox, parent: QWidget | None = None):
 		super().__init__(parent)
 		self.spinbox = spinbox
 		self.spinbox.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
@@ -139,6 +155,7 @@ class ImageCanvas(QWidget):
 		self._hover_image_pos: QPoint | None = None
 		self.selection_rect = QRect()
 		self._moving_selection = None
+		self._selection_source_rect = QRect()
 		self._selection_anchor = QPoint()
 		self._space_down = False
 		self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -146,10 +163,15 @@ class ImageCanvas(QWidget):
 		self.setMinimumSize(280, 230)
 		self.setAccessibleName("Image canvas")
 
-	def set_document(self, document: ImageStudioDocument) -> None:
+	def set_document(self, document: ImageStudioDocument, *, reset_view: bool = True) -> None:
 		self.document = document
 		self.selection_rect = QRect()
-		self.fit_to_view()
+		self._moving_selection = None
+		self._selection_source_rect = QRect()
+		if reset_view:
+			self.fit_to_view()
+		else:
+			self.update()
 
 	def fit_to_view(self) -> None:
 		project = self.document.project
@@ -194,12 +216,9 @@ class ImageCanvas(QWidget):
 		painter.save()
 		painter.setClipRect(canvas)
 		cell = max(4.0, min(12.0, self.zoom * 2))
-		start_x = canvas.left()
-		start_y = canvas.top()
-		for row, y in enumerate(self._frange(start_y, canvas.bottom(), cell)):
-			for col, x in enumerate(self._frange(start_x, canvas.right(), cell)):
+		for row, col, rect in visible_checker_cells(canvas, QRectF(self.rect()), cell):
 				color = QColor("#232a37") if (row + col) % 2 else QColor("#1a202c")
-				painter.fillRect(QRectF(x, y, cell, cell), color)
+				painter.fillRect(rect, color)
 		painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
 		project = self.document.project
 		if self.onion_skin and project.frame_count > 1:
@@ -218,13 +237,6 @@ class ImageCanvas(QWidget):
 		self._paint_preview(painter)
 		painter.end()
 
-	@staticmethod
-	def _frange(start: float, stop: float, step: float):
-		value = start
-		while value < stop:
-			yield value
-			value += step
-
 	def _screen_rect(self, rect: QRect) -> QRectF:
 		origin = self._canvas_origin()
 		return QRectF(
@@ -239,9 +251,8 @@ class ImageCanvas(QWidget):
 		if self._hover_image_pos is not None and self.tool in {"pencil", "eraser"}:
 			# Pixel tools operate on an integer-sized footprint. Draw its boundary on
 			# the same grid without smoothing so the preview is truthful at any zoom.
-			half = (self.brush_size - 1) / 2
-			left = origin.x() + (self._hover_image_pos.x() - half) * self.zoom
-			top = origin.y() + (self._hover_image_pos.y() - half) * self.zoom
+			left = origin.x() + (self._hover_image_pos.x() - self.brush_size // 2) * self.zoom
+			top = origin.y() + (self._hover_image_pos.y() - self.brush_size // 2) * self.zoom
 			size = max(1.0, self.brush_size * self.zoom)
 			brush_rect = QRectF(left, top, size, size)
 			painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
@@ -327,7 +338,7 @@ class ImageCanvas(QWidget):
 
 		if self.tool in {"pencil", "eraser"}:
 			self.document.checkpoint()
-			self.document.draw_line(position, position, self.color, self.brush_size, self.tool == "eraser")
+			self.document.draw_dab(position, self.color, self.brush_size, self.tool == "eraser")
 			self._emit_change()
 		elif self.tool == "fill":
 			image = self.document.current_image()
@@ -342,6 +353,7 @@ class ImageCanvas(QWidget):
 		elif self.tool == "select":
 			if self.selection_rect.contains(position) and not self.selection_rect.isNull():
 				self.document.checkpoint()
+				self._selection_source_rect = QRect(self.selection_rect)
 				self._moving_selection = self.document.current_image().copy(self.selection_rect)
 				self._selection_anchor = position - self.selection_rect.topLeft()
 				painter = QPainter(self.document.current_image())
@@ -403,6 +415,7 @@ class ImageCanvas(QWidget):
 				painter.drawImage(self.selection_rect.topLeft(), self._moving_selection)
 				painter.end()
 				self._moving_selection = None
+				self._selection_source_rect = QRect()
 				self._emit_change()
 		self._pointer_down = False
 		self._start_image_pos = None
@@ -421,7 +434,9 @@ class ImageCanvas(QWidget):
 			self.setCursor(Qt.CursorShape.OpenHandCursor)
 			return
 		if event.key() == Qt.Key.Key_Escape:
-			self.selection_rect = QRect()
+			self._cancel_selection_move()
+			if self._moving_selection is None:
+				self.selection_rect = QRect()
 			self.update()
 			return
 		super().keyPressEvent(event)
@@ -439,25 +454,62 @@ class ImageCanvas(QWidget):
 		self.document_changed.emit()
 		self.update()
 
+	def _cancel_selection_move(self) -> None:
+		was_moving = self._moving_selection is not None
+		if was_moving and not self._selection_source_rect.isNull():
+			painter = QPainter(self.document.current_image())
+			painter.drawImage(self._selection_source_rect.topLeft(), self._moving_selection)
+			painter.end()
+			self.document.project.invalidate()
+			self.selection_rect = QRect(self._selection_source_rect)
+		if was_moving:
+			self.document.discard_checkpoint()
+		self._moving_selection = None
+		self._selection_source_rect = QRect()
+		self._pointer_down = False
+		self._start_image_pos = None
+		self._last_image_pos = None
+		self._preview_image_pos = None
 
-class ImageStudioPane(QWidget):
+	def focusOutEvent(self, event) -> None:
+		if self._moving_selection is not None:
+			self._cancel_selection_move()
+			self.document_changed.emit()
+		super().focusOutEvent(event)
+
+
+class ImageStudioPane(QScrollArea):
 	def __init__(
 		self,
 		codec: ImageProjectCodec | None = None,
 		parent: QWidget | None = None,
 	):
 		super().__init__(parent)
+		self.setWidgetResizable(True)
+		self.setFrameShape(QFrame.Shape.NoFrame)
+		self._content = QWidget()
+		self.setWidget(self._content)
 		self.codec = codec or load_default_image_codec()
 		self.document = ImageStudioDocument()
 		self.current_path: Path | None = None
 		self.play_timer = QTimer(self)
 		self.play_timer.timeout.connect(self._advance_playback)
+		self.ui_refresh_timer = QTimer(self)
+		self.ui_refresh_timer.setSingleShot(True)
+		self.ui_refresh_timer.setInterval(24)
+		self.ui_refresh_timer.timeout.connect(self._refresh_drawing_previews)
 		self._refreshing = False
+		self._play_deadline = 0.0
+		self._opacity_drag_checkpointed = False
+		self._opacity_drag_origin = 1.0
+		self._codec_job: _ImageCodecJob | None = None
+		self._codec_generation = 0
+		self._document_generation = 0
 		self._build_ui()
 		self._refresh_all()
 
 	def _build_ui(self) -> None:
-		root = QVBoxLayout(self)
+		root = QVBoxLayout(self._content)
 		root.setContentsMargins(12, 10, 12, 12)
 		root.setSpacing(8)
 
@@ -469,10 +521,12 @@ class ImageStudioPane(QWidget):
 		self.document_label.setObjectName("MutedText")
 		header.addWidget(self.document_label)
 		header.addStretch(1)
+		self._file_buttons: list[QPushButton] = []
 		for text, slot in (("New", self.new_project), ("Import…", self.import_file), ("Export…", self.export_file)):
 			button = QPushButton(text)
 			button.setObjectName("PrimaryButton" if text.startswith("Export") else "SecondaryButton")
 			button.clicked.connect(slot)
+			self._file_buttons.append(button)
 			header.addWidget(button)
 		root.addLayout(header)
 
@@ -484,7 +538,8 @@ class ImageStudioPane(QWidget):
 		self.tool_group = QButtonGroup(self)
 		self.tool_group.setExclusive(True)
 		self.tool_buttons: dict[str, QToolButton] = {}
-		for index, (tool, label, shortcut) in enumerate(TOOLS):
+		for index, spec in enumerate(IMAGE_TOOLS):
+			tool, label, shortcut = spec.key, spec.label, spec.shortcut
 			button = QToolButton()
 			button.setText(label)
 			button.setCheckable(True)
@@ -522,16 +577,27 @@ class ImageStudioPane(QWidget):
 		self.redo_button.clicked.connect(self.redo)
 		toolbar_layout.addWidget(self.undo_button)
 		toolbar_layout.addWidget(self.redo_button)
-		root.addWidget(toolbar)
+		self.toolbar_scroll = QScrollArea()
+		self.toolbar_scroll.setObjectName("CompactToolScroll")
+		self.toolbar_scroll.setFrameShape(QFrame.Shape.NoFrame)
+		self.toolbar_scroll.setWidgetResizable(True)
+		self.toolbar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+		self.toolbar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+		self.toolbar_scroll.setMinimumHeight(46)
+		self.toolbar_scroll.setMaximumHeight(64)
+		self.toolbar_scroll.setWidget(toolbar)
+		root.addWidget(self.toolbar_scroll)
 
 		main = QSplitter(Qt.Orientation.Horizontal)
+		self.main_splitter = main
 		self.canvas = ImageCanvas(self.document)
-		self.canvas.document_changed.connect(self._refresh_all)
+		self.canvas.document_changed.connect(self._document_pixels_changed)
 		self.canvas.color_picked.connect(self._set_color)
 		self.canvas.zoom_changed.connect(self._show_zoom)
 		main.addWidget(self.canvas)
 
 		inspector = QWidget()
+		self.inspector = inspector
 		inspector.setMinimumWidth(220)
 		inspector.setMaximumWidth(330)
 		inspector_layout = QVBoxLayout(inspector)
@@ -586,6 +652,7 @@ class ImageStudioPane(QWidget):
 		self.opacity_slider.setRange(0, 100)
 		self.opacity_slider.setValue(100)
 		self.opacity_slider.sliderPressed.connect(self._begin_layer_opacity)
+		self.opacity_slider.sliderReleased.connect(self._end_layer_opacity)
 		self.opacity_slider.valueChanged.connect(self._set_layer_opacity)
 		opacity_row.addWidget(self.opacity_slider, 1)
 		inspector_layout.addLayout(opacity_row)
@@ -648,31 +715,75 @@ class ImageStudioPane(QWidget):
 		self.duration_stepper.setMaximumWidth(110)
 		controls_row.addWidget(self.duration_stepper)
 		controls_row.addWidget(QLabel("FPS"))
-		self.fps_spin = QSpinBox()
-		self.fps_spin.setRange(1, 50)
-		self.fps_spin.setMaximumWidth(52)
+		self.fps_spin = QDoubleSpinBox()
+		self.fps_spin.setRange(0.017, 50.0)
+		self.fps_spin.setDecimals(3)
+		self.fps_spin.setSingleStep(1.0)
+		self.fps_spin.setMaximumWidth(68)
 		self.fps_spin.setToolTip(
 			"Frames per second for the current frame; updates its millisecond duration"
 		)
 		self.fps_spin.editingFinished.connect(self._set_frame_fps)
 		self.fps_stepper = CompactStepper(self.fps_spin)
-		self.fps_stepper.setMaximumWidth(80)
+		self.fps_stepper.setMaximumWidth(96)
 		controls_row.addWidget(self.fps_stepper)
 		timeline_layout.addLayout(controls_row)
 		root.addWidget(timeline)
 
 		QShortcut(QKeySequence.StandardKey.Undo, self.canvas, activated=self.undo)
 		QShortcut(QKeySequence.StandardKey.Redo, self.canvas, activated=self.redo)
-		for tool, _, shortcut in TOOLS:
+		for spec in IMAGE_TOOLS:
 			QShortcut(
-				QKeySequence(shortcut),
+				QKeySequence(spec.shortcut),
 				self.canvas,
-				activated=lambda name=tool: self._activate_tool(name),
+				activated=lambda name=spec.key: self._activate_tool(name),
 			)
 		self._set_color(self.canvas.color)
 
 	def set_codec(self, codec: ImageProjectCodec) -> None:
 		self.codec = codec
+
+	@property
+	def codec_busy(self) -> bool:
+		return self._codec_job is not None
+
+	def _set_codec_busy(self, busy: bool) -> None:
+		for button in self._file_buttons:
+			button.setEnabled(not busy)
+
+	def _start_codec_job(
+		self,
+		operation: Callable[[], object],
+		callback: Callable[[object | None, Exception | None], None],
+	) -> bool:
+		if self._codec_job is not None:
+			return False
+		self._codec_generation += 1
+		generation = self._codec_generation
+		job = _ImageCodecJob(operation, self)
+		self._codec_job = job
+		self._set_codec_busy(True)
+
+		def deliver() -> None:
+			current = self._codec_job is job and generation == self._codec_generation
+			if self._codec_job is job:
+				self._codec_job = None
+				self._set_codec_busy(False)
+			try:
+				if current:
+					callback(job.value, job.error)
+			finally:
+				job.deleteLater()
+
+		job.finished.connect(deliver)
+		try:
+			job.start()
+		except Exception:
+			self._codec_job = None
+			self._set_codec_busy(False)
+			job.deleteLater()
+			raise
+		return True
 
 	def _activate_tool(self, tool: str) -> None:
 		self.tool_buttons[tool].setChecked(True)
@@ -699,6 +810,8 @@ class ImageStudioPane(QWidget):
 		self.color_button.setAccessibleName(f"Drawing colour {color.name(QColor.NameFormat.HexArgb)}")
 
 	def new_project(self) -> None:
+		if self._codec_job is not None:
+			return
 		width, ok = QInputDialog.getInt(self, "New image", "Width", 64, 1, 4096)
 		if not ok:
 			return
@@ -709,12 +822,15 @@ class ImageStudioPane(QWidget):
 			return
 		self.play_button.setChecked(False)
 		self.document.replace_project(ImageProject.blank(width, height))
+		self._document_generation += 1
 		self.current_path = None
 		self.canvas.selection_rect = QRect()
 		self.canvas.fit_to_view()
 		self._refresh_all()
 
 	def import_file(self) -> None:
+		if self._codec_job is not None:
+			return
 		path, _ = QFileDialog.getOpenFileName(
 			self,
 			"Import image or animation",
@@ -723,25 +839,49 @@ class ImageStudioPane(QWidget):
 		)
 		if not path:
 			return
+		input_path = Path(path)
+		codec = self.codec
 		try:
-			project = self.codec.import_file(Path(path))
+			self._start_codec_job(
+				lambda: codec.import_file(input_path),
+				lambda value, error: self._import_completed(input_path, value, error),
+			)
 		except Exception as exc:
 			QMessageBox.warning(self, "Import failed", str(exc))
+
+	def _import_completed(
+		self,
+		path: Path,
+		value: object | None,
+		error: Exception | None,
+	) -> None:
+		if error is not None:
+			QMessageBox.warning(self, "Import failed", str(error))
+			return
+		if not isinstance(value, ImageProject):
+			QMessageBox.warning(self, "Import failed", "The image decoder returned no project.")
 			return
 		if not self._confirm_discard_changes():
 			return
-		self.play_button.setChecked(False)
-		self.document.replace_project(project)
-		self.current_path = Path(path)
+		try:
+			self.play_button.setChecked(False)
+			self.document.replace_project(value)
+		except Exception as exc:
+			QMessageBox.warning(self, "Import failed", str(exc))
+			return
+		self._document_generation += 1
+		self.current_path = path
 		self.canvas.set_document(self.document)
 		self._refresh_all()
 
 	def export_file(self) -> None:
+		if self._codec_job is not None:
+			return
 		path, selected = QFileDialog.getSaveFileName(
 			self,
 			"Export image",
 			self.document.project.name,
-			"PNG image (*.png);;Animated GIF (*.gif);;Sprite sheet (*.png);;Scratch sprite (*.sprite3);;Xe image project (*.xip);;Xe runtime image (*.ximg)",
+			export_dialog_filter(),
 		)
 		if not path:
 			return
@@ -749,19 +889,51 @@ class ImageStudioPane(QWidget):
 		output = Path(path)
 		if output.suffix.lower() != suffix:
 			output = output.with_suffix(suffix)
+		snapshot = self.document.project.clone()
+		document_generation = self._document_generation
+		document_revision = self.document._revision
+		codec = self.codec
 		try:
-			self.codec.export_file(self.document.project, output, kind)
+			self._start_codec_job(
+				lambda: codec.export_file(snapshot, output, kind),
+				lambda _value, error: self._export_completed(
+					output,
+					kind,
+					document_generation,
+					document_revision,
+					error,
+				),
+			)
 		except Exception as exc:
 			QMessageBox.warning(
 				self,
 				"Export not written",
 				f"{exc}\n\nThe existing destination, if any, was left unchanged.",
 			)
+
+	def _export_completed(
+		self,
+		output: Path,
+		kind: ExportKind,
+		document_generation: int,
+		document_revision: int,
+		error: Exception | None,
+	) -> None:
+		if error is not None:
+			QMessageBox.warning(
+				self,
+				"Export not written",
+				f"{error}\n\nThe existing destination, if any, was left unchanged.",
+			)
 			return
-		if kind == "xip":
+		snapshot_is_current = (
+			document_generation == self._document_generation
+			and document_revision == self.document._revision
+		)
+		if kind == "xip" and snapshot_is_current:
 			self.current_path = output
 			self.document.modified = False
-		self._refresh_all()
+			self._refresh_all()
 		note = ""
 		if kind == "scratch-sprite":
 			note = (
@@ -775,7 +947,35 @@ class ImageStudioPane(QWidget):
 				"XIMG uses the portable 16-colour Xe/Scratch palette and reports an error "
 				"instead of exceeding the 200,000-word limit."
 			)
+		elif kind == "xip" and not snapshot_is_current:
+			note = "\n\nThe exported snapshot is safe; newer edits in Image Studio remain unsaved."
 		QMessageBox.information(self, "Export complete", f"Written to:\n{output}{note}")
+
+	def shutdown(self, timeout_ms: int = 2_000) -> bool:
+		job = self._codec_job
+		if job is None:
+			return True
+		if job.isRunning():
+			job.requestInterruption()
+			if not job.wait(max(0, int(timeout_ms))):
+				return False
+		self._codec_generation += 1
+		if self._codec_job is job:
+			self._codec_job = None
+			self._set_codec_busy(False)
+		job.deleteLater()
+		return True
+
+	def closeEvent(self, event) -> None:
+		if not self.shutdown():
+			QMessageBox.warning(
+				self,
+				"Image operation still running",
+				"The current import or export is still finishing. Try closing again shortly.",
+			)
+			event.ignore()
+			return
+		super().closeEvent(event)
 
 	def _confirm_discard_changes(self) -> bool:
 		if not self.document.modified:
@@ -792,30 +992,24 @@ class ImageStudioPane(QWidget):
 
 	@staticmethod
 	def _export_selection(selected_filter: str) -> tuple[ExportKind, str]:
-		if "GIF" in selected_filter:
-			return "gif", ".gif"
-		if "Scratch sprite" in selected_filter:
-			return "scratch-sprite", ".sprite3"
-		if "Sprite" in selected_filter:
-			return "sprite-sheet", ".png"
-		if "project" in selected_filter:
-			return "xip", ".xip"
-		if "runtime" in selected_filter:
-			return "ximg", ".ximg"
-		return "png", ".png"
+		spec = export_spec_from_filter(selected_filter)
+		return spec.key, spec.suffix
 
 	def undo(self) -> None:
 		if self.document.undo():
-			self.canvas.set_document(self.document)
+			self.canvas.set_document(self.document, reset_view=False)
 			self._refresh_all()
 
 	def redo(self) -> None:
 		if self.document.redo():
-			self.canvas.set_document(self.document)
+			self.canvas.set_document(self.document, reset_view=False)
 			self._refresh_all()
 
 	def add_layer(self) -> None:
-		self.document.add_layer()
+		try:
+			self.document.add_layer()
+		except ImageStudioError as exc:
+			QMessageBox.warning(self, "Layer not added", str(exc))
 		self._refresh_all()
 
 	def remove_layer(self) -> None:
@@ -824,11 +1018,17 @@ class ImageStudioPane(QWidget):
 		self._refresh_all()
 
 	def add_frame(self) -> None:
-		self.document.add_frame(copy_current=False)
+		try:
+			self.document.add_frame(copy_current=False)
+		except ImageStudioError as exc:
+			QMessageBox.warning(self, "Frame not added", str(exc))
 		self._refresh_all()
 
 	def copy_frame(self) -> None:
-		self.document.add_frame(copy_current=True)
+		try:
+			self.document.add_frame(copy_current=True)
+		except ImageStudioError as exc:
+			QMessageBox.warning(self, "Frame not copied", str(exc))
 		self._refresh_all()
 
 	def remove_frame(self) -> None:
@@ -854,14 +1054,28 @@ class ImageStudioPane(QWidget):
 			return
 		layer = self.document.project.layers[index]
 		visible = item.checkState() == Qt.CheckState.Checked
-		name = item.text().strip() or layer.name
+		name = "".join(character for character in item.text().strip() if ord(character) >= 32)[:256] or layer.name
 		if visible != layer.visible or name != layer.name:
 			self.document.checkpoint()
 			layer.visible = visible
 			layer.name = name
+			if item.text() != name:
+				self._refreshing = True
+				try:
+					item.setText(name)
+				finally:
+					self._refreshing = False
 			self.document.project.invalidate()
+			self._refresh_document_label()
 			self._refresh_preview()
+			self._refresh_current_frame_thumbnail()
 			self.canvas.update()
+		elif item.text() != layer.name:
+			self._refreshing = True
+			try:
+				item.setText(layer.name)
+			finally:
+				self._refreshing = False
 
 	def _set_layer_opacity(self, value: int) -> None:
 		if self._refreshing:
@@ -869,17 +1083,31 @@ class ImageStudioPane(QWidget):
 		layer = self.document.project.layers[self.document.project.current_layer]
 		new_opacity = value / 100
 		if abs(layer.opacity - new_opacity) > 0.001:
-			if not self.opacity_slider.isSliderDown():
+			if self.opacity_slider.isSliderDown() and not self._opacity_drag_checkpointed:
+				self.document.checkpoint()
+				self._opacity_drag_checkpointed = True
+			elif not self.opacity_slider.isSliderDown():
 				self.document.checkpoint()
 			layer.opacity = new_opacity
 			self.document.project.invalidate()
 			self.document.modified = True
+			self._refresh_document_label()
 			self.canvas.update()
 			self._refresh_preview()
+			self._refresh_current_frame_thumbnail()
 
 	def _begin_layer_opacity(self) -> None:
-		if not self._refreshing:
-			self.document.checkpoint()
+		self._opacity_drag_checkpointed = False
+		self._opacity_drag_origin = self.document.project.layers[
+			self.document.project.current_layer
+		].opacity
+
+	def _end_layer_opacity(self) -> None:
+		layer = self.document.project.layers[self.document.project.current_layer]
+		if self._opacity_drag_checkpointed and abs(layer.opacity - self._opacity_drag_origin) <= 0.001:
+			self.document.discard_checkpoint()
+			self._refresh_document_label()
+		self._opacity_drag_checkpointed = False
 
 	def _set_frame_duration(self) -> None:
 		if self._refreshing:
@@ -895,7 +1123,7 @@ class ImageStudioPane(QWidget):
 		if self._refreshing:
 			return
 		project = self.document.project
-		value = max(1, self.fps_spin.value())
+		value = max(0.017, self.fps_spin.value())
 		duration = max(20, min(60_000, round(1000 / value)))
 		if project.frame_durations_ms[project.current_frame] != duration:
 			self.document.checkpoint()
@@ -919,17 +1147,26 @@ class ImageStudioPane(QWidget):
 		self.play_button.setToolTip("Stop animation" if enabled else "Play animation")
 		if enabled:
 			duration = self.document.project.frame_durations_ms[self.document.project.current_frame]
+			self._play_deadline = time.monotonic() + duration / 1000.0
 			self.play_timer.start(max(20, duration))
 		else:
 			self.play_timer.stop()
 
 	def _advance_playback(self) -> None:
 		project = self.document.project
-		project.current_frame = (project.current_frame + 1) % project.frame_count
-		self._refresh_frames()
+		now = time.monotonic()
+		steps = 0
+		limit = max(1, project.frame_count * 4)
+		while self._play_deadline <= now and steps < limit:
+			project.current_frame = (project.current_frame + 1) % project.frame_count
+			self._play_deadline += project.frame_durations_ms[project.current_frame] / 1000.0
+			steps += 1
+		if self._play_deadline <= now:
+			self._play_deadline = now + project.frame_durations_ms[project.current_frame] / 1000.0
+		self._refresh_playback_controls()
 		self.canvas.update()
 		self._refresh_preview()
-		self.play_timer.start(max(20, project.frame_durations_ms[project.current_frame]))
+		self.play_timer.start(max(1, round((self._play_deadline - now) * 1000)))
 
 	def _show_zoom(self, zoom: float) -> None:
 		self.zoom_label.setText(f"{round(zoom * 100)}%")
@@ -937,9 +1174,7 @@ class ImageStudioPane(QWidget):
 	def _refresh_all(self) -> None:
 		self._refreshing = True
 		try:
-			project = self.document.project
-			marker = "*" if self.document.modified else ""
-			self.document_label.setText(f"{project.name}{marker} · {project.width} × {project.height}")
+			self._refresh_document_label()
 			self._refresh_layers()
 			self._refresh_frames()
 			self.undo_button.setEnabled(self.document.can_undo)
@@ -948,6 +1183,33 @@ class ImageStudioPane(QWidget):
 			self.canvas.update()
 		finally:
 			self._refreshing = False
+
+	def _refresh_document_label(self) -> None:
+		project = self.document.project
+		marker = "*" if self.document.modified else ""
+		self.document_label.setText(f"{project.name}{marker} · {project.width} × {project.height}")
+
+	def _document_pixels_changed(self) -> None:
+		self._refresh_document_label()
+		self.undo_button.setEnabled(self.document.can_undo)
+		self.redo_button.setEnabled(self.document.can_redo)
+		self.ui_refresh_timer.start()
+
+	def _refresh_drawing_previews(self) -> None:
+		self._refresh_current_frame_thumbnail()
+		self._refresh_preview()
+
+	def _frame_icon(self, index: int) -> QIcon:
+		pixmap = QPixmap.fromImage(self.document.project.composite(index)).scaled(
+			32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation
+		)
+		return QIcon(pixmap)
+
+	def _refresh_current_frame_thumbnail(self) -> None:
+		index = self.document.project.current_frame
+		item = self.frame_list.item(index)
+		if item is not None:
+			item.setIcon(self._frame_icon(index))
 
 	def _refresh_layers(self) -> None:
 		project = self.document.project
@@ -965,17 +1227,28 @@ class ImageStudioPane(QWidget):
 		project = self.document.project
 		self.frame_list.clear()
 		for index in range(project.frame_count):
-			pixmap = QPixmap.fromImage(project.composite(index)).scaled(
-				32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation
-			)
-			item = QListWidgetItem(QIcon(pixmap), str(index + 1))
+			item = QListWidgetItem(self._frame_icon(index), str(index + 1))
 			item.setSizeHint(QSize(54, 42))
 			self.frame_list.addItem(item)
 		self.frame_list.setCurrentRow(project.current_frame)
 		self.frame_list.scrollToItem(self.frame_list.currentItem())
 		duration = project.frame_durations_ms[project.current_frame]
 		self.duration_spin.setValue(duration)
-		self.fps_spin.setValue(max(1, min(50, round(1000 / duration))))
+		self.fps_spin.setValue(max(0.017, min(50.0, 1000.0 / duration)))
+
+	def _refresh_playback_controls(self) -> None:
+		project = self.document.project
+		self._refreshing = True
+		try:
+			self.frame_list.setCurrentRow(project.current_frame)
+			item = self.frame_list.currentItem()
+			if item is not None:
+				self.frame_list.scrollToItem(item)
+			duration = project.frame_durations_ms[project.current_frame]
+			self.duration_spin.setValue(duration)
+			self.fps_spin.setValue(max(0.017, min(50.0, 1000.0 / duration)))
+		finally:
+			self._refreshing = False
 
 	def _refresh_preview(self) -> None:
 		if not hasattr(self, "preview"):
@@ -1040,18 +1313,14 @@ class ImageStudioPane(QWidget):
 
 	def resizeEvent(self, event) -> None:
 		super().resizeEvent(event)
-		compact_labels = {
-			"pencil": "Pencil",
-			"eraser": "Eraser",
-			"fill": "Fill",
-			"eyedropper": "Pick",
-			"line": "Line",
-			"rect": "Rect",
-			"ellipse": "Ellipse",
-			"select": "Select",
-		}
-		mnemonic_labels = {tool: shortcut for tool, _, shortcut in TOOLS}
-		if self.width() < 900:
+		compact = self.viewport().width() < 700
+		self.main_splitter.setOrientation(
+			Qt.Orientation.Vertical if compact else Qt.Orientation.Horizontal
+		)
+		self.inspector.setMaximumWidth(16_777_215 if compact else 330)
+		compact_labels = {spec.key: spec.compact_label for spec in IMAGE_TOOLS}
+		mnemonic_labels = {spec.key: spec.shortcut for spec in IMAGE_TOOLS}
+		if self.viewport().width() < 900:
 			labels = mnemonic_labels
 		else:
 			labels = compact_labels

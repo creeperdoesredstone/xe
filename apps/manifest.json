@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "stage": {
+    "width": 480,
+    "height": 360
+  },
+  "asset_formats": {
+    "editable_image": ".xip",
+    "portable_image_animation": ".ximg",
+    "portable_music": ".xmusic",
+    "scratch_animation": ".sprite3"
+  },
+  "apps": [
+    {
+      "id": "calculator",
+      "title": "Calculator",
+      "category": "utility",
+      "status": "current",
+      "entry": "apps/calculator.xe",
+      "default_window": [240, 190],
+      "asset_namespace": "SystemAssets/Calculator",
+      "assets": [],
+      "artifacts": {
+        "assembly": "asm/calculator.xas",
+        "bytecode": "exe/calculator.xbn"
+      }
+    },
+    {
+      "id": "file_explorer",
+      "title": "Xenon File Explorer",
+      "category": "system",
+      "status": "current",
+      "entry": "apps/file_explorer.xe",
+      "default_window": [300, 220],
+      "asset_namespace": "SystemAssets/FileExplorer",
+      "assets": [],
+      "artifacts": {
+        "assembly": "asm/file_explorer.xas",
+        "bytecode": "exe/file_explorer.xbn"
+      }
+    },
+    {
+      "id": "minesweeper",
+      "title": "Xenon Minesweeper",
+      "category": "game",
+      "status": "current",
+      "entry": "apps/minesweeper.xe",
+      "default_window": [292, 248],
+      "asset_namespace": "SystemAssets/Minesweeper",
+      "assets": [],
+      "artifacts": {
+        "assembly": "asm/minesweeper.xas",
+        "bytecode": "exe/minesweeper.xbn"
+      }
+    },
+    {
+      "id": "settings",
+      "title": "Xenon Settings",
+      "category": "system",
+      "status": "current",
+      "entry": "apps/settings.xe",
+      "default_window": [280, 210],
+      "asset_namespace": "SystemAssets/Settings",
+      "assets": [],
+      "artifacts": {
+        "assembly": "asm/settings.xas",
+        "bytecode": "exe/settings.xbn"
+      }
+    },
+    {
+      "id": "terminal",
+      "title": "Xenon Terminal",
+      "category": "legacy",
+      "status": "legacy",
+      "entry": "apps/terminal.xe",
+      "default_window": [360, 270],
+      "asset_namespace": "SystemAssets/TerminalLegacy",
+      "assets": [],
+      "artifacts": {
+        "assembly": "asm/terminal.xas",
+        "bytecode": "exe/terminal.xbn"
+      }
+    },
+    {
+      "id": "text_editor",
+      "title": "Text Editor",
+      "category": "productivity",
+      "status": "current",
+      "entry": "apps/text_editor.xe",
+      "default_window": [300, 210],
+      "asset_namespace": "SystemAssets/TextEditor",
+      "assets": [],
+      "artifacts": {
+        "assembly": "asm/text_editor.xas",
+        "bytecode": "exe/text_editor.xbn"
+      }
+    },
+    {
+      "id": "xenon_ide",
+      "title": "Xenon IDE",
+      "category": "development",
+      "status": "current",
+      "entry": "apps/xenon_ide.xe",
+      "default_window": [330, 230],
+      "asset_namespace": "SystemAssets/XenonIDE",
+      "assets": [],
+      "artifacts": {
+        "assembly": "asm/xenon_ide.xas",
+        "bytecode": "exe/xenon_ide.xbn"
+      }
+    },
+    {
+      "id": "xenon_music",
+      "title": "Xenon Music",
+      "category": "media",
+      "status": "current",
+      "entry": "apps/xenon_music.xe",
+      "default_window": [300, 224],
+      "asset_namespace": "SystemAssets/XenonMusic",
+      "assets": [
+        {
+          "id": "neon-orbit",
+          "kind": "portable_music",
+          "path": "SystemAssets/XenonMusic/neon-orbit.xmusic",
+          "source": "generated"
+        },
+        {
+          "id": "glass-comet",
+          "kind": "portable_music",
+          "path": "SystemAssets/XenonMusic/glass-comet.xmusic",
+          "source": "generated"
+        },
+        {
+          "id": "quiet-circuit",
+          "kind": "portable_music",
+          "path": "SystemAssets/XenonMusic/quiet-circuit.xmusic",
+          "source": "generated"
+        }
+      ],
+      "artifacts": {
+        "assembly": "asm/xenon_music.xas",
+        "bytecode": "exe/xenon_music.xbn"
+      }
+    },
+    {
+      "id": "xenon_terminal",
+      "title": "Xenon Terminal",
+      "category": "system",
+      "status": "current",
+      "entry": "apps/xenon_terminal.xe",
+      "default_window": [300, 230],
+      "asset_namespace": "SystemAssets/XenonTerminal",
+      "assets": [],
+      "artifacts": {
+        "assembly": "asm/xenon_terminal.xas",
+        "bytecode": "exe/xenon_terminal.xbn"
+      }
+    }
+  ]
+}

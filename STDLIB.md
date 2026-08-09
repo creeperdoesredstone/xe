@@ -358,8 +358,9 @@ raw syscalls `28` and `29`; the date components are high-level app extensions.
 The opt-in host bridge `clipboard_read() -> string` and
 `clipboard_write(text) -> bool` accesses the computer clipboard only when the
 visible **System clipboard** toggle in the desktop IDE is enabled. The toggle is
-enabled for this host release. When disabled or unavailable, reads return an empty
-string and writes return `false`; payloads are bounded to 32,768 characters. These
+disabled by default and must be enabled explicitly on the Code toolbar. When disabled
+or unavailable, reads return an empty string and writes return `false`; payloads are
+bounded to 32,768 characters. These
 syscalls are deliberately unsupported by the Scratch profile, so compatibility
 analysis blocks exact export rather than leaking host clipboard data into a project.
 
@@ -381,13 +382,16 @@ explicitly supplies a test/integration root, the runtime uses the private
 `~/.xenonos/VirtualDrive` when `LOCALAPPDATA` is unavailable). It never defaults to
 the process working directory. Paths are relative to that virtual drive; absolute
 paths, internal metadata names, and `..` traversal outside the root are rejected.
-Files are also closed automatically when the VM stops.
+Normalized aliases cannot reach internal recovery data. Text reads are bounded to
+1 MiB on disk and 200,000 decoded characters so a guest cannot allocate an
+unbounded host file; larger files fail closed. Files are also closed automatically
+when the VM stops.
 
 Directory and workspace operations are `entry_count(path)`, `entry_name(path,
 index)`, `entry_is_directory(path, index)`, `path_exists(path)`, `make_file(path)`,
 `make_directory(path)`, `rename(old_path, new_path)`, and `delete(path)`. Entries are
 sorted with directories first and then names case-insensitively. Open files cannot be
-deleted until closed, and the filesystem root itself cannot be deleted. `delete`
+renamed or deleted until closed, and the filesystem root itself cannot be deleted. `delete`
 moves the target into a hidden `.xenon-trash` directory with a collision-safe
 timestamped name. That directory and the drive marker are inaccessible and omitted
 from Xe directory listings, while remaining available to the host for recovery.
@@ -433,14 +437,18 @@ code generator, and assembler in-process. Diagnostics are available through
 
 `compiler::run(source)` compiles and executes source in a bounded child XVM and
 returns the program's captured output. It shares the calling VM's private virtual
-filesystem root and OS preference state, uses non-blocking empty input, does not
-present a graphics framebuffer or native audio output, has no backend request
-handler, and caps output at 8192 characters. Child dispatch
+filesystem root and OS preference state, uses non-blocking empty text input, has no
+backend request handler, and caps output at 8192 characters. A nongraphical child
 stops after 500,000 instructions and checks a two-second execution deadline between
-instructions; sleeps are clamped to the remaining deadline. Source is capped at
-32,768 characters, NUL output is escaped as `\0`, and all returned diagnostics obey
-the same output bound. Compile and runtime failures are returned as readable text;
-nested `compiler::run` calls are rejected.
+instructions; sleeps are clamped to the remaining deadline. A child that uses the
+graphics/window API temporarily owns the live stage, input device, image cache, and
+audio sequencer so a program run from the virtual IDE can display and drag its own
+window. The virtual IDE resumes when that child closes; the host Stop action cancels
+it. Interactive graphical children therefore use cancellation and their window
+lifecycle instead of the two-second batch deadline. Source is capped at 32,768
+characters, NUL output is escaped as `\0`, and all returned diagnostics obey the same
+output bound. Compile and runtime failures are returned as readable text; nested
+`compiler::run` calls are rejected.
 
 `compiler::check_workspace(entry_path)` and `compiler::run_workspace(entry_path)`
 link a deterministic private-drive workspace. The entry file contributes executable
@@ -524,10 +532,14 @@ backup that cannot be restored automatically. It is clearly labeled
 
 The bundled Template 7.0.1 profile remains a pinned legacy-core profile with 65,536
 addresses and no high-level app or asset-ROM syscalls. Consequently it intentionally
-blocks exact export for all current Xe builds against the XVM's 200,000-address
-contract. This is a safeguard, not a degraded translation. The profile must gain verified 200k memory,
-heap/static parity, the required app syscalls, and an asset ROM before the converter
+blocks exact export for all current Xe builds against the XVM's banked
+2,000,000-address contract. This is a safeguard, not a degraded translation. The
+profile must gain the verified ten-bank memory router, heap/static parity, the
+required app syscalls, and an asset ROM before the converter
 can claim those programs are exact in vanilla Scratch.
+
+The complete authoring, XIMG runtime, wallpaper, icon, animation, compression, and
+Scratch workflow is in [docs/IMAGE_STUDIO.md](docs/IMAGE_STUDIO.md).
 
 ## XVM syscall ABI
 
@@ -570,13 +582,20 @@ operation.
 
 ## VM address space
 
-The default XVM data space is exactly `200,000` addresses, numbered `0..199,999`.
-This is also the hard target ceiling chosen for an eventual vanilla-Scratch
-implementation; the bundled legacy template currently remains at 65,536 addresses.
-The direct `LOAD`/`STORE` XAssembly encoding remains 16-bit for binary compatibility;
-the expanded heap is reached through 32-bit pointers and indirect loads/stores.
-Embedders may request `65,536..200,000` addresses with
-`RuntimeContext(memory_words=...)`; larger or smaller requests are rejected.
+The default XVM data space is exactly `2,000,000` unsigned 32-bit registers,
+numbered `0..1,999,999`. Addresses `0..999,999` form the working set; allocator
+pressure activates the standby tier at `1,000,000..1,999,999` only after collection
+cannot satisfy a request. The complete logical space is ten banks of 200,000 words.
+For the future Scratch port, address `a` maps to list `floor(a / 200000)` and Scratch
+item `(a mod 200000) + 1`, with exactly one list item per register. The bundled
+legacy template currently remains at one 65,536-address list.
+
+The direct `LOAD`/`STORE` XAssembly encoding and text/static sections remain 16-bit
+for binary compatibility; the expanded heap is reached through 32-bit pointers and
+indirect loads/stores. Embedders may request `65,536..2,000,000` addresses with
+`RuntimeContext(memory_words=...)`; larger or smaller requests are rejected. The
+full mapping, deterministic standby policy, and storage costs are documented in
+[docs/VM_MEMORY.md](docs/VM_MEMORY.md).
 Runtime-created strings use conservative managed-heap collection. Globals, live
 stack values, interior pointers, and manually owned `os::malloc` blocks are roots;
 only unreachable runtime-managed string blocks are reclaimed. This prevents

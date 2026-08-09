@@ -1920,7 +1920,7 @@
   },
   "apps": {
     "calculator.xe": {
-      "artifact_hash": "b6a547d61f6688a655ccf6926eb86333e8acd3d9d8110584e82c776f29ad01df",
+      "artifact_hash": "7d0077892d7c13ecd98d67de029720eab88306a73a54ca30d31a566431ba2f25",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -1929,7 +1929,7 @@
       "issues": [
         {
           "code": "memory-model-mismatch",
-          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 200000",
+          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 2000000",
           "severity": "error"
         },
         {
@@ -2010,16 +2010,6 @@
             "capability": "app.graphics",
             "id": 111,
             "name": "APP_GRAPHICS_DRAW_INT"
-          }
-        },
-        {
-          "code": "unsupported-syscall",
-          "message": "APP_GRAPHICS_DRAW_FLOAT (112) is not implemented by this Scratch VM profile",
-          "severity": "error",
-          "syscall": {
-            "capability": "app.graphics",
-            "id": 112,
-            "name": "APP_GRAPHICS_DRAW_FLOAT"
           }
         },
         {
@@ -2415,11 +2405,6 @@
         },
         {
           "capability": "app.graphics",
-          "id": 112,
-          "name": "APP_GRAPHICS_DRAW_FLOAT"
-        },
-        {
-          "capability": "app.graphics",
           "id": 113,
           "name": "APP_GRAPHICS_BUTTON"
         },
@@ -2569,11 +2554,11 @@
           "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
-      "source_hash": "48a03a80defa4f3093e8e91656ce4f8df641a3f42ee6fad8b6c5542bcb7180a7",
+      "source_hash": "51a57249bfe7ad612b84c693dbd262d9b734fd88646f653f4ede3aa00b7a269e",
       "status": "blocked"
     },
     "file_explorer.xe": {
-      "artifact_hash": "3d3a669d2636e1c007141730270205fc846b6849a0f15f7c7f2893bc46378a2b",
+      "artifact_hash": "ee09b4ba13265ff1a4034f5866d22d7118a9ff2b43c7179e164c4750e738d3bd",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -2582,7 +2567,7 @@
       "issues": [
         {
           "code": "memory-model-mismatch",
-          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 200000",
+          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 2000000",
           "severity": "error"
         },
         {
@@ -3292,11 +3277,11 @@
           "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
-      "source_hash": "10048a35220c4b2270e3ca9fdba4b9136d5894be4e60e6100ea1ea8458c8dc8f",
+      "source_hash": "f9ad6a15789ea081a0f9136a10b1514b7efcedd5e0f5ae8b35a6bcd5c4fdca90",
       "status": "blocked"
     },
     "minesweeper.xe": {
-      "artifact_hash": "27f4e432ea051ea79ceae3c56c2aa2c941b4e72634de6fe0cdd6eaac2ddfd8e3",
+      "artifact_hash": "3304200978831ad69600a1ede0973072822cae3528b9748680e9ec09fe21d742",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -3305,7 +3290,7 @@
       "issues": [
         {
           "code": "memory-model-mismatch",
-          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 200000",
+          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 2000000",
           "severity": "error"
         },
         {
@@ -3642,11 +3627,11 @@
           "name": "APP_GRAPHICS_RIGHT_MOUSE_PRESSED"
         }
       ],
-      "source_hash": "7caaad16a539e607036c961a2a9aab8efd96d56d17e8fa3816d644716d6f77a8",
+      "source_hash": "1e5b3cbea6d7be173bf4817d6bae4bcad6aa4a70786d9518c44909a096c99152",
       "status": "blocked"
     },
     "settings.xe": {
-      "artifact_hash": "1e9eabc656e864fd031cd59f84c110d5c2b219960acedff6638211ea77240123",
+      "artifact_hash": "955d60d8532c4b386ddcf9ff4998988e225c255fb7997cbdff4d828da9879316",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -3655,7 +3640,7 @@
       "issues": [
         {
           "code": "memory-model-mismatch",
-          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 200000",
+          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 2000000",
           "severity": "error"
         },
         {
@@ -3796,6 +3781,16 @@
             "capability": "app.graphics",
             "id": 123,
             "name": "APP_GRAPHICS_CONTENT_HEIGHT"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_SCROLL_DELTA (124) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 124,
+            "name": "APP_GRAPHICS_SCROLL_DELTA"
           }
         },
         {
@@ -4047,6 +4042,16 @@
             "id": 209,
             "name": "APP_GRAPHICS_CHAR_ADVANCE"
           }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_DRAW_ICON (253) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 253,
+            "name": "APP_GRAPHICS_DRAW_ICON"
+          }
         }
       ],
       "required_capabilities": [
@@ -4135,6 +4140,11 @@
           "capability": "app.graphics",
           "id": 123,
           "name": "APP_GRAPHICS_CONTENT_HEIGHT"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 124,
+          "name": "APP_GRAPHICS_SCROLL_DELTA"
         },
         {
           "capability": "app.graphics",
@@ -4260,13 +4270,18 @@
           "capability": "app.graphics",
           "id": 209,
           "name": "APP_GRAPHICS_CHAR_ADVANCE"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 253,
+          "name": "APP_GRAPHICS_DRAW_ICON"
         }
       ],
-      "source_hash": "95983b51b43b26257e027bfe53238b8d8625ba49181bc7a4ecb2fa6f6406bb13",
+      "source_hash": "69e96fce99e2869839cfa57f4f0c632dd233abf223c478a8c36665992560ddf1",
       "status": "blocked"
     },
     "terminal.xe": {
-      "artifact_hash": "4c24f35739fa59b0782544cb490cf0ac4df2d1f4135727036c90a37bfbcdb148",
+      "artifact_hash": "0ffdb7e456d3153cc34638dca83700bcfafade98134367c4495cd521dc90b189",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -4275,7 +4290,7 @@
       "issues": [
         {
           "code": "memory-model-mismatch",
-          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 200000",
+          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 2000000",
           "severity": "error"
         },
         {
@@ -4376,6 +4391,16 @@
             "capability": "app.graphics",
             "id": 123,
             "name": "APP_GRAPHICS_CONTENT_HEIGHT"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_SCROLL_DELTA (124) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 124,
+            "name": "APP_GRAPHICS_SCROLL_DELTA"
           }
         },
         {
@@ -4507,6 +4532,36 @@
             "id": 184,
             "name": "APP_OS_GET_THEME_MODE"
           }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_MODIFIERS (246) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 246,
+            "name": "APP_GRAPHICS_MODIFIERS"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_OS_CLIPBOARD_READ (292) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.os",
+            "id": 292,
+            "name": "APP_OS_CLIPBOARD_READ"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_OS_CLIPBOARD_WRITE (293) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.os",
+            "id": 293,
+            "name": "APP_OS_CLIPBOARD_WRITE"
+          }
         }
       ],
       "required_capabilities": [
@@ -4590,6 +4645,11 @@
         },
         {
           "capability": "app.graphics",
+          "id": 124,
+          "name": "APP_GRAPHICS_SCROLL_DELTA"
+        },
+        {
+          "capability": "app.graphics",
           "id": 125,
           "name": "APP_GRAPHICS_DRAW_CHAR"
         },
@@ -4652,13 +4712,28 @@
           "capability": "app.os",
           "id": 184,
           "name": "APP_OS_GET_THEME_MODE"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 246,
+          "name": "APP_GRAPHICS_MODIFIERS"
+        },
+        {
+          "capability": "app.os",
+          "id": 292,
+          "name": "APP_OS_CLIPBOARD_READ"
+        },
+        {
+          "capability": "app.os",
+          "id": 293,
+          "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
-      "source_hash": "de56dc367fca182e75ea00a1c785947754a1cf70cf779b833e31451a70aefef5",
+      "source_hash": "a7af21beaa585c2a65b31e15def97b285ab2fea63a0e0e81905c812ae97dfbe9",
       "status": "blocked"
     },
     "text_editor.xe": {
-      "artifact_hash": "900683c6a32b86c6d4ee600bac59b7f400c38bfd4326e9e6ebf34dd25dbdda7a",
+      "artifact_hash": "940bd504776f8f54994836cd700906098bbbc9ed145e2785e26880f483a36040",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -4667,7 +4742,7 @@
       "issues": [
         {
           "code": "memory-model-mismatch",
-          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 200000",
+          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 2000000",
           "severity": "error"
         },
         {
@@ -5308,11 +5383,11 @@
           "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
-      "source_hash": "ad66ac27dfa51216c9e9dc82b6074bb492b131e618333126fc2091a901ccfe51",
+      "source_hash": "83b9ce2607d2d7822ba54376e31135bc9a6a43c8a9546d5337d8832190d1d6db",
       "status": "blocked"
     },
     "xenon_ide.xe": {
-      "artifact_hash": "34e99c72f9529639ef12fab600cc920a26c13a745b344287c8c9d1070c8bad59",
+      "artifact_hash": "ce9d74ec928ca7c2cbf11110e4391bba474e7a901d05e47c0d528701e996d8fd",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -5321,7 +5396,7 @@
       "issues": [
         {
           "code": "memory-model-mismatch",
-          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 200000",
+          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 2000000",
           "severity": "error"
         },
         {
@@ -6247,33 +6322,33 @@
           "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
-      "source_hash": "48898e95c6fc80071dd741a68da19cb24673dbd748afc1bf8642de59387579e2",
+      "source_hash": "346aabc2c89c999b691fbc7d7edcb136bb3180c52d7cc36c1b28ed8c6fe1adc3",
       "status": "blocked"
     },
     "xenon_music.xe": {
-      "artifact_hash": "c0b9395c603ebb303a46439436c26d01fe917d6225710d05484c306827af6873",
+      "artifact_hash": "1e874a7ce83769197b7706e9e0128fc1bcdc907fd925d86a06a864c2e23a5ca7",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
       "dynamic_assets": [
-        "audio::load@xenon_music.xe:95",
-        "audio::load@xenon_music.xe:99"
+        "audio::load@xenon_music.xe:131",
+        "audio::load@xenon_music.xe:135"
       ],
       "exact": false,
       "issues": [
         {
           "code": "memory-model-mismatch",
-          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 200000",
+          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 2000000",
           "severity": "error"
         },
         {
           "code": "dynamic-asset-reference",
-          "message": "Scratch export requires a literal portable asset path: audio::load@xenon_music.xe:95",
+          "message": "Scratch export requires a literal portable asset path: audio::load@xenon_music.xe:131",
           "severity": "error"
         },
         {
           "code": "dynamic-asset-reference",
-          "message": "Scratch export requires a literal portable asset path: audio::load@xenon_music.xe:99",
+          "message": "Scratch export requires a literal portable asset path: audio::load@xenon_music.xe:135",
           "severity": "error"
         },
         {
@@ -6408,6 +6483,16 @@
         },
         {
           "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_SCROLL_DELTA (124) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 124,
+            "name": "APP_GRAPHICS_SCROLL_DELTA"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
           "message": "APP_GRAPHICS_POINTER_X (127) is not implemented by this Scratch VM profile",
           "severity": "error",
           "syscall": {
@@ -6434,6 +6519,16 @@
             "capability": "app.graphics",
             "id": 129,
             "name": "APP_GRAPHICS_DRAW_TEXT_SMALL"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_DRAW_CHAR_SMALL (142) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 142,
+            "name": "APP_GRAPHICS_DRAW_CHAR_SMALL"
           }
         },
         {
@@ -6713,6 +6808,11 @@
         },
         {
           "capability": "app.graphics",
+          "id": 124,
+          "name": "APP_GRAPHICS_SCROLL_DELTA"
+        },
+        {
+          "capability": "app.graphics",
           "id": 127,
           "name": "APP_GRAPHICS_POINTER_X"
         },
@@ -6725,6 +6825,11 @@
           "capability": "app.graphics",
           "id": 129,
           "name": "APP_GRAPHICS_DRAW_TEXT_SMALL"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 142,
+          "name": "APP_GRAPHICS_DRAW_CHAR_SMALL"
         },
         {
           "capability": "app.graphics",
@@ -6822,11 +6927,11 @@
           "name": "APP_AUDIO_UPDATE"
         }
       ],
-      "source_hash": "483ad29522d02da37e461e314fe2b0e3b8ba8631e3e830524d32fc8f4dcbfced",
+      "source_hash": "cb052a1fc42fc236e4e78f8129ea913074da8c2ae4d118e4e37301ee4ff188c5",
       "status": "blocked"
     },
     "xenon_terminal.xe": {
-      "artifact_hash": "e43972bc828efde92efdc476bed2e6828332ce2c504ebdd4a6e5c1a40a7e3384",
+      "artifact_hash": "374d87e0ea78211c2390910ba0025135dbe615b9ba01005fb9cf41cc15a10a3b",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -6835,7 +6940,7 @@
       "issues": [
         {
           "code": "memory-model-mismatch",
-          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 200000",
+          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 2000000",
           "severity": "error"
         },
         {
@@ -7671,7 +7776,7 @@
           "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
-      "source_hash": "918f39799919b23943f5637200227c2eadafb8bc681bc5b540636cda5b4eeb7e",
+      "source_hash": "36c26e1fcbd89327171a4735c52130ab0c2f1ab1646e57e7b66ef1a17b51f79e",
       "status": "blocked"
     }
   },
@@ -7693,7 +7798,7 @@
     "exact": false,
     "scratch_address_limit": 65536,
     "scratch_static_limit": 65536,
-    "xvm_address_limit": 200000
+    "xvm_address_limit": 2000000
   },
   "profile": {
     "capabilities": [

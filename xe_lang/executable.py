@@ -6,6 +6,8 @@ MAX_STATIC_WORDS = 0x10000
 
 def static_layout_trailer(static_words: int) -> tuple[int, int, int, int]:
 	static_words = int(static_words)
+	if not 0 <= static_words <= MAX_STATIC_WORDS:
+		raise ValueError(f"Static layout must contain 0 to {MAX_STATIC_WORDS} words")
 	return (
 		STATIC_LAYOUT_MAGIC,
 		STATIC_LAYOUT_VERSION,
@@ -25,5 +27,7 @@ def decode_static_layout(data: list[int]) -> tuple[list[int], int]:
 		or checksum != (static_words ^ 0xFFFFFFFF) & 0xFFFFFFFF
 	):
 		return data, 0
+	if not 0 <= static_words <= MAX_STATIC_WORDS:
+		raise ValueError(f"Static layout exceeds the {MAX_STATIC_WORDS}-word address space")
 
 	return data[:-STATIC_LAYOUT_TRAILER_WORDS], static_words

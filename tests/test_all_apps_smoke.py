@@ -9,6 +9,25 @@ from xe_lang.compiler_service import compile_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
+APP_SECTION_BOUNDARIES = (
+	"# Model and state.",
+	"# Layout helpers.",
+	"# Input and interaction.",
+	"# Paint and replaceable asset hooks.",
+	"# Application driver.",
+)
+
+
+def test_every_bundled_app_exposes_modular_sections_and_default_metadata() -> None:
+	for app_path in sorted((ROOT / "apps").glob("*.xe")):
+		source = app_path.read_text(encoding="utf-8")
+		for boundary in APP_SECTION_BOUNDARIES:
+			assert source.count(boundary) == 1, f"{app_path.name}: missing or duplicate {boundary}"
+		for name in ("APP_TITLE", "APP_DEFAULT_WIDTH", "APP_DEFAULT_HEIGHT"):
+			assert f"const {name} =" in source, f"{app_path.name}: missing {name}"
+		assert ".title = APP_TITLE" in source
+		assert ".width = APP_DEFAULT_WIDTH" in source
+		assert ".height = APP_DEFAULT_HEIGHT" in source
 
 
 def test_every_bundled_app_compiles_and_publishes_bounded_frames(tmp_path: Path) -> None:

@@ -7,6 +7,7 @@ from xe_lang.helper import ANSI
 
 import traceback
 import threading
+import os
 from pathlib import Path
 
 
@@ -81,6 +82,12 @@ class RuntimeContext:
 		self.cancel_event.set()
 
 
+def _stack_result(vm: VM, value: object) -> list[int]:
+	if not isinstance(value, list):
+		return []
+	return value[:vm.sp][:32]
+
+
 def run(
 	fn: str,
 	ftxt: str,
@@ -100,7 +107,7 @@ def run(
 		result = context.vm.run()
 
 		return (
-			result.value,
+			_stack_result(context.vm, result.value),
 			result.error,
 			ftxt,
 		)
@@ -119,7 +126,7 @@ def run(
 	context.vm.ip = 0
 
 	result = context.vm.run()
-	stack_value = [] if result.value is None else result.value[:context.vm.sp][:32]
+	stack_value = _stack_result(context.vm, result.value)
 
 	return (
 		stack_value,
@@ -127,8 +134,6 @@ def run(
 		formatted_asm,
 	)
 
-
-import os
 
 if __name__ == "__main__":
 	print("Welcome to Xe Lang!")
@@ -144,7 +149,7 @@ if __name__ == "__main__":
 			print(f"Error: File '{path}' does not exist.")
 		else:
 			try:
-				with open(path, "r") as file:
+				with open(path, "r", encoding="utf-8", newline="") as file:
 					source_code = file.read()
 
 				result, error, asm = run(
@@ -160,7 +165,7 @@ if __name__ == "__main__":
 					print(f"\nStack: {result}\n\n{ANSI.PURPLE}Assembly:")
 					print(ANSI.GREEN + asm + ANSI.END)
 				print()
-			except Exception as e:
+			except Exception:
 				traceback.print_exc()
 
 	elif choice == "2":

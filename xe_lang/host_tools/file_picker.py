@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from xe_lang.devices.filesystem import FileSystemDevice, default_virtual_drive_root
+from .render_helpers import ElidingPathLineEdit
 
 
 ENTRY_PATH_ROLE = int(Qt.ItemDataRole.UserRole)
@@ -48,9 +49,9 @@ class XeSourcePicker(QDialog):
 		self.back_button.setAccessibleName("Go to parent folder")
 		self.back_button.clicked.connect(self._go_back)
 		header.addWidget(self.back_button)
-		self.path_label = QLabel("Virtual Drive / ")
+		self.path_label = ElidingPathLineEdit("Virtual Drive / ")
 		self.path_label.setObjectName("PickerPath")
-		self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+		self.path_label.setAccessibleName("Current virtual-drive path")
 		header.addWidget(self.path_label, 1)
 		self.computer_button = QPushButton("Browse computer…")
 		self.computer_button.setToolTip("Choose a Xe file outside the private Xenon virtual drive")
@@ -126,7 +127,8 @@ class XeSourcePicker(QDialog):
 		if not items or items[0].data(ENTRY_DIRECTORY_ROLE):
 			return
 		candidate = (self.files.root / str(items[0].data(ENTRY_PATH_ROLE))).resolve()
-		if candidate.is_file() and candidate.suffix.casefold() == ".xe":
+		root = self.files.root.resolve()
+		if candidate.is_relative_to(root) and candidate.is_file() and candidate.suffix.casefold() == ".xe":
 			self.selected_path = candidate
 			self.accept()
 

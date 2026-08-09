@@ -1,0 +1,9 @@
+*.xas text eol=lf
+*.xbn text eol=lf
+*.sb3 binary
+*.png binary
+*.gif binary
+*.xip binary
+*.ximg binary
+*.xmusic binary
+*.sprite3 binary

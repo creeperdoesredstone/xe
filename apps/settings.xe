@@ -1,7 +1,14 @@
 # Xenon Settings. All edits are staged and committed atomically through Apply.
 
+# App metadata and default geometry.
+const APP_TITLE = "Xenon Settings"
+const APP_DEFAULT_WIDTH = 280
+const APP_DEFAULT_HEIGHT = 210
+
+# Model and state.
 var settings_window: graphics::Window
 
+# Layout helpers.
 fn previous_setting_id(value: int, count: int) int {
 	if (count <= 0) { return 0 }
 	value -= 1
@@ -20,6 +27,7 @@ fn ease_menu(value: int) int {
 	return value * (200 - value) / 100
 }
 
+# Paint and replaceable asset hooks.
 proc draw_menu_arrow(x: int, y: int, opened: bool, color: int) {
 	if (opened) {
 		call graphics::set_pixel(settings_window, x, y, color)
@@ -46,21 +54,22 @@ fn draw_step_button(x: int, y: int, right: bool) bool {
 	center_y = y + 5
 	if (right) {
 		call graphics::set_pixel(settings_window, center_x - 1, center_y - 2, graphics::WHITE)
-		call graphics::set_pixel(settings_window, center_x - 0, center_y - 1, graphics::WHITE)
+		call graphics::set_pixel(settings_window, center_x, center_y - 1, graphics::WHITE)
 		call graphics::set_pixel(settings_window, center_x + 1, center_y, graphics::WHITE)
-		call graphics::set_pixel(settings_window, center_x - 0, center_y + 1, graphics::WHITE)
+		call graphics::set_pixel(settings_window, center_x, center_y + 1, graphics::WHITE)
 		call graphics::set_pixel(settings_window, center_x - 1, center_y + 2, graphics::WHITE)
 	}
 	else {
 		call graphics::set_pixel(settings_window, center_x + 1, center_y - 2, graphics::WHITE)
-		call graphics::set_pixel(settings_window, center_x - 0, center_y - 1, graphics::WHITE)
+		call graphics::set_pixel(settings_window, center_x, center_y - 1, graphics::WHITE)
 		call graphics::set_pixel(settings_window, center_x - 1, center_y, graphics::WHITE)
-		call graphics::set_pixel(settings_window, center_x - 0, center_y + 1, graphics::WHITE)
+		call graphics::set_pixel(settings_window, center_x, center_y + 1, graphics::WHITE)
 		call graphics::set_pixel(settings_window, center_x + 1, center_y + 2, graphics::WHITE)
 	}
 	return clicked
 }
 
+# Input and interaction.
 proc reload_os_settings(master: int*, music: int*, effects: int*, background: int*, palette: int*, theme: int*, corners: int*, icons: int*, clock: int*, enabled: bool*) {
 	*master = os::volume
 	*music = os::music_volume
@@ -175,7 +184,7 @@ proc draw_preview_box(x: int, y: int, width: int, height: int, corner_style: int
 
 fn settings_preview_accent() int {
 	var variant: int
-	variant = staged_palette % 3
+	variant = staged_palette % palette_group_count
 	if (variant == 1) { return graphics::COLOR_11 }
 	if (variant == 2) { return graphics::COLOR_10 }
 	return graphics::COLOR_13
@@ -434,26 +443,22 @@ proc draw_icons_time_preview(x: int, y: int, width: int, height: int) {
 	call draw_clock_preview(clock_x, clock_y, clock_width, clock_height, accent)
 }
 
-proc draw_settings_icon(x: int, y: int, active_tab: int) {
-	var sound_icon: string
-	var personalization_icon: string
-	var appearance_icon: string
-	var icons_and_time_icon: string
-	var system_icon: string
+proc draw_settings_icon(x: int, y: int, tab: int) {
 	var icon: string
-	
-	sound_icon           = "....B......B3.F.BBB33.8F33333..F33333..F88833.F8...83.8.....8..."
-	personalization_icon = "BBBBB.BB3888.33.3...33833...88.33333333388833888..3333....8888.."
-	appearance_icon      = "BBBBBBBB33333333388888833......33......33......33333333388888888"
-	icons_and_time_icon  = "..BBBB...B8888B.B8.FF.8B3..F...33......3.3....3..833338...8888.."
-	system_icon          = "BB.BB.BB83.33.38.833338.3338833388333388.383383.33.33.3388.88.88"
-	
-	switch (active_tab) {
-		case 0  { icon = sound_icon }
-		case 1  { icon = personalization_icon }
-		case 2  { icon = appearance_icon }
-		case 3  { icon = icons_and_time_icon }
-		default { icon = system_icon }
+	if (tab == 0) {
+		icon = "....B......B3.F.BBB33.8F33333..F33333..F88833.F8...83.8.....8..."
+	}
+	elseif (tab == 1) {
+		icon = "BBBBB.BB3888.33.3...33833...88.33333333388833888..3333....8888.."
+	}
+	elseif (tab == 2) {
+		icon = "BBBBBBBB33333333388888833......33......33......33333333388888888"
+	}
+	elseif (tab == 3) {
+		icon = "..BBBB...B8888B.B8.FF.8B3..F...33......3.3....3..833338...8888.."
+	}
+	else {
+		icon = "BB.BB.BB83.33.38.833338.3338833388333388.383383.33.33.3388.88.88"
 	}
 	call graphics::draw_icon(settings_window, x, y, 8, 8, icon)
 }
@@ -470,6 +475,7 @@ var staged_clock: int
 var staged_enabled: bool
 var background_count: int
 var palette_count: int
+var palette_group_count: int
 var content_width: int
 var content_height: int
 var panel_x: int
@@ -497,6 +503,160 @@ var previous_ticks: int
 var current_ticks: int
 var delta_ms: int
 var drawer_step: int
+var drawer_scroll: int
+var drawer_scroll_maximum: int
+var drawer_item_y: int
+var drawer_scroll_delta: int
+var page_scroll: int
+var page_scroll_maximum: int
+var page_scroll_tab: int
+
+fn settings_compact_row_visible(row_y: int, row_height: int, viewport_top: int, viewport_bottom: int) bool {
+	return row_y >= viewport_top && row_y + row_height <= viewport_bottom
+}
+
+proc draw_settings_scroll_arrow(x: int, y: int, down: bool, color: int) {
+	if (down) {
+		call graphics::draw_line(settings_window, x, y, x + 2, y + 2, color)
+		call graphics::draw_line(settings_window, x + 2, y + 2, x + 4, y, color)
+	}
+	else {
+		call graphics::draw_line(settings_window, x, y + 2, x + 2, y, color)
+		call graphics::draw_line(settings_window, x + 2, y, x + 4, y + 2, color)
+	}
+}
+
+proc draw_scrollable_compact_page() {
+	var page_total: int
+	var viewport_top: int
+	var viewport_bottom: int
+	var page_y: int
+	var page_control_width: int
+	var pointer_x: int
+	var pointer_y: int
+	var scroll_value: int
+	viewport_top = 5
+	viewport_bottom = 4 + panel_height
+	page_total = 41
+	if (active_tab == 0) { page_total = 76 }
+	elseif (active_tab == 1) { page_total = 59 }
+	elseif (active_tab == 3) { page_total = 50 }
+	page_scroll_maximum = page_total - (panel_height - 2)
+	if (page_scroll_maximum < 0) { page_scroll_maximum = 0 }
+	if (page_scroll_tab != active_tab) {
+		page_scroll = 0
+		page_scroll_tab = active_tab
+	}
+	pointer_x = graphics::pointer_x(settings_window)
+	pointer_y = graphics::pointer_y(settings_window)
+	if (pointer_x >= panel_x && pointer_x < panel_x + panel_width && pointer_y >= viewport_top && pointer_y < viewport_bottom) {
+		scroll_value = graphics::scroll_delta()
+		if (scroll_value != 0) { page_scroll -= scroll_value * 7 }
+	}
+	if (page_scroll < 0) { page_scroll = 0 }
+	if (page_scroll > page_scroll_maximum) { page_scroll = page_scroll_maximum }
+	page_control_width = panel_width - 9
+	if (page_control_width < 4) { page_control_width = 4 }
+	call graphics::fill_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_1)
+	call graphics::draw_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_8)
+
+	page_y = 7 - page_scroll
+	if (settings_compact_row_visible(page_y, 5, viewport_top, viewport_bottom)) {
+		if (active_tab == 0) { call graphics::draw_text_small(settings_window, panel_x + 3, page_y, "Sound", graphics::WHITE) }
+		elseif (active_tab == 1) { call graphics::draw_text_small(settings_window, panel_x + 3, page_y, "Personalization", graphics::WHITE) }
+		elseif (active_tab == 2) { call graphics::draw_text_small(settings_window, panel_x + 3, page_y, "Appearance", graphics::WHITE) }
+		elseif (active_tab == 3) { call graphics::draw_text_small(settings_window, panel_x + 3, page_y, "Icons and time", graphics::WHITE) }
+		else { call graphics::draw_text_small(settings_window, panel_x + 3, page_y, "System", graphics::WHITE) }
+	}
+
+	if (active_tab == 0) {
+		page_y = 14 - page_scroll
+		if (settings_compact_row_visible(page_y, 5, viewport_top, viewport_bottom)) { call graphics::draw_text_small(settings_window, panel_x + 3, page_y, "Master", graphics::COLOR_7) }
+		page_y = 20 - page_scroll
+		if (settings_compact_row_visible(page_y, 5, viewport_top, viewport_bottom)) { staged_master = graphics::slider(settings_window, panel_x + 3, page_y, page_control_width, staged_master, 0, 100) }
+		page_y = 29 - page_scroll
+		if (settings_compact_row_visible(page_y, 5, viewport_top, viewport_bottom)) { call graphics::draw_text_small(settings_window, panel_x + 3, page_y, "Music", graphics::COLOR_7) }
+		page_y = 35 - page_scroll
+		if (settings_compact_row_visible(page_y, 5, viewport_top, viewport_bottom)) { staged_music = graphics::slider(settings_window, panel_x + 3, page_y, page_control_width, staged_music, 0, 100) }
+		page_y = 44 - page_scroll
+		if (settings_compact_row_visible(page_y, 5, viewport_top, viewport_bottom)) { call graphics::draw_text_small(settings_window, panel_x + 3, page_y, "Effects", graphics::COLOR_7) }
+		page_y = 50 - page_scroll
+		if (settings_compact_row_visible(page_y, 5, viewport_top, viewport_bottom)) { staged_effects = graphics::slider(settings_window, panel_x + 3, page_y, page_control_width, staged_effects, 0, 100) }
+		page_y = 59 - page_scroll
+	}
+	elseif (active_tab == 1) {
+		page_y = 15 - page_scroll
+		if (settings_compact_row_visible(page_y, 7, viewport_top, viewport_bottom)) {
+			if (staged_theme == os::THEME_DARK) {
+				if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Dark theme", graphics::COLOR_8, graphics::WHITE)) { staged_theme = os::THEME_LIGHT; if (staged_palette < palette_group_count) { staged_palette += palette_group_count } }
+			}
+			else {
+				if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Light theme", graphics::COLOR_8, graphics::WHITE)) { staged_theme = os::THEME_DARK; if (staged_palette >= palette_group_count) { staged_palette -= palette_group_count } }
+			}
+		}
+		page_y = 24 - page_scroll
+		if (settings_compact_row_visible(page_y, 7, viewport_top, viewport_bottom) && settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Background", graphics::COLOR_8, graphics::WHITE)) { staged_background = next_setting_id(staged_background, background_count) }
+		page_y = 33 - page_scroll
+		if (settings_compact_row_visible(page_y, 7, viewport_top, viewport_bottom) && settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Palette", graphics::COLOR_8, graphics::WHITE)) {
+			staged_palette = next_setting_id(staged_palette, palette_count)
+			if (staged_theme == os::THEME_DARK && staged_palette >= palette_group_count) { staged_palette = 0 }
+			if (staged_theme == os::THEME_LIGHT && staged_palette < palette_group_count) { staged_palette = palette_group_count }
+		}
+		page_y = 42 - page_scroll
+	}
+	elseif (active_tab == 2) {
+		page_y = 15 - page_scroll
+		if (settings_compact_row_visible(page_y, 7, viewport_top, viewport_bottom)) {
+			if (staged_corners == os::CORNER_SQUARE) { if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Square corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_ROUNDED } }
+			elseif (staged_corners == os::CORNER_ROUNDED) { if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Rounded corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_SOFT } }
+			else { if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Soft corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_SQUARE } }
+		}
+		page_y = 24 - page_scroll
+	}
+	elseif (active_tab == 3) {
+		page_y = 15 - page_scroll
+		if (settings_compact_row_visible(page_y, 7, viewport_top, viewport_bottom)) {
+			if (staged_icons == os::ICON_SMALL) { if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Small icons", graphics::COLOR_8, graphics::WHITE)) { staged_icons = os::ICON_MEDIUM } }
+			elseif (staged_icons == os::ICON_MEDIUM) { if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Medium icons", graphics::COLOR_8, graphics::WHITE)) { staged_icons = os::ICON_LARGE } }
+			else { if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Large icons", graphics::COLOR_8, graphics::WHITE)) { staged_icons = os::ICON_SMALL } }
+		}
+		page_y = 24 - page_scroll
+		if (settings_compact_row_visible(page_y, 7, viewport_top, viewport_bottom)) {
+			if (staged_clock == os::CLOCK_24_HOUR) { if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "24 hour clock", graphics::COLOR_8, graphics::WHITE)) { staged_clock = os::CLOCK_12_HOUR } }
+			else { if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "12 hour clock", graphics::COLOR_8, graphics::WHITE)) { staged_clock = os::CLOCK_24_HOUR } }
+		}
+		page_y = 33 - page_scroll
+	}
+	else {
+		page_y = 15 - page_scroll
+		if (settings_compact_row_visible(page_y, 7, viewport_top, viewport_bottom)) {
+			if (staged_enabled) { if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Settings enabled", graphics::COLOR_8, graphics::WHITE)) { staged_enabled = false } }
+			else { if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Settings disabled", graphics::COLOR_8, graphics::WHITE)) { staged_enabled = true } }
+		}
+		page_y = 24 - page_scroll
+	}
+
+	if (settings_compact_row_visible(page_y, 7, viewport_top, viewport_bottom) && settings_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Apply", graphics::COLOR_2)) {
+		applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, 0, staged_corners, staged_icons, staged_clock, staged_enabled)
+		if (applied) { call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled) }
+	}
+	page_y += 8
+	if (settings_compact_row_visible(page_y, 7, viewport_top, viewport_bottom) && settings_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Cancel", graphics::COLOR_5)) {
+		call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+		settings_window.close()
+	}
+
+	if (page_scroll > 0 && panel_width >= 12 && panel_height >= 8) {
+		if (graphics::button_flat(settings_window, panel_x + panel_width - 6, viewport_top, 5, 6, " ", graphics::COLOR_8)) { page_scroll -= 7 }
+		call draw_settings_scroll_arrow(panel_x + panel_width - 6, viewport_top + 1, false, graphics::WHITE)
+	}
+	if (page_scroll < page_scroll_maximum && panel_width >= 12 && panel_height >= 8) {
+		if (graphics::button_flat(settings_window, panel_x + panel_width - 6, viewport_bottom - 6, 5, 6, " ", graphics::COLOR_8)) { page_scroll += 7 }
+		call draw_settings_scroll_arrow(panel_x + panel_width - 6, viewport_bottom - 4, true, graphics::WHITE)
+	}
+	if (page_scroll < 0) { page_scroll = 0 }
+	if (page_scroll > page_scroll_maximum) { page_scroll = page_scroll_maximum }
+}
 
 # Transparency is no longer part of Settings. Clear any persisted legacy value so
 # all window surfaces remain opaque while retaining the old OS field for ABI safety.
@@ -504,16 +664,23 @@ os::window_transparency = 0
 call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 background_count = os::background_count()
 palette_count = os::palette_count()
+palette_group_count = palette_count / 2
+if (palette_group_count < 1) { palette_group_count = 1 }
 active_tab = 0
 drawer_open = false
 drawer_progress = 0
 drawer_flash = 0
+drawer_scroll = 0
+page_scroll = 0
+page_scroll_maximum = 0
+page_scroll_tab = -1
 
+# Application driver.
 settings_window.x = 48
 settings_window.y = 34
-settings_window.width = 280
-settings_window.height = 210
-settings_window.title = "Xenon Settings"
+settings_window.width = APP_DEFAULT_WIDTH
+settings_window.height = APP_DEFAULT_HEIGHT
+settings_window.title = APP_TITLE
 settings_window.ui_scale = 1
 settings_window.state = graphics::WINDOW_NORMAL
 previous_ticks = os::ticks()
@@ -577,12 +744,11 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 		control_x = panel_x + 4
 		control_width = panel_width - 8
 		if (control_width < 4) { control_width = 4 }
-		if (layout_panel_width >= 142 && panel_height >= 104) {
+		if (layout_panel_width >= 142 && panel_height >= 126) {
 			call graphics::fill_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_1)
 			call graphics::draw_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_8)
 			action_y = content_height - 16
 			action_width = (panel_width - 10) / 2
-			
 			call draw_settings_icon(panel_x + 4, 8, active_tab)
 
 			if (active_tab == 0) {
@@ -600,13 +766,13 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				if (staged_theme == os::THEME_DARK) {
 					if (settings_button_aligned(panel_x + panel_width - 50, 19, 46, 11, "Dark", graphics::COLOR_5)) {
 						staged_theme = os::THEME_LIGHT
-						if (staged_palette < 3) { staged_palette += 3 }
+						if (staged_palette < palette_group_count) { staged_palette += palette_group_count }
 					}
 				}
 				else {
 					if (settings_button_aligned(panel_x + panel_width - 50, 19, 46, 11, "Light", graphics::COLOR_7)) {
 						staged_theme = os::THEME_DARK
-						if (staged_palette >= 3) { staged_palette -= 3 }
+						if (staged_palette >= palette_group_count) { staged_palette -= palette_group_count }
 					}
 				}
 
@@ -623,13 +789,13 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				call graphics::draw_int(settings_window, panel_x + panel_width - 55, 63, staged_palette, graphics::COLOR_14)
 				if (draw_step_button(panel_x + panel_width - 34, 61, false)) {
 					staged_palette = previous_setting_id(staged_palette, palette_count)
-					if (staged_theme == os::THEME_DARK && staged_palette >= 3) { staged_palette = 2 }
-					if (staged_theme == os::THEME_LIGHT && staged_palette < 3) { staged_palette = palette_count - 1 }
+					if (staged_theme == os::THEME_DARK && staged_palette >= palette_group_count) { staged_palette = palette_group_count - 1 }
+					if (staged_theme == os::THEME_LIGHT && staged_palette < palette_group_count) { staged_palette = palette_count - 1 }
 				}
 				if (draw_step_button(panel_x + panel_width - 18, 61, true)) {
 					staged_palette = next_setting_id(staged_palette, palette_count)
-					if (staged_theme == os::THEME_DARK && staged_palette >= 3) { staged_palette = 0 }
-					if (staged_theme == os::THEME_LIGHT && staged_palette < 3) { staged_palette = 3 }
+					if (staged_theme == os::THEME_DARK && staged_palette >= palette_group_count) { staged_palette = 0 }
+					if (staged_theme == os::THEME_LIGHT && staged_palette < palette_group_count) { staged_palette = palette_group_count }
 				}
 				call draw_palette_background_preview(panel_x + 8, 82, panel_width - 16, action_y - 86)
 			}
@@ -692,66 +858,7 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 			}
 		}
 		elseif (panel_height < 32 || layout_panel_width < 44) {
-			call graphics::fill_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_1)
-			call graphics::draw_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_8)
-			if (panel_width >= 18 && panel_height >= 12 && active_tab == 0) {
-				if (panel_width >= 34) {
-					call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Sound", graphics::WHITE)
-					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Master", graphics::COLOR_7)
-				}
-				else {
-					call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Snd", graphics::WHITE)
-					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Vol", graphics::COLOR_7)
-				}
-				call graphics::draw_int_small(settings_window, panel_x + 3, 19, staged_master, graphics::COLOR_14)
-			}
-			elseif (panel_width >= 18 && panel_height >= 12 && active_tab == 1) {
-				if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Personal", graphics::WHITE) }
-				else { call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Th", graphics::WHITE) }
-				if (staged_theme == os::THEME_DARK) {
-					if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Dark", graphics::COLOR_7) }
-					else { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Dk", graphics::COLOR_7) }
-				}
-				else {
-					if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Light", graphics::COLOR_7) }
-					else { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Lt", graphics::COLOR_7) }
-				}
-			}
-			elseif (panel_width >= 18 && panel_height >= 12 && active_tab == 2) {
-				if (panel_width >= 34) {
-					call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Windows", graphics::WHITE)
-					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Corners", graphics::COLOR_7)
-				}
-				else {
-					call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Win", graphics::WHITE)
-					call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Edge", graphics::COLOR_7)
-				}
-			}
-			elseif (panel_width >= 18 && panel_height >= 12 && active_tab == 3) {
-				if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Display", graphics::WHITE) }
-				else { call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Tm", graphics::WHITE) }
-				if (staged_clock == os::CLOCK_24_HOUR) {
-					if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "24 hour", graphics::COLOR_7) }
-					else { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "24h", graphics::COLOR_7) }
-				}
-				else {
-					if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "12 hour", graphics::COLOR_7) }
-					else { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "12h", graphics::COLOR_7) }
-				}
-			}
-			elseif (panel_width >= 18 && panel_height >= 12) {
-				if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 5, "System", graphics::WHITE) }
-				else { call graphics::draw_text_small(settings_window, panel_x + 3, 5, "Sys", graphics::WHITE) }
-				if (staged_enabled) {
-					if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Enabled", graphics::COLOR_7) }
-					else { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "On", graphics::COLOR_7) }
-				}
-				else {
-					if (panel_width >= 34) { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Disabled", graphics::COLOR_7) }
-					else { call graphics::draw_text_small(settings_window, panel_x + 3, 12, "Off", graphics::COLOR_7) }
-				}
-			}
-
+			call draw_scrollable_compact_page()
 		}
 		else {
 			call graphics::fill_rect(settings_window, panel_x, 4, panel_width, panel_height, graphics::COLOR_1)
@@ -777,21 +884,21 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				if (staged_theme == os::THEME_DARK) {
 					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Dark theme", graphics::COLOR_8, graphics::WHITE)) {
 						staged_theme = os::THEME_LIGHT
-						if (staged_palette < 3) { staged_palette += 3 }
+						if (staged_palette < palette_group_count) { staged_palette += palette_group_count }
 					}
 				}
 				else {
 					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Light theme", graphics::COLOR_8, graphics::WHITE)) {
 						staged_theme = os::THEME_DARK
-						if (staged_palette >= 3) { staged_palette -= 3 }
+						if (staged_palette >= palette_group_count) { staged_palette -= palette_group_count }
 					}
 				}
 				if (content_height >= 43) {
 					if (settings_flat_button_aligned(control_x, 24, control_width, 7, "Background", graphics::COLOR_8, graphics::WHITE)) { staged_background = next_setting_id(staged_background, background_count) }
 					if (settings_flat_button_aligned(control_x, 33, control_width, 7, "Palette", graphics::COLOR_8, graphics::WHITE)) {
 						staged_palette = next_setting_id(staged_palette, palette_count)
-						if (staged_theme == os::THEME_DARK && staged_palette >= 3) { staged_palette = 0 }
-						if (staged_theme == os::THEME_LIGHT && staged_palette < 3) { staged_palette = 3 }
+						if (staged_theme == os::THEME_DARK && staged_palette >= palette_group_count) { staged_palette = 0 }
+						if (staged_theme == os::THEME_LIGHT && staged_palette < palette_group_count) { staged_palette = palette_group_count }
 					}
 				}
 				if (action_y >= 62) { call draw_palette_background_preview(panel_x + 5, 42, panel_width - 10, action_y - 46) }
@@ -873,46 +980,60 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 
 		# Navigation becomes interactive only once its motion is complete. This
 		# prevents a row from sliding underneath a held pointer and being chosen.
+		drawer_scroll_maximum = 44 - drawer_height
+		if (drawer_scroll_maximum < 0) { drawer_scroll_maximum = 0 }
+		if (drawer_scroll_maximum > 28) { drawer_scroll_maximum = 28 }
+		if (drawer_open && drawer_progress == 100 && drawer_compact && drawer_width >= 40 && graphics::pointer_x(settings_window) >= 4 && graphics::pointer_x(settings_window) < 4 + drawer_width && graphics::pointer_y(settings_window) >= 13 && graphics::pointer_y(settings_window) < 4 + drawer_height) {
+			drawer_scroll_delta = graphics::scroll_delta()
+			if (drawer_scroll_delta != 0) { drawer_scroll -= drawer_scroll_delta * 7 }
+		}
+		if (drawer_scroll < 0) { drawer_scroll = 0 }
+		if (drawer_scroll > drawer_scroll_maximum) { drawer_scroll = drawer_scroll_maximum }
 		if (drawer_open && drawer_progress == 100 && drawer_compact && drawer_width >= 40) {
-			if (drawer_height >= 18) {
-				if (settings_flat_button_aligned(8, 13, drawer_width - 12, 7, "Sound", drawer_surface, drawer_foreground)) { active_tab = 0 }
-				if (active_tab == 0) { call graphics::fill_rect(settings_window, 5, 14, 2, 5, graphics::COLOR_10) }
+			drawer_item_y = 13 - drawer_scroll
+			if (drawer_item_y >= 13 && drawer_item_y + 7 <= 4 + drawer_height) {
+				if (settings_flat_button_aligned(8, drawer_item_y, drawer_width - 12, 7, "Sound", drawer_surface, drawer_foreground)) { active_tab = 0 }
+				if (active_tab == 0) { call graphics::fill_rect(settings_window, 5, drawer_item_y + 1, 2, 5, graphics::COLOR_10) }
 			}
-			if (drawer_height >= 25) {
-				if (settings_flat_button_aligned(8, 20, drawer_width - 12, 7, "Theme", drawer_surface, drawer_foreground)) { active_tab = 1 }
-				if (active_tab == 1) { call graphics::fill_rect(settings_window, 5, 21, 2, 5, graphics::COLOR_10) }
+			drawer_item_y = 20 - drawer_scroll
+			if (drawer_item_y >= 13 && drawer_item_y + 7 <= 4 + drawer_height) {
+				if (settings_flat_button_aligned(8, drawer_item_y, drawer_width - 12, 7, "Theme", drawer_surface, drawer_foreground)) { active_tab = 1 }
+				if (active_tab == 1) { call graphics::fill_rect(settings_window, 5, drawer_item_y + 1, 2, 5, graphics::COLOR_10) }
 			}
-			if (drawer_height >= 32) {
-				if (settings_flat_button_aligned(8, 27, drawer_width - 12, 7, "Window", drawer_surface, drawer_foreground)) { active_tab = 2 }
-				if (active_tab == 2) { call graphics::fill_rect(settings_window, 5, 28, 2, 5, graphics::COLOR_10) }
+			drawer_item_y = 27 - drawer_scroll
+			if (drawer_item_y >= 13 && drawer_item_y + 7 <= 4 + drawer_height) {
+				if (settings_flat_button_aligned(8, drawer_item_y, drawer_width - 12, 7, "Window", drawer_surface, drawer_foreground)) { active_tab = 2 }
+				if (active_tab == 2) { call graphics::fill_rect(settings_window, 5, drawer_item_y + 1, 2, 5, graphics::COLOR_10) }
 			}
-			if (drawer_height >= 39) {
-				if (settings_flat_button_aligned(8, 34, drawer_width - 12, 7, "Display", drawer_surface, drawer_foreground)) { active_tab = 3 }
-				if (active_tab == 3) { call graphics::fill_rect(settings_window, 5, 35, 2, 5, graphics::COLOR_10) }
+			drawer_item_y = 34 - drawer_scroll
+			if (drawer_item_y >= 13 && drawer_item_y + 7 <= 4 + drawer_height) {
+				if (settings_flat_button_aligned(8, drawer_item_y, drawer_width - 12, 7, "Display", drawer_surface, drawer_foreground)) { active_tab = 3 }
+				if (active_tab == 3) { call graphics::fill_rect(settings_window, 5, drawer_item_y + 1, 2, 5, graphics::COLOR_10) }
 			}
-			if (drawer_height >= 46) {
-				if (settings_flat_button_aligned(8, 41, drawer_width - 12, 7, "System", drawer_surface, drawer_foreground)) { active_tab = 4 }
-				if (active_tab == 4) { call graphics::fill_rect(settings_window, 5, 42, 2, 5, graphics::COLOR_10) }
+			drawer_item_y = 41 - drawer_scroll
+			if (drawer_item_y >= 13 && drawer_item_y + 7 <= 4 + drawer_height) {
+				if (settings_flat_button_aligned(8, drawer_item_y, drawer_width - 12, 7, "System", drawer_surface, drawer_foreground)) { active_tab = 4 }
+				if (active_tab == 4) { call graphics::fill_rect(settings_window, 5, drawer_item_y + 1, 2, 5, graphics::COLOR_10) }
 			}
 		}
 		elseif (drawer_open && drawer_progress == 100 && drawer_width >= 76) {
-			if (drawer_height >= 22) {
+			if (drawer_height >= 18) {
 				if (settings_flat_button_aligned(8, 13, drawer_width - 12, 9, "Sound", drawer_surface, drawer_foreground)) { active_tab = 0 }
 				if (active_tab == 0) { call graphics::fill_rect(settings_window, 5, 14, 2, 7, graphics::COLOR_10) }
 			}
-			if (drawer_height >= 31) {
+			if (drawer_height >= 27) {
 				if (settings_flat_button_aligned(8, 22, drawer_width - 12, 9, "Personalization", drawer_surface, drawer_foreground)) { active_tab = 1 }
 				if (active_tab == 1) { call graphics::fill_rect(settings_window, 5, 23, 2, 7, graphics::COLOR_10) }
 			}
-			if (drawer_height >= 40) {
+			if (drawer_height >= 36) {
 				if (settings_flat_button_aligned(8, 31, drawer_width - 12, 9, "Appearance", drawer_surface, drawer_foreground)) { active_tab = 2 }
 				if (active_tab == 2) { call graphics::fill_rect(settings_window, 5, 32, 2, 7, graphics::COLOR_10) }
 			}
-			if (drawer_height >= 49) {
+			if (drawer_height >= 45) {
 				if (settings_flat_button_aligned(8, 40, drawer_width - 12, 9, "Icons and time", drawer_surface, drawer_foreground)) { active_tab = 3 }
 				if (active_tab == 3) { call graphics::fill_rect(settings_window, 5, 41, 2, 7, graphics::COLOR_10) }
 			}
-			if (drawer_height >= 58) {
+			if (drawer_height >= 54) {
 				if (settings_flat_button_aligned(8, 49, drawer_width - 12, 9, "System", drawer_surface, drawer_foreground)) { active_tab = 4 }
 				if (active_tab == 4) { call graphics::fill_rect(settings_window, 5, 50, 2, 7, graphics::COLOR_10) }
 			}

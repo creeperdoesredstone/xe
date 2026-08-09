@@ -138,7 +138,7 @@ class WindowManager:
 		self._drag: DragSession | None = None
 		self._maximized_drag: MaximizedDragCandidate | None = None
 		self._resize: ResizeSession | None = None
-		self._transition: WindowTransition | None = None
+		self._transitions: dict[int, WindowTransition] = {}
 		self._widget_capture: tuple | None = None
 		self._active_overlay: dict[int, Rect] = {}
 		self._pending_overlay: dict[int, Rect] = {}
@@ -172,8 +172,7 @@ class WindowManager:
 			self._maximized_drag = None
 		if self._resize and self._resize.handle == handle:
 			self._resize = None
-		if self._transition and self._transition.handle == handle:
-			self._transition = None
+		self._transitions.pop(handle, None)
 		if self._widget_capture and len(self._widget_capture) > 1:
 			if self._widget_capture[1] == handle:
 				self._widget_capture = None
@@ -207,7 +206,7 @@ class WindowManager:
 		if record.state != WindowState.NORMAL or (
 			(self._drag and self._drag.handle == handle)
 			or (self._resize and self._resize.handle == handle)
-			or (self._transition and self._transition.handle == handle)
+			or handle in self._transitions
 		):
 			return
 		width = max(self.theme.minimum_width, min(self.work_width, int(width)))
@@ -402,7 +401,7 @@ class WindowManager:
 		target_state: WindowState,
 		completion_event: int,
 	) -> None:
-		self._transition = WindowTransition(
+		self._transitions[record.handle] = WindowTransition(
 			record.handle,
 			record.bounds.copy(),
 			target.copy(),
@@ -425,8 +424,8 @@ class WindowManager:
 		return round(start + (target - start) * amount)
 
 	def _advance_transition(self, record: WindowRecord) -> int:
-		transition = self._transition
-		if not transition or transition.handle != record.handle:
+		transition = self._transitions.get(record.handle)
+		if not transition:
 			return EVENT_NONE
 		elapsed_ms = max(0.0, (self._clock() - transition.started_at) * 1000.0)
 		progress = min(1.0, elapsed_ms / max(1, transition.duration_ms))
@@ -447,7 +446,7 @@ class WindowManager:
 		record.state = transition.target_state
 		if transition.completion_event == EVENT_RESTORED:
 			record.restore_bounds = None
-		self._transition = None
+		self._transitions.pop(record.handle, None)
 		return transition.completion_event
 
 	def update(self, handle: int) -> int:
@@ -456,7 +455,7 @@ class WindowManager:
 			return EVENT_CLOSED
 		frame = self.input.frame()
 		event = self._advance_transition(record)
-		if event or (self._transition and self._transition.handle == handle):
+		if event or handle in self._transitions:
 			return event
 		if record.state == WindowState.MINIMIZED:
 			return event
@@ -556,7 +555,7 @@ class WindowManager:
 		return event
 
 	def is_transitioning(self, handle: int) -> bool:
-		return bool(self._transition and self._transition.handle == handle)
+		return handle in self._transitions
 
 	def _blend_transition(self, transition: WindowTransition) -> None:
 		record = self._record(transition.handle)
@@ -608,8 +607,8 @@ class WindowManager:
 
 	def finish_draw(self, handle: int) -> None:
 		"""Blend the live transition frame after the app has rendered its content."""
-		transition = self._transition
-		if transition and transition.handle == handle:
+		transition = self._transitions.get(handle)
+		if transition:
 			self._blend_transition(transition)
 		# Immediate-mode controls normally release capture while they are drawn.
 		# A modal can disappear between press and release, though, leaving its
@@ -800,8 +799,9 @@ class WindowManager:
 		record = self._record(handle)
 		if not record:
 			return False
-		if self._transition and self._transition.handle == handle:
-			return self._transition.target_state == WindowState.MAXIMIZED
+		transition = self._transitions.get(handle)
+		if transition:
+			return transition.target_state == WindowState.MAXIMIZED
 		return record.state == WindowState.MAXIMIZED
 
 	def button(

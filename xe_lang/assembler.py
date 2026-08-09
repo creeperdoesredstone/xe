@@ -231,10 +231,10 @@ def assemble(fn: str, ftxt: str, *, emit_file: bool = True) -> Result:
 
 			labels[label] = address
 
-			if label.startswith("SECTION_TEXT"):
+			if label.startswith("SECTION_TEXT_"):
 				section = "text"
 
-			elif label.startswith("SECTION_DATA"):
+			elif label.startswith("SECTION_DATA_"):
 				section = "data"
 
 			token_index += 1

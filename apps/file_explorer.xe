@@ -1,5 +1,11 @@
 # Xenon File Explorer: a filesystem atom with orbiting files and folders.
 
+# App metadata and default geometry.
+const APP_TITLE = "Xenon File Explorer"
+const APP_DEFAULT_WIDTH = 300
+const APP_DEFAULT_HEIGHT = 220
+
+# Model and state.
 var explorer_window: graphics::Window
 var current_path: string
 var status_text: string
@@ -121,6 +127,8 @@ var viewer_scroll: int
 var viewer_layout_width: int
 var viewer_layout_font: int
 var viewer_layout_lines: int
+var viewer_seek_index: int
+var viewer_seek_line: int
 var viewer_file: os::File
 var key: int
 var atom_center_x: int
@@ -160,6 +168,7 @@ var orbit_stream_result: int
 var orbit_native_drawn: bool
 var slot_animation_active: bool
 
+# Paint and replaceable asset hooks.
 # Placeholder visual tokens. Future asset work only needs to replace the five
 # draw_placeholder_* procedures below; filesystem and interaction code stays
 # unchanged.
@@ -603,6 +612,7 @@ proc cancel_rename() {
 	call explorer_set(status_text, "Rename cancelled")
 }
 
+# Input and interaction.
 proc handle_rename_key(value: int) {
 	var control_down: bool
 	control_down = (graphics::modifiers() & graphics::MOD_CTRL) != 0
@@ -681,6 +691,7 @@ fn explorer_modal_open() bool {
 	return context_open || rename_open || delete_confirm || viewer_open || transition_progress > 0
 }
 
+# Layout helpers.
 fn explorer_char_advance(value: char, font_size: int) int {
 	var advance: int
 	advance = graphics::char_advance(value, font_size)
@@ -1550,6 +1561,8 @@ proc open_file_viewer(index: int) {
 	call os::close(path)
 	viewer_scroll = 0
 	viewer_layout_width = -1
+	viewer_seek_index = 0
+	viewer_seek_line = 0
 	viewer_open = true
 	context_open = false
 	call explorer_set(status_text, "Viewing file")
@@ -1946,6 +1959,7 @@ proc draw_breadcrumbs(x: int, y: int, area_width: int) {
 	var pointer_y: int
 	var drop_color: int
 	var dragging_path: bool
+	var remaining_width: int
 	segment = ""
 	cursor_x = x
 	pointer_x = graphics::pointer_x(explorer_window)
@@ -1986,6 +2000,8 @@ proc draw_breadcrumbs(x: int, y: int, area_width: int) {
 					start += 1
 				}
 				segment_width = explorer_text_width_clipped(segment, xestring::strlen(segment), graphics::FONT_NORMAL) + 8
+				remaining_width = x + area_width - cursor_x
+				if (segment_width > remaining_width) { segment_width = remaining_width }
 				if (dragging_path) {
 					drop_color = visual_surface
 					if (index < path_length && pointer_x >= cursor_x && pointer_x < cursor_x + segment_width && pointer_y >= y && pointer_y < y + 9) {
@@ -2124,6 +2140,73 @@ fn viewer_line_count(content_width: int, font_size: int) int {
 	return lines
 }
 
+proc viewer_seek_to_line(target_line: int, content_width: int, font_size: int) {
+	var index: int
+	var line: int
+	var column: int
+	var code: int
+	var finish: int
+	var word_width: int
+	var advance: int
+	if (target_line < 0) { target_line = 0 }
+	if (content_width < 1) { content_width = 1 }
+	if (target_line < viewer_seek_line) {
+		viewer_seek_index = 0
+		viewer_seek_line = 0
+	}
+	index = viewer_seek_index
+	line = viewer_seek_line
+	column = 0
+	while (index < xestring::strlen(viewer_content) && line < target_line) {
+		code = (int)(viewer_content[index])
+		if (code == 10) {
+			line += 1
+			column = 0
+			index += 1
+		}
+		elseif (code == 13) { index += 1 }
+		elseif (code == 9 || code == 32) {
+			if (code == 9) { advance = viewer_tab_advance(column, font_size) }
+			else { advance = graphics::char_advance(' ', font_size) }
+			column += advance
+			index += 1
+		}
+		else {
+			finish = viewer_word_end(index)
+			word_width = viewer_word_width(index, finish, font_size)
+			if (word_width > content_width) {
+				if (column > 0) {
+					line += 1
+					column = 0
+				}
+				while (index < finish && line < target_line) {
+					advance = graphics::char_advance(viewer_content[index], font_size)
+					if (column > 0 && column + advance > content_width) {
+						line += 1
+						column = 0
+					}
+					if (line < target_line) {
+						column += advance
+						index += 1
+					}
+				}
+			}
+			else {
+				if (column > 0 && column + word_width > content_width) {
+					line += 1
+					column = 0
+				}
+				if (line < target_line) {
+					column += word_width
+					index = finish
+				}
+			}
+		}
+	}
+	viewer_seek_index = index
+	viewer_seek_line = line
+}
+
 proc draw_viewer_content(x: int, y: int, content_width: int, content_height: int, font_size: int) {
 	var index: int
 	var column: int
@@ -2148,9 +2231,10 @@ proc draw_viewer_content(x: int, y: int, content_width: int, content_height: int
 		}
 		return
 	}
-	index = 0
+	call viewer_seek_to_line(viewer_scroll, content_width, font_size)
+	index = viewer_seek_index
 	column = 0
-	line = 0
+	line = viewer_seek_line
 	while (index < xestring::strlen(viewer_content) && line < viewer_scroll + maximum_lines) {
 		code = (int)(viewer_content[index])
 		if (code == 10) {
@@ -2223,28 +2307,41 @@ proc draw_file_viewer() {
 	panel_y = 4
 	panel_width = width - 8
 	panel_height = height - 8
-	if (panel_width < 40) { panel_width = 40 }
-	if (panel_height < 34) { panel_height = 34 }
+	if (panel_width < 8) { panel_x = 0; panel_width = width }
+	if (panel_height < 12) { panel_y = 0; panel_height = height }
+	if (panel_width < 1) { panel_width = 1 }
+	if (panel_height < 1) { panel_height = 1 }
 	call graphics::fill_rect(explorer_window, panel_x, panel_y, panel_width, panel_height, visual_surface)
 	call graphics::draw_rect(explorer_window, panel_x, panel_y, panel_width, panel_height, visual_accent)
-	call draw_explorer_text_clipped(panel_x + 4, panel_y + 2, viewer_name, (panel_width - 108) / 4, visual_highlight)
-	if (graphics::button_flat(explorer_window, panel_x + panel_width - 36, panel_y + 1, 34, 8, "Close", visual_surface)) {
+	if (panel_width >= 48) {
+		call draw_explorer_text_clipped(panel_x + 4, panel_y + 2, viewer_name, (panel_width - 44) / 4, visual_highlight)
+	}
+	if (panel_width >= 40 && graphics::button_flat(explorer_window, panel_x + panel_width - 36, panel_y + 1, 34, 8, "Close", visual_surface)) {
+		viewer_open = false
+		return
+	}
+	elseif (panel_width >= 10 && panel_width < 40 && graphics::button_flat(explorer_window, panel_x + panel_width - 9, panel_y + 1, 7, 8, "X", visual_surface)) {
 		viewer_open = false
 		return
 	}
 	body_height = panel_height - 15
 	content_width = panel_width - 8
+	if (body_height < 1) { body_height = 1 }
+	if (content_width < 1) { content_width = 1 }
 	font_size = viewer_font_size(content_width, body_height)
 	maximum_lines = body_height / viewer_row_height(font_size)
+	if (maximum_lines < 1) { maximum_lines = 1 }
 	if (viewer_layout_width != content_width || viewer_layout_font != font_size) {
 		viewer_layout_width = content_width
 		viewer_layout_font = font_size
 		viewer_layout_lines = viewer_line_count(content_width, font_size)
+		viewer_seek_index = 0
+		viewer_seek_line = 0
 	}
 	maximum_scroll = viewer_layout_lines - maximum_lines
 	if (maximum_scroll < 0) { maximum_scroll = 0 }
 	if (viewer_scroll > maximum_scroll) { viewer_scroll = maximum_scroll }
-	if (panel_width >= 108) {
+	if (panel_width >= 108 && panel_height >= 12) {
 		if (graphics::button_flat(explorer_window, panel_x + panel_width - 100, panel_y + 1, 26, 8, "Up", visual_surface) && viewer_scroll > 0) {
 			viewer_scroll -= 1
 		}
@@ -2810,8 +2907,8 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	if (base_center_radius > 20) { base_center_radius = 20 }
 	center_radius = base_center_radius * render_scale / 100
 	if (!nucleus_highlight_ready || !rotating) {
-		nucleus_highlight_x = viewport_center_x - center_radius / 2
-		nucleus_highlight_y = viewport_center_y - center_radius / 2
+		nucleus_highlight_x = center_x - center_radius / 2
+		nucleus_highlight_y = center_y - center_radius / 2
 		nucleus_highlight_ready = true
 	}
 	visual_fade = scene_visibility
@@ -3272,6 +3369,8 @@ viewer_scroll = 0
 viewer_layout_width = -1
 viewer_layout_font = graphics::FONT_NORMAL
 viewer_layout_lines = 1
+viewer_seek_index = 0
+viewer_seek_line = 0
 call refresh_explorer_style()
 call reset_energy_shells()
 shell_button_hovered = false
@@ -3297,11 +3396,12 @@ shell_add_follows_rotation = false
 deletion_ghost_count = 0
 deletion_ghost_duration = 180
 
+# Application driver.
 explorer_window.x = 66
 explorer_window.y = 44
-explorer_window.width = 300
-explorer_window.height = 220
-explorer_window.title = "Xenon File Explorer"
+explorer_window.width = APP_DEFAULT_WIDTH
+explorer_window.height = APP_DEFAULT_HEIGHT
+explorer_window.title = APP_TITLE
 explorer_window.ui_scale = 1
 explorer_window.state = graphics::WINDOW_NORMAL
 previous_ticks = os::ticks()

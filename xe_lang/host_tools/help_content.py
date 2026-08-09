@@ -153,8 +153,9 @@ call os::close("notes.txt")
 
 The desktop IDE can expose the computer clipboard through
 `os::clipboard_read()` and `os::clipboard_write(text)`. Its visible System
-clipboard toggle is the permission boundary: disabled reads are empty and writes
-return `false`. Scratch export reports these host-only calls as unsupported.
+clipboard toggle on the Code toolbar is the permission boundary and is off by
+default: disabled reads are empty and writes return `false`. Scratch export reports
+these host-only calls as unsupported.
 
 Use the documented constants and check errors returned by file operations. A virtual
 path must never be treated as permission to modify the host workspace.
@@ -239,7 +240,8 @@ onion skinning or playback. Milliseconds and FPS are synchronized per frame.
 
 PNG and JPEG import as one frame. GIF imports its frames when the local Qt image
 plugin supports it. PNG and sprite-sheet export are always checked before writing;
-GIF uses the installed image codec. `.xip` preserves editable layers and frames;
+GIF export requires Pillow and fails without a partial file if it is unavailable.
+`.xip` preserves editable layers and frames;
 `.ximg` applies the deterministic 16-colour Scratch/XVM palette and reports any
 format or memory-limit error before replacing an existing destination.
 `.sprite3` flattens each visible frame into a Scratch costume and adds deterministic
@@ -248,6 +250,17 @@ them with small live timing variations.
 
 Use the Scratch preview to check the 480×360 target and the indexed preview to catch
 palette/transparency loss before export.
+
+For Xe, export XIMG into the private virtual drive, load it with
+`graphics::load_image("SystemAssets/MyApp/image.ximg")`, and draw it with
+`graphics::draw_image(target, image, x, y, frame, scale)`. Use
+`image_frame_duration` with `os::ticks()` instead of assuming a fixed frame rate.
+A `480×360` image drawn at `(0, 0)` into `graphics::Screen` is a frameless desktop;
+a small transparent XIMG drawn at `os::icon_size + 1` is a preference-scaled icon.
+
+The repository guide `docs/IMAGE_STUDIO.md` covers project limits, compression,
+asset declarations, complete Xe animation code, desktop and icon recipes, Scratch
+sprite import, and the exact Xe-to-SB3 compatibility gate.
 """,
 		("image", "animation", "layer", "frame", "fps", "xip", "ximg", "gif", "sprite3"),
 	),

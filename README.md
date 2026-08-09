@@ -23,8 +23,14 @@ produces a deterministic `.sprite3`, while XIMG remains the compact format Xe
 programs can load. Help contains searchable Xe/XAssembly basics, app and
 workbench guidance, and a link to the official language reference. The bundled
 legacy profile currently blocks exact export of current Xe builds because its
-65,536-address memory and syscall set do not yet match the 200,000-address XVM
-contract; the converter reports those blockers instead of degrading the program.
+65,536-address memory and syscall set do not yet match the banked 2,000,000-address
+XVM contract; the converter reports those blockers instead of degrading the program.
+
+See [docs/IMAGE_STUDIO.md](docs/IMAGE_STUDIO.md) for the complete image and
+animation workflow: editable XIP projects, XIMG use from Xe, wallpapers and Screen
+targets, icons, elapsed-time playback, compression, `.sprite3`, and Xe-to-SB3 asset
+limits. A copy-paste virtual-IDE example is available at
+[examples/small_draggable_window.xe](examples/small_draggable_window.xe).
 
 Included graphical applications:
 
@@ -71,15 +77,19 @@ the repository or current working directory. Deletes are moved to the drive's hi
 recovery trash instead of being permanently removed.
 The host IDE also persists applied OS preferences in XenonOS's private application
 data, so Settings remains staged while Apply becomes the durable commit point.
-Its visible System clipboard toggle is enabled by default for this host build;
-editor-like apps retain their private in-app clipboard when that bridge is disabled
-or unavailable.
+Its visible **System clipboard** toggle is disabled by default. Enabling it is an
+explicit host-only choice; editor-like apps retain their private in-app clipboard
+while the bridge is disabled or unavailable.
 
 For example: `python ide.py apps/xenon_terminal.xe --run`.
 
-The XVM defaults to the 200,000-address ceiling chosen for the eventual vanilla
-Scratch implementation. Compiled Xe embeds its static-word count so the heap starts
-after globals instead of overlapping them.
+The XVM defaults to 2,000,000 logical 32-bit data registers: a 1,000,000-word
+working set followed by a 1,000,000-word standby tier. The logical space is split
+into ten 200,000-word banks so the future Scratch port can use one list item per
+register without exceeding Scratch's per-list ceiling. See
+[docs/VM_MEMORY.md](docs/VM_MEMORY.md) for the exact mapping and reserve policy.
+Compiled Xe embeds its static-word count so the heap starts after globals instead
+of overlapping them.
 Runtime-created service strings are garbage-collected conservatively, while blocks
 obtained through `os::malloc` retain explicit ownership. Both primary text renderers
 load width-prefixed 3x5/5x7 JSON glyphs and advance proportionally. Before integrating
@@ -103,3 +113,10 @@ their visible arrow controls. `graphics::scroll_delta()` exposes the same signed
 frame-stable logical wheel steps to Xe applications.
 
 Run the integrated regression suite with `python -W error -m pytest -q`.
+
+App identity, default geometry, generated outputs, and portable asset namespaces are
+declared once in `apps/manifest.json`. See `apps/README.md` for the standalone app
+boundaries and `apps/assets/README.md` for XIP/XIMG/XMusic/Scratch animation extension
+points. Run `python tools/build_apps.py` to rebuild every declared `.xas` and `.xbn`,
+or `python tools/build_apps.py --check` to detect missing or stale artifacts without
+writing.

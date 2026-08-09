@@ -1,6 +1,12 @@
 # Scientific expression evaluator for the Xenon IDE.
 # Edit `expression` and `degrees_mode` at the bottom of this file.
 
+# App metadata and default geometry.
+const APP_TITLE = "Calculator"
+const APP_DEFAULT_WIDTH = 240
+const APP_DEFAULT_HEIGHT = 190
+
+# Model and state.
 var calculator_window: graphics::Window
 var calculator_clipboard: string
 var calculator_selected_all: bool
@@ -567,6 +573,7 @@ proc print_calculator_result(value: float) {
 	out << '\n'
 }
 
+# Layout helpers.
 proc draw_calculator_status(x: int, y: int, text: string, result: float, error_code: int, error_position: int, dirty: bool) {
 	if (xestring::strlen(text) > 0) {
 		if (error_code != 0) {
@@ -597,6 +604,7 @@ proc set_calculator_text(target: string, source: string) {
 	call xestring::append(target, source)
 }
 
+# Input and interaction.
 fn calculator_editor_key_supported(key: int) bool {
 	if (key >= 48 && key <= 57) { return true }
 	if (key == 32 || key == 37 || key == 40 || key == 41 || key == 42 || key == 43 || key == 44 || key == 45 || key == 46 || key == 47 || key == 94) { return true }
@@ -839,6 +847,7 @@ proc handle_calculator_control_shortcut(key: int) {
 	}
 }
 
+# Paint and replaceable asset hooks.
 proc draw_expression_editor(x: int, y: int, width: int, text: string, error_code: int, error_position: int) {
 	var length: int
 	var start: int
@@ -1090,6 +1099,12 @@ proc draw_programmer_number(x: int, y: int, value: int, base: int) {
 	var digit: int
 	var draw_x: int
 	var started: bool
+	if (value == -2147483647 - 1) {
+		if (base == 10) { call graphics::draw_int(calculator_window, x, y, value, graphics::WHITE) }
+		elseif (base == 16) { call graphics::draw_text(calculator_window, x, y, "-0x80000000", graphics::WHITE) }
+		else { call graphics::draw_text(calculator_window, x, y, "-0b10000000000000000000000000000000", graphics::WHITE) }
+		return
+	}
 	if (value < 0) {
 		call graphics::draw_char(calculator_window, x, y, '-', graphics::COLOR_14)
 		x += 6
@@ -1116,7 +1131,7 @@ proc draw_programmer_number(x: int, y: int, value: int, base: int) {
 	else {
 		call graphics::draw_text(calculator_window, x, y, "0b", graphics::COLOR_8)
 		draw_x = x + 12
-		divisor = 32768
+		divisor = 1073741824
 		started = false
 		while (divisor > 0) {
 			digit = (value / divisor) % 2
@@ -1135,6 +1150,11 @@ fn programmer_number_width(value: int, base: int) int {
 	var divisor: int
 	var started: bool
 	var width: int
+	if (value == -2147483647 - 1) {
+		if (base == 10) { return 66 }
+		if (base == 16) { return 66 }
+		return 210
+	}
 	width = 0
 	if (value < 0) {
 		width = 6
@@ -1150,7 +1170,7 @@ fn programmer_number_width(value: int, base: int) int {
 	}
 	width += 12
 	if (base == 16) { divisor = 268435456 }
-	else { divisor = 32768 }
+	else { divisor = 1073741824 }
 	digits = 0
 	started = false
 	while (divisor > 0) {
@@ -1214,6 +1234,8 @@ proc draw_graph_view(x: int, width: int, function_id: int*) {
 	var current_y: int
 	var angle: float
 	var value: float
+	var clipped: bool
+	var previous_clipped: bool
 	if (graphics::button(calculator_window, x, 42, 42, 9, "sin")) { *function_id = 0 }
 	if (graphics::button(calculator_window, x + 45, 42, 42, 9, "cos")) { *function_id = 1 }
 	if (graphics::button(calculator_window, x + 90, 42, 42, 9, "tan")) { *function_id = 2 }
@@ -1222,20 +1244,23 @@ proc draw_graph_view(x: int, width: int, function_id: int*) {
 	call graphics::draw_line(calculator_window, x + 2, 97, x + width - 3, 97, graphics::COLOR_8)
 	point = 0
 	previous_y = 97
+	previous_clipped = false
 	while (point < width - 5) {
 		angle = (float)point * 360.0 / (float)(width - 5)
 		if (*function_id == 0) { value = math::sin(angle) }
 		elseif (*function_id == 1) { value = math::cos(angle) }
-		else {
+		clipped = false
+		if (*function_id == 2) {
 			value = math::tan(angle)
-			if (value > 1.0) { value = 1.0 }
-			if (value < -1.0) { value = -1.0 }
+			if (value > 1.0) { value = 1.0; clipped = true }
+			if (value < -1.0) { value = -1.0; clipped = true }
 		}
 		current_y = 97 - (int)(value * 36.0)
-		if (point > 0) {
+		if (point > 0 && !clipped && !previous_clipped) {
 			call graphics::draw_line(calculator_window, x + point + 1, previous_y, x + point + 2, current_y, graphics::COLOR_11)
 		}
 		previous_y = current_y
+		previous_clipped = clipped
 		point += 1
 	}
 }
@@ -1249,6 +1274,8 @@ proc draw_compact_graph_view(x: int, y: int, width: int, height: int, function_i
 	var current_y: int
 	var angle: float
 	var value: float
+	var clipped: bool
+	var previous_clipped: bool
 	selector_width = (width - 4) / 3
 	if (graphics::button_flat(calculator_window, x, y, selector_width, 5, "sin", graphics::COLOR_8)) { *function_id = 0 }
 	if (graphics::button_flat(calculator_window, x + selector_width + 2, y, selector_width, 5, "cos", graphics::COLOR_8)) { *function_id = 1 }
@@ -1259,20 +1286,23 @@ proc draw_compact_graph_view(x: int, y: int, width: int, height: int, function_i
 		call graphics::fill_rect(calculator_window, x, graph_y, width, graph_height, graphics::COLOR_1)
 		point = 0
 		previous_y = graph_y + graph_height / 2
+		previous_clipped = false
 		while (point < width - 3) {
 			angle = (float)point * 360.0 / (float)(width - 3)
 			if (*function_id == 0) { value = math::sin(angle) }
 			elseif (*function_id == 1) { value = math::cos(angle) }
-			else {
+			clipped = false
+			if (*function_id == 2) {
 				value = math::tan(angle)
-				if (value > 1.0) { value = 1.0 }
-				if (value < -1.0) { value = -1.0 }
+				if (value > 1.0) { value = 1.0; clipped = true }
+				if (value < -1.0) { value = -1.0; clipped = true }
 			}
 			current_y = graph_y + graph_height / 2 - (int)(value * (float)(graph_height - 2) / 2.0)
-			if (point > 0) {
+			if (point > 0 && !clipped && !previous_clipped) {
 				call graphics::draw_line(calculator_window, x + point, previous_y, x + point + 1, current_y, graphics::COLOR_11)
 			}
 			previous_y = current_y
+			previous_clipped = clipped
 			point += 1
 		}
 	}
@@ -1966,16 +1996,16 @@ proc draw_history_view(x: int, width: int) {
 		call graphics::draw_text(calculator_window, x + 5, 64, "No calculations yet", graphics::COLOR_7)
 	}
 	if (history_count >= 1) {
-		call graphics::draw_float(calculator_window, x + 5, 64, history_1, graphics::WHITE)
+		call draw_compact_currency_number(x + 5, 64, width - 10, history_1, graphics::WHITE)
 	}
 	if (history_count >= 2) {
-		call graphics::draw_float(calculator_window, x + 5, 76, history_2, graphics::COLOR_7)
+		call draw_compact_currency_number(x + 5, 76, width - 10, history_2, graphics::COLOR_7)
 	}
 	if (history_count >= 3) {
-		call graphics::draw_float(calculator_window, x + 5, 88, history_3, graphics::COLOR_7)
+		call draw_compact_currency_number(x + 5, 88, width - 10, history_3, graphics::COLOR_7)
 	}
 	if (history_count >= 4) {
-		call graphics::draw_float(calculator_window, x + 5, 100, history_4, graphics::COLOR_7)
+		call draw_compact_currency_number(x + 5, 100, width - 10, history_4, graphics::COLOR_7)
 	}
 }
 
@@ -2012,6 +2042,7 @@ proc draw_mode_switch(x: int, width: int, height: int, mode: int*, menu_open: bo
 	var mode_label: string
 	var arrow_direction: int
 	var mode_foreground: int
+	if (width < 1 || height < 1) { return }
 	if (*menu_open && *progress < 100) {
 		*progress += calculator_animation_step
 		if (*progress > 100) { *progress = 100 }
@@ -2191,9 +2222,9 @@ if (xestring::strlen(expression) > 0) {
 if (graphical_mode) {
 	calculator_window.x = 112
 	calculator_window.y = 58
-	calculator_window.width = 240
-	calculator_window.height = 190
-	calculator_window.title = "Calculator"
+	calculator_window.width = APP_DEFAULT_WIDTH
+	calculator_window.height = APP_DEFAULT_HEIGHT
+	calculator_window.title = APP_TITLE
 	calculator_window.ui_scale = 1
 	calculator_window.state = graphics::WINDOW_NORMAL
 	previous_ticks = os::ticks()
@@ -2234,14 +2265,17 @@ if (graphical_mode) {
 					shift_mode = false
 				}
 				else {
-					call append_editor_key(expression, key)
-					error_code = 0
-					dirty = true
+					if (calculator_editor_key_supported(key)) {
+						call append_editor_key(expression, key)
+						error_code = 0
+						dirty = true
+					}
 				}
 				key = graphics::read_key()
 			}
 
 			panel_width = content_width - 8
+			if (panel_width < 1) { panel_width = 1 }
 			if (panel_width > 360) { panel_width = 360 }
 			panel_x = (content_width - panel_width) / 2
 			display_height = 34

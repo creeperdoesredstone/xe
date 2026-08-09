@@ -1,0 +1,17 @@
+var win: graphics::Window
+
+win.x = 40
+win.y = 32
+win.width = 160
+win.height = 100
+win.title = "Small Window"
+win.ui_scale = 1
+win.state = graphics::WINDOW_NORMAL
+
+while (win.state != graphics::WINDOW_CLOSED) {
+	call graphics::begin_draw(win)
+	call graphics::clear(win, graphics::BLACK)
+	call graphics::draw_text(win, 16, 20, "Drag the title bar", graphics::WHITE)
+	call graphics::fill_rect(win, 16, 38, 80, 14, graphics::COLOR_5)
+	call graphics::update(win)
+}

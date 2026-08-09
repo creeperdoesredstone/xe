@@ -1,0 +1,378 @@
+# Native Scratch reference port of the Xenon File Explorer atom view.
+# This project intentionally does not claim to execute apps/file_explorer.xe.
+
+stage {
+  var currentFolder = 0
+  var currentPath = "/"
+  var selectedID = 0
+  var selectedName = "None"
+  var selectedType = ""
+  var lastClickedID = 0
+  var lastClickTime = -10
+  var nextID = 8
+  var statusText = "Double-click a folder to open it"
+
+  var MEM_BANK_SIZE = 200000
+  var MEM_LOGICAL_LIMIT = 2000000
+  var MEM_WORKING_BANKS = 5
+  var MEM_RESERVE_BANKS = 5
+  var MEM_STANDBY_ACTIVE = 0
+  var MEM_NEXT_ADDRESS = 4
+  var memAddress = 0
+  var memBank = 0
+  var memSlot = 0
+  var memValid = 0
+  var memResult = 0
+  var memValue = 0
+
+  list VFS_IDS = [1, 2, 3, 4, 5, 6, 7]
+  list VFS_NAMES = ["Documents", "Pictures", "notes.xe", "readme.txt", "demo.xe", "guide.txt", "icon.ximg"]
+  list VFS_TYPES = ["folder", "folder", "file", "file", "file", "file", "file"]
+  list VFS_PARENTS = [0, 0, 0, 0, 1, 1, 2]
+  list VFS_PATHS = ["/Documents/", "/Pictures/", "/notes.xe", "/readme.txt", "/Documents/demo.xe", "/Documents/guide.txt", "/Pictures/icon.ximg"]
+
+  # One logical 32-bit word maps to exactly one Scratch list item. Banks 0-4
+  # form the 1M working tier and banks 5-9 form the 1M standby tier.
+  list MEM_DATA_0 = []
+  list MEM_DATA_1 = []
+  list MEM_DATA_2 = []
+  list MEM_DATA_3 = []
+  list MEM_DATA_4 = []
+  list MEM_DATA_5 = []
+  list MEM_DATA_6 = []
+  list MEM_DATA_7 = []
+  list MEM_DATA_8 = []
+  list MEM_DATA_9 = []
+
+  broadcast refreshItems = "refresh items"
+  broadcast refreshRequest = "refresh request"
+  broadcast destroyItems = "destroy items"
+
+  costume "Xenon desktop" 480x360 center 240,180 {
+    rect 0,0 480,360 fill="#020817"
+  }
+
+  proc memoryMap(address:num) as "memory map %n" warp:
+    memAddress = floor(address)
+    memValid = 0
+    memBank = 0
+    memSlot = 0
+    if memAddress >= 0 and memAddress < MEM_LOGICAL_LIMIT:
+      memBank = floor(memAddress / MEM_BANK_SIZE)
+      memSlot = (memAddress % MEM_BANK_SIZE) + 1
+      memValid = 1
+
+  proc memoryRead(address:num) as "memory read %n" warp:
+    call memoryMap(address)
+    memResult = 0
+    if memValid == 1:
+      if memBank == 0:
+        memResult = MEM_DATA_0.item(memSlot)
+      if memBank == 1:
+        memResult = MEM_DATA_1.item(memSlot)
+      if memBank == 2:
+        memResult = MEM_DATA_2.item(memSlot)
+      if memBank == 3:
+        memResult = MEM_DATA_3.item(memSlot)
+      if memBank == 4:
+        memResult = MEM_DATA_4.item(memSlot)
+      if memBank == 5:
+        memResult = MEM_DATA_5.item(memSlot)
+      if memBank == 6:
+        memResult = MEM_DATA_6.item(memSlot)
+      if memBank == 7:
+        memResult = MEM_DATA_7.item(memSlot)
+      if memBank == 8:
+        memResult = MEM_DATA_8.item(memSlot)
+      if memBank == 9:
+        memResult = MEM_DATA_9.item(memSlot)
+
+  proc memoryWrite(address:num, value:num) as "memory write %n %n" warp:
+    call memoryMap(address)
+    if memValid == 1:
+      memValue = floor(value) % 4294967296
+      if memValue < 0:
+        memValue += 4294967296
+      if memBank >= MEM_WORKING_BANKS:
+        MEM_STANDBY_ACTIVE = 1
+      if memBank == 0:
+        MEM_DATA_0.replace memSlot memValue
+      if memBank == 1:
+        MEM_DATA_1.replace memSlot memValue
+      if memBank == 2:
+        MEM_DATA_2.replace memSlot memValue
+      if memBank == 3:
+        MEM_DATA_3.replace memSlot memValue
+      if memBank == 4:
+        MEM_DATA_4.replace memSlot memValue
+      if memBank == 5:
+        MEM_DATA_5.replace memSlot memValue
+      if memBank == 6:
+        MEM_DATA_6.replace memSlot memValue
+      if memBank == 7:
+        MEM_DATA_7.replace memSlot memValue
+      if memBank == 8:
+        MEM_DATA_8.replace memSlot memValue
+      if memBank == 9:
+        MEM_DATA_9.replace memSlot memValue
+
+  proc memoryAllocate(words:num) as "memory allocate %n" warp:
+    memResult = 0
+    if words > 0 and words == floor(words) and MEM_NEXT_ADDRESS + words <= MEM_LOGICAL_LIMIT:
+      memResult = MEM_NEXT_ADDRESS
+      MEM_NEXT_ADDRESS += words
+      if MEM_NEXT_ADDRESS > MEM_BANK_SIZE * MEM_WORKING_BANKS:
+        MEM_STANDBY_ACTIVE = 1
+
+  @greenflag:
+    currentFolder = 0
+    currentPath = "/"
+    selectedID = 0
+    selectedName = "None"
+    selectedType = ""
+    lastClickedID = 0
+    lastClickTime = -10
+    statusText = "Double-click a folder to open it"
+    MEM_STANDBY_ACTIVE = 0
+    MEM_NEXT_ADDRESS = 4
+    call memoryWrite(0, 148093)
+    call memoryWrite(1, VFS_IDS.length())
+    call memoryWrite(2, MEM_BANK_SIZE)
+    call memoryWrite(3, MEM_LOGICAL_LIMIT)
+}
+
+sprite "Window" {
+  state x=0 y=0 direction=90 size=100 visible=true layer=1
+  rotationStyle "don't rotate"
+  costume "Window" 460x340 center 230,170 {
+    rect 1,1 458,338 fill="#020817" stroke="#b04af3" width=3
+    rect 1,1 458,38 fill="#a94eed"
+    text 15,28 "Xenon File Explorer" size=25 fill="#ffffff"
+    text 405,27 "□ ×" size=23 fill="#2a0b61"
+    rect 12,50 436,38 fill="#10234c" stroke="#274477" width=1
+    text 22,75 "Atom view · double-click folders · hover for names" size=14 fill="#c8d8ff"
+    ellipse 230,205 rx=133 ry=79 fill="none" stroke="#274477" width=2 opacity=0.8
+    ellipse 230,205 rx=92 ry=55 fill="none" stroke="#2dd4bf" width=2 opacity=0.6
+    text 18,326 "Project-local VFS · vanilla Scratch reference port" size=12 fill="#6f83ad"
+  }
+  @greenflag:
+    looks.show
+}
+
+sprite "Nucleus" {
+  state x=0 y=-25 direction=90 size=100 visible=true layer=3
+  rotationStyle "don't rotate"
+  costume "Current folder" 76x76 center 38,38 {
+    circle 38,38 r=34 fill="#29436f" stroke="#eff6ff" width=2
+    circle 38,38 r=29 fill="#29436f" stroke="#2dd4bf" width=3
+    path "M 21 31 L 32 31 L 37 26 L 55 26 L 58 51 L 19 51 Z" fill="#b8fff4" stroke="#082f49" width=2
+  }
+  @greenflag:
+    looks.show
+  @event.clicked:
+    looks.say join("Current folder: ", currentPath) 1.2
+}
+
+sprite "Item" {
+  var isClone = 0
+  var row = 1
+  var visibleCount = 0
+  var slot = 0
+  var nodeID = 0
+  var nodeName = ""
+  var nodeType = ""
+  var nodePath = ""
+  var nodeSlot = 0
+  var nodeCount = 1
+  var orbitAngle = 0
+  var orbitSpeed = 0.7
+  state x=0 y=0 direction=90 size=100 visible=false layer=2
+  rotationStyle "don't rotate"
+  costume "File" 34x40 center 17,20 {
+    path "M 6 3 L 22 3 L 29 10 L 29 36 L 6 36 Z" fill="#dbeafe" stroke="#10234c" width=2
+    path "M 22 3 L 22 10 L 29 10" fill="#93c5fd" stroke="#10234c" width=2
+    line 10,18 25,18 stroke="#3b82f6" width=2
+    line 10,24 25,24 stroke="#3b82f6" width=2
+  }
+  costume "Folder" 40x34 center 20,17 {
+    path "M 3 9 L 15 9 L 19 4 L 36 4 L 37 29 L 3 29 Z" fill="#5eead4" stroke="#10234c" width=2
+    path "M 3 11 L 37 11 L 34 31 L 5 31 Z" fill="#2dd4bf" stroke="#10234c" width=2
+  }
+
+  @greenflag:
+    isClone = 0
+    looks.hide
+
+  @event.received destroyItems:
+    if isClone == 1:
+      control.deleteclone
+
+  @event.received refreshItems:
+    if isClone == 0:
+      visibleCount = 0
+      row = 1
+      repeat VFS_IDS.length():
+        if VFS_PARENTS.item(row) == currentFolder:
+          visibleCount += 1
+        row += 1
+      row = 1
+      slot = 0
+      repeat VFS_IDS.length():
+        if VFS_PARENTS.item(row) == currentFolder:
+          slot += 1
+          nodeID = VFS_IDS.item(row)
+          nodeName = VFS_NAMES.item(row)
+          nodeType = VFS_TYPES.item(row)
+          nodePath = VFS_PATHS.item(row)
+          nodeSlot = slot
+          nodeCount = visibleCount
+          control.createclone "_myself_"
+        row += 1
+
+  @control.clone:
+    isClone = 1
+    orbitAngle = ((nodeSlot - 1) * 360) / nodeCount
+    if nodeType == "folder":
+      looks.costume "Folder"
+    else:
+      looks.costume "File"
+    looks.show
+    forever:
+      if sensing.touching("_mouse_"):
+        orbitSpeed = 0.12
+      else:
+        orbitSpeed = 0.7
+      orbitAngle += orbitSpeed
+      motion.goto cos(orbitAngle) * 126, -25 + sin(orbitAngle) * 73
+      if sensing.touching("_mouse_") or selectedID == nodeID:
+        looks.say nodeName
+      else:
+        looks.say ""
+      control.wait 0.03
+
+  @event.clicked:
+    if isClone == 1:
+      selectedID = nodeID
+      selectedName = nodeName
+      selectedType = nodeType
+      statusText = join("Selected: ", nodeName)
+      if nodeType == "folder" and lastClickedID == nodeID and sensing.timer() - lastClickTime < 0.5:
+        currentFolder = nodeID
+        currentPath = nodePath
+        selectedID = 0
+        selectedName = "None"
+        selectedType = ""
+        lastClickedID = 0
+        statusText = join("Opened ", nodeName)
+        event.broadcast refreshRequest
+      else:
+        lastClickedID = nodeID
+        lastClickTime = sensing.timer()
+}
+
+sprite "Controller" {
+  state x=0 y=0 direction=90 size=100 visible=false layer=0
+  costume "Controller" 1x1 center 0,0 {
+    rect 0,0 1,1 fill="#000000" opacity=0
+  }
+  @greenflag:
+    looks.hide
+    control.wait 0.05
+    event.broadcast refreshItems
+  @event.received refreshRequest:
+    event.broadcastwait destroyItems
+    event.broadcast refreshItems
+}
+
+sprite "Back" {
+  var parentRow = 0
+  state x=-186 y=128 direction=90 size=100 visible=true layer=4
+  rotationStyle "don't rotate"
+  costume "Back" 74x28 center 37,14 {
+    rect 1,1 72,26 fill="#29436f" stroke="#c8d8ff" width=1
+    text 9,20 "‹  Back" size=16 fill="#ffffff"
+  }
+  @greenflag:
+    looks.show
+  @event.clicked:
+    if currentFolder != 0:
+      parentRow = VFS_IDS.index(currentFolder)
+      currentFolder = VFS_PARENTS.item(parentRow)
+      if currentFolder == 0:
+        currentPath = "/"
+      else:
+        parentRow = VFS_IDS.index(currentFolder)
+        currentPath = VFS_PATHS.item(parentRow)
+      selectedID = 0
+      selectedName = "None"
+      selectedType = ""
+      statusText = "Returned to parent folder"
+      event.broadcast refreshRequest
+}
+
+sprite "New item" {
+  var newName = ""
+  var newType = "file"
+  var newPath = ""
+  state x=-84 y=128 direction=90 size=100 visible=true layer=4
+  rotationStyle "don't rotate"
+  costume "New item" 110x28 center 55,14 {
+    rect 1,1 108,26 fill="#0f766e" stroke="#ccfbf1" width=1
+    text 12,20 "+  New item" size=16 fill="#ffffff"
+  }
+  @greenflag:
+    looks.show
+  @event.clicked:
+    sensing.ask "New file or folder name:"
+    newName = sensing.answer()
+    if length(newName) > 0:
+      sensing.ask "Type F for file or D for folder:"
+      if sensing.answer() == "D" or sensing.answer() == "d":
+        newType = "folder"
+        newPath = join(join(currentPath, newName), "/")
+      else:
+        newType = "file"
+        newPath = join(currentPath, newName)
+      VFS_IDS.add nextID
+      VFS_NAMES.add newName
+      VFS_TYPES.add newType
+      VFS_PARENTS.add currentFolder
+      VFS_PATHS.add newPath
+      selectedID = nextID
+      selectedName = newName
+      selectedType = newType
+      nextID += 1
+      statusText = join("Created ", newName)
+      event.broadcast refreshRequest
+}
+
+sprite "Trash" {
+  var deleteRow = 0
+  state x=32 y=128 direction=90 size=100 visible=true layer=4
+  rotationStyle "don't rotate"
+  costume "Trash" 90x28 center 45,14 {
+    rect 1,1 88,26 fill="#6b2737" stroke="#fecdd3" width=1
+    text 13,20 "×  Trash" size=16 fill="#ffffff"
+  }
+  @greenflag:
+    looks.show
+  @event.clicked:
+    if selectedID > 0:
+      if selectedType == "folder" and VFS_PARENTS.contains(selectedID):
+        statusText = "Folder is not empty"
+        looks.say statusText 1.2
+      else:
+        sensing.ask join(join("Delete ", selectedName), "? Type yes")
+        if sensing.answer() == "yes":
+          deleteRow = VFS_IDS.index(selectedID)
+          VFS_IDS.delete deleteRow
+          VFS_NAMES.delete deleteRow
+          VFS_TYPES.delete deleteRow
+          VFS_PARENTS.delete deleteRow
+          VFS_PATHS.delete deleteRow
+          statusText = join("Deleted ", selectedName)
+          selectedID = 0
+          selectedName = "None"
+          selectedType = ""
+          event.broadcast refreshRequest
+}

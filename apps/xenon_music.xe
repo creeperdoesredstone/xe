@@ -1,9 +1,15 @@
 # Xenon Music: a sequenced vinyl player designed for the Scratch-compatible XVM.
 # Tracks are deterministic note events rather than sampled recordings.
 
+# App metadata and default geometry.
+const APP_TITLE = "Xenon Music"
+const APP_DEFAULT_WIDTH = 300
+const APP_DEFAULT_HEIGHT = 224
+
 const MUSIC_TRACK_COUNT = 3
 const MUSIC_STEPS_PER_TRACK = 16
 
+# Model and state.
 var music_window: graphics::Window
 array music_notes: int[48]
 array music_durations: int[48]
@@ -25,6 +31,7 @@ var music_previous_ticks: int
 var music_delta_ms: int
 var music_inventory_open: bool
 var music_inventory_drag_track: int
+var music_inventory_scroll: int
 var music_disc_dragging: bool
 var music_disc_drag_origin_x: int
 var music_disc_drag_origin_y: int
@@ -48,6 +55,7 @@ fn music_track_color(index: int) int {
 	return graphics::COLOR_8
 }
 
+# Layout helpers.
 fn music_small_text_width(text: string) int {
 	var index: int
 	var width: int
@@ -60,6 +68,34 @@ fn music_small_text_width(text: string) int {
 	return width
 }
 
+proc draw_music_text_elided(x: int, y: int, width: int, text: string, color: int) {
+	var index: int
+	var draw_x: int
+	var advance: int
+	var ellipsis_width: int
+	if (width < 1) { return }
+	if (music_small_text_width(text) <= width) {
+		call graphics::draw_text_small(music_window, x, y, text, color)
+		return
+	}
+	ellipsis_width = graphics::char_advance('.', graphics::FONT_SMALL) * 3
+	index = 0
+	draw_x = x
+	while (index < xestring::strlen(text)) {
+		advance = graphics::char_advance(text[index], graphics::FONT_SMALL)
+		if (draw_x + advance + ellipsis_width <= x + width) {
+			call graphics::draw_char_small(music_window, draw_x, y, text[index], color)
+			draw_x += advance
+			index += 1
+		}
+		else { index = xestring::strlen(text) }
+	}
+	if (ellipsis_width <= width) {
+		call graphics::draw_text_small(music_window, draw_x, y, "...", color)
+	}
+}
+
+# Paint and replaceable asset hooks.
 fn music_track_asset_path(index: int) string {
 	if (index == 0) { return "SystemAssets/XenonMusic/neon-orbit.xmusic" }
 	if (index == 1) { return "SystemAssets/XenonMusic/glass-comet.xmusic" }
@@ -206,6 +242,7 @@ fn music_normalize_angle(delta: float) float {
 	return delta
 }
 
+# Input and interaction.
 proc music_select_track(index: int) {
 	var ignored: bool
 	if (index < 0 || index >= MUSIC_TRACK_COUNT) { return }
@@ -365,12 +402,20 @@ proc music_draw_tonearm(pivot_x: int, pivot_y: int, reader_x: int, reader_y: int
 proc music_draw_inventory(x: int, y: int, width: int, height: int) {
 	var row: int
 	var row_y: int
+	var visible_rows: int
+	var maximum_scroll: int
 	call graphics::fill_rect(music_window, x, y, width, height, graphics::COLOR_1)
 	call graphics::draw_line(music_window, x, y, x, y + height - 1, graphics::COLOR_8)
 	call graphics::draw_text_small(music_window, x + 5, y + 4, "DISC LIBRARY", graphics::WHITE)
-	row = 0
-	while (row < MUSIC_TRACK_COUNT) {
-		row_y = y + 13 + row * 18
+	visible_rows = (height - 13) / 18
+	if (visible_rows < 1) { visible_rows = 1 }
+	if (visible_rows > MUSIC_TRACK_COUNT) { visible_rows = MUSIC_TRACK_COUNT }
+	maximum_scroll = MUSIC_TRACK_COUNT - visible_rows
+	if (music_inventory_scroll < 0) { music_inventory_scroll = 0 }
+	if (music_inventory_scroll > maximum_scroll) { music_inventory_scroll = maximum_scroll }
+	row = music_inventory_scroll
+	while (row < MUSIC_TRACK_COUNT && row < music_inventory_scroll + visible_rows) {
+		row_y = y + 13 + (row - music_inventory_scroll) * 18
 		if (graphics::button_flat(music_window, x + 4, row_y, width - 8, 15, music_track_name(row), graphics::COLOR_5)) {
 			music_inventory_drag_track = row
 		}
@@ -394,6 +439,7 @@ music_playhead_ms = 0
 music_current_step = 0
 music_inventory_open = false
 music_inventory_drag_track = -1
+music_inventory_scroll = 0
 music_disc_dragging = false
 music_disc_drag_offset_x = 0
 music_disc_drag_offset_y = 0
@@ -425,7 +471,6 @@ var music_total: int
 var music_progress_width: int
 var music_key: int
 var music_current_note: int
-var music_drag_distance: int
 var music_angle: float
 var music_delta_angle: float
 var music_light: bool
@@ -434,21 +479,30 @@ var music_status_label: string
 var music_status_width: int
 var music_reader_hovered: bool
 var music_deck_width: int
+var music_now_ticks: int
+var music_label_radius: int
+var music_inventory_row: int
+var music_inventory_row_y: int
+var music_inventory_scroll_delta: int
+var music_header_right: int
+var music_header_width: int
 
+# Application driver.
 music_window.x = 82
 music_window.y = 48
-music_window.width = 300
-music_window.height = 224
-music_window.title = "Xenon Music"
+music_window.width = APP_DEFAULT_WIDTH
+music_window.height = APP_DEFAULT_HEIGHT
+music_window.title = APP_TITLE
 music_window.ui_scale = 1
 music_window.state = graphics::WINDOW_NORMAL
 music_previous_ticks = os::ticks()
 
 while (music_window.state != graphics::WINDOW_CLOSED) {
-	music_delta_ms = os::ticks() - music_previous_ticks
+	music_now_ticks = os::ticks()
+	music_delta_ms = music_now_ticks - music_previous_ticks
 	if (music_delta_ms < 0) { music_delta_ms = 0 }
 	if (music_delta_ms > 50) { music_delta_ms = 50 }
-	music_previous_ticks = os::ticks()
+	music_previous_ticks = music_now_ticks
 	call music_update_sequencer()
 	call graphics::begin_draw(music_window)
 	if (!music_window.is_minimized()) {
@@ -467,7 +521,7 @@ while (music_window.state != graphics::WINDOW_CLOSED) {
 		music_center_y = 24 + (music_height - 48) / 2
 		music_radius = (music_height - 58) / 2
 		if ((music_deck_width - 36) / 2 < music_radius) { music_radius = (music_deck_width - 36) / 2 }
-		if (music_radius < 10) { music_radius = 10 }
+		if (music_radius < 3) { music_radius = 3 }
 		if (music_radius > 64) { music_radius = 64 }
 		music_reader_x = music_center_x + music_radius * 2 / 3
 		music_reader_y = music_center_y - music_radius * 2 / 3
@@ -485,11 +539,16 @@ while (music_window.state != graphics::WINDOW_CLOSED) {
 		if (music_track_totals[music_track] > 0) { music_rotation = music_playhead_ms * 360 / music_track_totals[music_track] }
 
 		if (graphics::button_flat(music_window, 4, 3, 54, 8, "Library", graphics::COLOR_8)) { music_inventory_open = !music_inventory_open }
-		if (music_disc_inserted) { call graphics::draw_text_small(music_window, 64, 5, music_track_name(music_track), music_track_color(music_track)) }
-		else { call graphics::draw_text_small(music_window, 64, 5, "Platter empty", graphics::COLOR_7) }
 		music_play_label = "READY"
 		if (music_playing) { music_play_label = "Pause" }
-		if (music_deck_width >= 150) { call graphics::draw_text_small(music_window, music_deck_width - 38, 5, music_play_label, graphics::COLOR_7) }
+		music_header_right = music_deck_width - 4
+		if (music_deck_width >= 140) {
+			music_header_right = music_deck_width - 42
+			call graphics::draw_text_small(music_window, music_deck_width - 38, 5, music_play_label, graphics::COLOR_7)
+		}
+		music_header_width = music_header_right - 64
+		if (music_disc_inserted) { call draw_music_text_elided(64, 5, music_header_width, music_track_name(music_track), music_track_color(music_track)) }
+		else { call draw_music_text_elided(64, 5, music_header_width, "Platter empty", graphics::COLOR_7) }
 
 		if (music_height >= 48) {
 			call graphics::fill_rect(music_window, 3, 14, music_deck_width - 6, music_height - 38, graphics::COLOR_1)
@@ -528,16 +587,26 @@ while (music_window.state != graphics::WINDOW_CLOSED) {
 
 		if (music_inventory_open && music_inventory_width > 0) {
 			music_inventory_x = music_width - music_inventory_width
+			music_inventory_scroll_delta = graphics::scroll_delta()
+			if (music_inventory_scroll_delta != 0 && music_pointer_x >= music_inventory_x && music_pointer_x < music_width && music_pointer_y >= 13 && music_pointer_y < music_height - 14) {
+				music_inventory_scroll -= music_inventory_scroll_delta
+			}
 			call music_draw_inventory(music_inventory_x, 13, music_inventory_width - 3, music_height - 27)
 		}
 
 		if (graphics::mouse_pressed()) {
 			if (music_inventory_open && music_inventory_width > 0 && music_pointer_x >= music_inventory_x) {
-				var inventory_row: int
-				inventory_row = (music_pointer_y - 26) / 18
-				if (inventory_row >= 0 && inventory_row < MUSIC_TRACK_COUNT) { music_inventory_drag_track = inventory_row }
+				music_inventory_row = music_inventory_scroll + (music_pointer_y - 26) / 18
+				music_inventory_row_y = 26 + (music_inventory_row - music_inventory_scroll) * 18
+				if (music_pointer_x >= music_inventory_x + 4 && music_pointer_x < music_width - 7 && music_pointer_y >= music_inventory_row_y && music_pointer_y < music_inventory_row_y + 15 && music_inventory_row >= music_inventory_scroll && music_inventory_row < MUSIC_TRACK_COUNT) {
+					music_inventory_drag_track = music_inventory_row
+				}
 			}
-			elseif (music_disc_inserted && music_distance_squared(music_pointer_x, music_pointer_y, music_center_x, music_center_y) <= 49) {
+			else {
+				music_label_radius = music_radius / 3
+				if (music_label_radius < 3) { music_label_radius = 3 }
+			}
+			if (!(music_inventory_open && music_inventory_width > 0 && music_pointer_x >= music_inventory_x) && music_disc_inserted && music_distance_squared(music_pointer_x, music_pointer_y, music_center_x, music_center_y) <= music_label_radius * music_label_radius) {
 				music_disc_dragging = true
 				music_disc_drag_origin_x = music_pointer_x
 				music_disc_drag_origin_y = music_pointer_y
@@ -546,10 +615,10 @@ while (music_window.state != graphics::WINDOW_CLOSED) {
 				music_disc_drag_was_playing = music_playing
 				call music_set_playing(false)
 			}
-			elseif (music_disc_inserted && music_distance_squared(music_pointer_x, music_pointer_y, music_reader_x, music_reader_y) <= 36) {
+			elseif (!(music_inventory_open && music_inventory_width > 0 && music_pointer_x >= music_inventory_x) && music_disc_inserted && music_distance_squared(music_pointer_x, music_pointer_y, music_reader_x, music_reader_y) <= 36) {
 				call music_set_playing(!music_playing)
 			}
-			elseif (music_disc_inserted && music_distance_squared(music_pointer_x, music_pointer_y, music_center_x, music_center_y) <= music_radius * music_radius) {
+			elseif (!(music_inventory_open && music_inventory_width > 0 && music_pointer_x >= music_inventory_x) && music_disc_inserted && music_distance_squared(music_pointer_x, music_pointer_y, music_center_x, music_center_y) <= music_radius * music_radius) {
 				music_scrubbing = true
 				music_resume_after_scrub = music_playing
 				call music_set_playing(false)
@@ -570,7 +639,6 @@ while (music_window.state != graphics::WINDOW_CLOSED) {
 				call music_set_playing(music_resume_after_scrub)
 			}
 			if (music_disc_dragging) {
-				music_drag_distance = music_distance_squared(music_pointer_x, music_pointer_y, music_disc_drag_origin_x, music_disc_drag_origin_y)
 				if (music_distance_squared(music_pointer_x + music_disc_drag_offset_x, music_pointer_y + music_disc_drag_offset_y, music_center_x, music_center_y) > (music_radius + 4) * (music_radius + 4)) {
 					call music_set_playing(false)
 					music_disc_inserted = false

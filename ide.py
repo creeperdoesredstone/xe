@@ -2,6 +2,8 @@ import sys
 import re
 import time
 import math
+import os
+import tempfile
 import threading
 import traceback
 from array import array
@@ -27,6 +29,9 @@ from PyQt6.QtWidgets import (
 	QInputDialog,
 	QSizePolicy,
 	QTabWidget,
+	QMessageBox,
+	QScrollArea,
+	QFrame,
 )
 from PyQt6.QtGui import (
 	QSyntaxHighlighter,
@@ -45,7 +50,6 @@ from PyQt6.QtGui import (
 	QWheelEvent,
 	QFont,
 	QFontDatabase,
-	QTextOption,
 )
 from PyQt6.QtCore import (
 	QEvent,
@@ -95,7 +99,14 @@ from xe_lang.devices import (
 )
 from xe_lang.devices.keymap import normalize_key_code
 from xe_lang.host_tools import ConverterPane, HelpPane, ImageStudioPane
+from xe_lang.host_tools.converter import read_xe_source
 from xe_lang.host_tools.services import ConversionRequest
+from xe_lang.host_tools.ui_specs import (
+	CODE_TOOLBAR_ACTIONS,
+	WORKBENCH_TABS,
+	workbench_tab_index,
+)
+from xe_lang.stdlib.specs import STANDARD_LIBRARY_SPECS
 
 
 PREFERRED_MONOSPACE_FAMILIES = (
@@ -104,6 +115,47 @@ PREFERRED_MONOSPACE_FAMILIES = (
 	"JetBrains Mono",
 	"Consolas",
 )
+
+STANDARD_LIBRARY_NAMES = frozenset(
+	{"math", *(library.name for library in STANDARD_LIBRARY_SPECS)}
+)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+	"""Replace *path* atomically with deterministic UTF-8 source text."""
+	path = path.resolve()
+	path.parent.mkdir(parents=True, exist_ok=True)
+	fd, temporary_name = tempfile.mkstemp(
+		prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+	)
+	try:
+		with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+			handle.write(text)
+			handle.flush()
+			os.fsync(handle.fileno())
+		os.replace(temporary_name, path)
+	finally:
+		if os.path.exists(temporary_name):
+			os.unlink(temporary_name)
+
+
+def _comment_start(text: str) -> int | None:
+	"""Return the first Xe comment marker outside string/character literals."""
+	quote = ""
+	escaped = False
+	for index, character in enumerate(text):
+		if quote:
+			if escaped:
+				escaped = False
+			elif character == "\\":
+				escaped = True
+			elif character == quote:
+				quote = ""
+		elif character in {"'", '"'}:
+			quote = character
+		elif character == "#":
+			return index
+	return None
 
 
 def _host_monospace_font(
@@ -254,8 +306,7 @@ def _collect_definition_details(
 PALETTE = list(DEFAULT_PALETTE)
 
 
-def ansi_to_html(text: str) -> str:
-	ansi_colors = {
+ANSI_COLORS = {
 		"30": "#000000",
 		"31": "#ff3333",
 		"32": "#33cc33",
@@ -272,36 +323,64 @@ def ansi_to_html(text: str) -> str:
 		"95": "#df80ff",
 		"96": "#80ffff",
 		"97": "#f3f3f3",
-	}
-	html_text = (
-		text.replace("&", "&amp;")
-		.replace("<", "&lt;")
-		.replace(">", "&gt;")
-		.replace("\n", "<br>")
-	)
-	ansi_pattern = re.compile(r"\x1b\[([0-9;]*)m")
-	pos = 0
-	result = ""
-	open_tags = 0
+}
+ANSI_PATTERN = re.compile(r"\x1b\[([0-9;]*)m")
+ANSI_INCOMPLETE_PATTERN = re.compile(r"\x1b(?:\[[0-9;]*)?$")
 
-	for match in ansi_pattern.finditer(html_text):
-		result += html_text[pos : match.start()]
-		pos = match.end()
-		codes = match.group(1).split(";")
-		for code in codes:
-			if code in ("", "0"):
-				while open_tags > 0:
-					result += '</span style="white-space: pre-wrap;">'
-					open_tags -= 1
-			elif code in ansi_colors:
-				result += (
-					f'<span style="color:{ansi_colors[code]}; white-space: pre-wrap;">'
-				)
-				open_tags += 1
-	result += html_text[pos:]
-	while open_tags > 0:
-		result += "</span>"
-		open_tags -= 1
+
+class AnsiHtmlStream:
+	"""Render independently delivered ANSI chunks without losing SGR state."""
+
+	def __init__(self) -> None:
+		self.pending = ""
+		self.color: str | None = None
+
+	def reset(self) -> None:
+		self.pending = ""
+		self.color = None
+
+	@staticmethod
+	def _escape(text: str) -> str:
+		return (
+			text.replace("&", "&amp;")
+			.replace("<", "&lt;")
+			.replace(">", "&gt;")
+			.replace("\n", "<br>")
+		)
+
+	def _render_text(self, text: str) -> str:
+		escaped = self._escape(text)
+		if not escaped or self.color is None:
+			return escaped
+		return f'<span style="color:{self.color}; white-space: pre-wrap;">{escaped}</span>'
+
+	def feed(self, text: str) -> str:
+		data = self.pending + text
+		self.pending = ""
+		incomplete = ANSI_INCOMPLETE_PATTERN.search(data)
+		if incomplete is not None:
+			self.pending = incomplete.group(0)
+			data = data[: incomplete.start()]
+
+		result: list[str] = []
+		position = 0
+		for match in ANSI_PATTERN.finditer(data):
+			result.append(self._render_text(data[position : match.start()]))
+			for code in match.group(1).split(";"):
+				if code in {"", "0"}:
+					self.color = None
+				elif code in ANSI_COLORS:
+					self.color = ANSI_COLORS[code]
+			position = match.end()
+		result.append(self._render_text(data[position:]))
+		return "".join(result)
+
+
+def ansi_to_html(text: str) -> str:
+	stream = AnsiHtmlStream()
+	result = stream.feed(text)
+	if stream.pending:
+		result += stream._render_text(stream.pending)
 	return result
 
 
@@ -327,6 +406,12 @@ class CodeEditor(QPlainTextEdit):
 		self.go_to_definition_callback = None
 		self._hover_underline_selection: Optional[QTextEdit.ExtraSelection] = None
 		self._last_mouse_pos: Optional[QPoint] = None
+		self._definition_cache_revision = -1
+		self._definition_cache: dict[str, list[tuple[str, Position, str | None]]] = {}
+		self._tooltip_timer = QTimer(self)
+		self._tooltip_timer.setSingleShot(True)
+		self._tooltip_timer.setInterval(280)
+		self._tooltip_timer.timeout.connect(self._show_pending_definition_tooltip)
 		self.setMouseTracking(True)
 
 		self.blockCountChanged.connect(self.update_line_number_area_width)
@@ -386,55 +471,30 @@ class CodeEditor(QPlainTextEdit):
 		return content
 
 	def _find_definition_signature(self, name: str, hover_pos_idx: int) -> str | None:
-		text = self.toPlainText()
+		document = self.document()
+		revision = document.revision()
+		if revision != self._definition_cache_revision:
+			text = self.toPlainText()
+			tokens, _ = lex("<editor>", text)
+			definitions: dict[str, list[tuple[str, Position, str | None]]] = {}
+			if tokens:
+				program = parse(tokens).value
+				if program is not None:
+					_collect_definition_details(program, tokens, definitions, document)
+			self._definition_cache = definitions
+			self._definition_cache_revision = revision
+		matches = self._definition_cache.get(name, ())
+		if not matches:
+			return None
+		before = [match for match in matches if match[1].idx <= hover_pos_idx]
+		match = max(before, key=lambda item: item[1].idx) if before else min(
+			matches, key=lambda item: item[1].idx
+		)
+		return match[2]
 
-		doc = self.document()
-		hover_block = doc.findBlock(hover_pos_idx)
-		line_text = hover_block.text()
-		comment_idx = line_text.find("#")
-
-		if comment_idx != -1:
-			col_in_block = hover_pos_idx - hover_block.position()
-			if col_in_block >= comment_idx:
-				backtick_pattern = rf"`{re.escape(name)}`"
-				if not re.search(backtick_pattern, line_text[comment_idx:]):
-					return None
-
-		clean_lines = []
-		for line in text.splitlines():
-			if line.lstrip().startswith("#"):
-				clean_lines.append("")
-			else:
-				clean_lines.append(line.split("#")[0])
-
-		clean_text = "\n".join(clean_lines)
-
-		patterns = [
-			# Subroutine definitions
-			rf"(\b(?:proc|fn)\s+{re.escape(name)}\s*\([^)]*\)[^{{\n]*)",
-			# Variable / Array declarations
-			rf"(\b(?:var|array)\s+{re.escape(name)}\s*:[^\n;{{]+)",
-			# Struct / Class definitions
-			rf"(\b(?:struct|class)\s+{re.escape(name)}\b)",
-			# Parameter inside a header
-			rf"(\b{re.escape(name)}\s*:\s*[a-zA-Z_]\w*)",
-		]
-
-		combined_pattern = re.compile("|".join(patterns))
-
-		text_before_hover = clean_text[:hover_pos_idx]
-		matches_before = list(combined_pattern.finditer(text_before_hover))
-
-		if matches_before:
-			sig = matches_before[-1].group(0).strip()
-			return sig.rstrip("{").strip()
-
-		match_after = combined_pattern.search(clean_text, hover_pos_idx)
-		if match_after:
-			sig = match_after.group(0).strip()
-			return sig.rstrip("{").strip()
-
-		return None
+	def _show_pending_definition_tooltip(self) -> None:
+		if self._last_mouse_pos is not None:
+			self._show_definition_tooltip(self._last_mouse_pos)
 
 	def _show_definition_tooltip(self, pos: QPoint) -> None:
 		word_cursor = self._identifier_word_at(pos)
@@ -503,9 +563,10 @@ class CodeEditor(QPlainTextEdit):
 			and event.modifiers() & Qt.KeyboardModifier.ControlModifier
 			and self.go_to_definition_callback
 		):
-			cursor = self.cursorForPosition(event.pos())
-			self.go_to_definition_callback(cursor)
-			return
+			if self._identifier_word_at(event.pos()) is not None:
+				cursor = self.cursorForPosition(event.pos())
+				self.go_to_definition_callback(cursor)
+				return
 		super().mousePressEvent(event)
 
 	def mouseMoveEvent(self, event: QMouseEvent):
@@ -516,11 +577,12 @@ class CodeEditor(QPlainTextEdit):
 		self._update_pointer_cursor(ctrl_held)
 		self._update_hover_underline(pos if ctrl_held else None)
 
-		self._show_definition_tooltip(pos)
+		self._tooltip_timer.start()
 		super().mouseMoveEvent(event)
 
 	def leaveEvent(self, event):
 		self._last_mouse_pos = None
+		self._tooltip_timer.stop()
 		self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
 		self._update_hover_underline(None)
 		QToolTip.hideText()
@@ -538,6 +600,8 @@ class CodeEditor(QPlainTextEdit):
 		if event.key() == Qt.Key.Key_Control:
 			self._update_pointer_cursor(False)
 			self._update_hover_underline(None)
+			super().keyReleaseEvent(event)
+			return
 		super().keyReleaseEvent(event)
 
 	@staticmethod
@@ -887,12 +951,10 @@ class XPP26SyntaxHighlighter(QSyntaxHighlighter):
 
 			return False
 
-		LIBRARY_NAMES = {"math", "window", "graphics", "os"}
-
 		def is_library_name(idx: int) -> bool:
 			if idx < 0 or idx >= len(tokens):
 				return False
-			return tokens[idx].value in LIBRARY_NAMES
+			return tokens[idx].value in STANDARD_LIBRARY_NAMES
 
 		current_pos = 0
 		while current_pos < len(text):
@@ -984,9 +1046,9 @@ class XPP26SyntaxHighlighter(QSyntaxHighlighter):
 				self.setFormat(current_pos, length, self.ident_format)
 			current_pos = end_pos
 
-		for match in re.finditer(r"(#.*)", text):
-			start, end = match.span()
-			self.setFormat(start, end - start, self.comment_format)
+		comment_start = _comment_start(text)
+		if comment_start is not None:
+			self.setFormat(comment_start, len(text) - comment_start, self.comment_format)
 
 
 class VMGraphicsWidget(QWidget):
@@ -1027,7 +1089,6 @@ class VMGraphicsWidget(QWidget):
 			1e-6,
 			min(available_width / stage_width, available_height / stage_height),
 		)
-		self.scale = round(self.scale)
 		self.render_width = max(1, round(stage_width * self.scale))
 		self.render_height = max(1, round(stage_height * self.scale))
 		self.render_x = (available_width - self.render_width) // 2
@@ -1106,10 +1167,19 @@ class VMGraphicsWidget(QWidget):
 			),
 		)
 
-	def _update_pointer(self, event: QMouseEvent) -> None:
-		if self.active_vm:
+	def _pointer_inside_stage(self, event: QMouseEvent | QWheelEvent) -> bool:
+		position = event.position()
+		return (
+			self.render_x <= position.x() < self.render_x + self.render_width
+			and self.render_y <= position.y() < self.render_y + self.render_height
+		)
+
+	def _update_pointer(self, event: QMouseEvent | QWheelEvent) -> bool:
+		if self.active_vm and self._pointer_inside_stage(event):
 			x, y = self._pointer_position(event)
 			self.active_vm.devices.input.move_pointer(x, y)
+			return True
+		return False
 
 	def _modifier_mask(self, event: QKeyEvent) -> int:
 		modifiers = event.modifiers()
@@ -1174,7 +1244,7 @@ class VMGraphicsWidget(QWidget):
 		self._update_pointer(event)
 
 	def mousePressEvent(self, event: QMouseEvent):
-		if self.active_vm:
+		if self.active_vm and self._pointer_inside_stage(event):
 			self.setFocus(Qt.FocusReason.MouseFocusReason)
 			self._update_pointer(event)
 			button = {
@@ -1187,7 +1257,8 @@ class VMGraphicsWidget(QWidget):
 
 	def mouseReleaseEvent(self, event: QMouseEvent):
 		if self.active_vm:
-			self._update_pointer(event)
+			if self._pointer_inside_stage(event):
+				self._update_pointer(event)
 			button = {
 				Qt.MouseButton.LeftButton: 1,
 				Qt.MouseButton.RightButton: 2,
@@ -1206,7 +1277,9 @@ class VMGraphicsWidget(QWidget):
 			event.ignore()
 			return
 
-		self._update_pointer(event)
+		if not self._update_pointer(event):
+			event.ignore()
+			return
 		angle_delta = event.angleDelta().y()
 		if angle_delta:
 			steps, self._wheel_angle_remainder = self._consume_wheel_units(
@@ -1248,9 +1321,9 @@ class VMGraphicsWidget(QWidget):
 	def focusOutEvent(self, event):
 		if self.active_vm:
 			self.active_vm.devices.input.release_all()
-		self._forwarded_keys.clear()
-		self._wheel_angle_remainder = 0
-		self._wheel_pixel_remainder = 0
+			self._forwarded_keys.clear()
+			self._wheel_angle_remainder = 0
+			self._wheel_pixel_remainder = 0
 		super().focusOutEvent(event)
 
 
@@ -1460,19 +1533,26 @@ class VMWorkerThread(QThread):
 			result, error, asm = run(self.filename, self.code, self.context)
 
 			self.execution_finished.emit(result, error, asm or "")
-		except Exception as e:
+		except Exception:
 			error_string = traceback.format_exc()
 			self.execution_finished.emit(
 				None, f"Runtime Thread Exception\n{error_string}", ""
 			)
 
 
-class FindReplaceBar(QWidget):
+class FindReplaceBar(QScrollArea):
 	def __init__(self, editor: QPlainTextEdit, parent=None):
 		super().__init__(parent)
 		self.editor = editor
-
-		layout = QHBoxLayout(self)
+		self.setObjectName("CompactToolScroll")
+		self.setFrameShape(QFrame.Shape.NoFrame)
+		self.setWidgetResizable(True)
+		self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+		self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+		self.setMinimumHeight(42)
+		self.setMaximumHeight(62)
+		content = QWidget()
+		layout = QHBoxLayout(content)
 		layout.setContentsMargins(4, 4, 4, 4)
 
 		self.find_input = QLineEdit()
@@ -1498,6 +1578,7 @@ class FindReplaceBar(QWidget):
 		layout.addWidget(self.replace_all_btn)
 		layout.addStretch()
 		layout.addWidget(self.close_btn)
+		self.setWidget(content)
 
 		self.find_next_btn.clicked.connect(lambda: self.find(backward=False))
 		self.find_prev_btn.clicked.connect(lambda: self.find(backward=True))
@@ -1623,20 +1704,23 @@ class X26IDE(QMainWindow):
 		main_layout.setContentsMargins(10, 8, 10, 10)
 		main_layout.setSpacing(8)
 
-		toolbar_layout = QHBoxLayout()
-		for text, slot in [
-			("New", self.new_file),
-			("Open", self.open_file),
-			("Save", self.save_file),
-			("Save As", self.save_as_file),
-		]:
-			btn = QPushButton(text)
-			btn.clicked.connect(slot)
+		toolbar_widget = QWidget()
+		toolbar_layout = QHBoxLayout(toolbar_widget)
+		toolbar_layout.setContentsMargins(0, 0, 0, 0)
+		code_toolbar_callbacks = {
+			"new": self.new_file,
+			"open": self.open_file,
+			"save": self.save_file,
+			"save-as": self.save_as_file,
+		}
+		for spec in CODE_TOOLBAR_ACTIONS:
+			btn = QPushButton(spec.label)
+			btn.clicked.connect(code_toolbar_callbacks[spec.key])
 			toolbar_layout.addWidget(btn)
 
 		toolbar_layout.addStretch()
 		self.system_clipboard_toggle = QCheckBox("System clipboard")
-		self.system_clipboard_toggle.setChecked(True)
+		self.system_clipboard_toggle.setChecked(False)
 		self.system_clipboard_toggle.setToolTip(
 			"Allow Xe programs to read and write the computer clipboard. "
 			"This host-only bridge is not exported to Scratch."
@@ -1647,6 +1731,11 @@ class X26IDE(QMainWindow):
 
 		self.theme_dropdown = QComboBox()
 		self.theme_dropdown.addItems(list(THEMES.keys()))
+		self.theme_dropdown.setSizeAdjustPolicy(
+			QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+		)
+		self.theme_dropdown.setMinimumContentsLength(12)
+		self.theme_dropdown.setMaximumWidth(180)
 		self.theme_dropdown.setCurrentText(self.current_theme)
 		self.theme_dropdown.currentTextChanged.connect(self.change_theme)
 		toolbar_layout.addWidget(self.theme_dropdown)
@@ -1654,7 +1743,16 @@ class X26IDE(QMainWindow):
 		self.run_button = QPushButton("Run")
 		self.run_button.clicked.connect(self.run_code)
 		toolbar_layout.addWidget(self.run_button)
-		main_layout.addLayout(toolbar_layout)
+		self.code_toolbar_scroll = QScrollArea()
+		self.code_toolbar_scroll.setObjectName("CompactToolScroll")
+		self.code_toolbar_scroll.setFrameShape(QFrame.Shape.NoFrame)
+		self.code_toolbar_scroll.setWidgetResizable(True)
+		self.code_toolbar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+		self.code_toolbar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+		self.code_toolbar_scroll.setMinimumHeight(42)
+		self.code_toolbar_scroll.setMaximumHeight(62)
+		self.code_toolbar_scroll.setWidget(toolbar_widget)
+		main_layout.addWidget(self.code_toolbar_scroll)
 
 		main_splitter = QSplitter(Qt.Orientation.Horizontal)
 		self.main_splitter = main_splitter
@@ -1693,6 +1791,8 @@ class X26IDE(QMainWindow):
 		output_layout.addWidget(QLabel("Terminal:"))
 		self.output = QTextEdit()
 		self.output.setReadOnly(True)
+		self.output.document().setMaximumBlockCount(5_000)
+		self._ansi_stream = AnsiHtmlStream()
 		output_layout.addWidget(self.output)
 		self.input_line = QLineEdit()
 		self.input_line.setPlaceholderText("Program input")
@@ -1735,13 +1835,13 @@ class X26IDE(QMainWindow):
 		main_splitter.setSizes([650, 520])
 		main_layout.addWidget(main_splitter)
 
-		self.workspace_tabs.addTab(self.code_tab, "Code")
+		self.workspace_tabs.addTab(self.code_tab, WORKBENCH_TABS[0].label)
 		self.converter_view = ConverterPane(request_provider=self._converter_request)
-		self.workspace_tabs.addTab(self.converter_view, "Xe → SB3")
+		self.workspace_tabs.addTab(self.converter_view, WORKBENCH_TABS[1].label)
 		self.image_studio_view = ImageStudioPane()
-		self.workspace_tabs.addTab(self.image_studio_view, "Image Studio")
+		self.workspace_tabs.addTab(self.image_studio_view, WORKBENCH_TABS[2].label)
 		self.help_view = HelpPane()
-		self.workspace_tabs.addTab(self.help_view, "Help")
+		self.workspace_tabs.addTab(self.help_view, WORKBENCH_TABS[3].label)
 		self.editor.document().modificationChanged.connect(self.update_title)
 		self.editor.document().contentsChanged.connect(
 			self.converter_view.invalidate
@@ -1749,6 +1849,13 @@ class X26IDE(QMainWindow):
 
 		self.setup_menu_bar()
 		self.apply_theme()
+
+	def resizeEvent(self, event) -> None:
+		super().resizeEvent(event)
+		if hasattr(self, "system_clipboard_toggle"):
+			self.system_clipboard_toggle.setText(
+				"Clipboard" if self.width() < 760 else "System clipboard"
+			)
 
 	def setup_menu_bar(self):
 		menubar = self.menuBar()
@@ -1785,14 +1892,9 @@ class X26IDE(QMainWindow):
 		self.graphics_view_action.setShortcut("Ctrl+Shift+G")
 		self.graphics_view_action.triggered.connect(self.toggle_graphics_view)
 		view_menu.addSeparator()
-		for name, index, shortcut in [
-			("Code", 0, "Alt+1"),
-			("Xe to SB3", 1, "Alt+2"),
-			("Image Studio", 2, "Alt+3"),
-			("Help", 3, "Alt+4"),
-		]:
-			action = view_menu.addAction(name)
-			action.setShortcut(shortcut)
+		for index, spec in enumerate(WORKBENCH_TABS):
+			action = view_menu.addAction(spec.label.replace("→", "to"))
+			action.setShortcut(spec.shortcut)
 			action.triggered.connect(
 				lambda checked=False, tab_index=index: self.workspace_tabs.setCurrentIndex(tab_index)
 			)
@@ -1852,6 +1954,7 @@ class X26IDE(QMainWindow):
 			QPushButton:disabled, QToolButton:disabled {{ color: {theme['comment']}; border-color: transparent; }}
 			QPlainTextEdit {{ background-color: {theme['background']}; color: {theme['foreground']}; border: 1px solid #555; }}
 			QTextEdit, QTextBrowser {{ background-color: {theme['background']}; color: {theme['foreground']}; border: 1px solid #39445a; border-radius: 4px; }}
+			QPlainTextEdit:focus, QTextEdit:focus, QTextBrowser:focus {{ border-color: {theme['keyword']}; }}
 			QLineEdit, QComboBox, QSpinBox {{ background-color: {theme['output_bg']}; color: {theme['foreground']}; border: 1px solid #39445a; border-radius: 4px; padding: 5px 7px; min-height: 20px; }}
 			QComboBox::drop-down {{ border: none; width: 24px; }}
 			QListWidget {{ background-color: {theme['output_bg']}; color: {theme['foreground']}; border: 1px solid #39445a; border-radius: 4px; outline: none; }}
@@ -1860,6 +1963,7 @@ class X26IDE(QMainWindow):
 			QListWidget::item:hover {{ background-color: {theme['toolbar_bg']}; }}
 			QLabel {{ color: {theme['foreground']}; background-color: transparent; }}
 			QCheckBox {{ background-color: transparent; spacing: 6px; }}
+			QCheckBox:focus {{ color: {theme['keyword']}; }}
 			QLabel#ToolTitle {{ font-size: 18px; font-weight: 650; }}
 			QLabel#SectionTitle {{ font-size: 13px; font-weight: 650; }}
 			QLabel#MutedText {{ color: {theme['comment']}; }}
@@ -1877,6 +1981,10 @@ class X26IDE(QMainWindow):
 			QScrollBar:vertical {{ background: {theme['output_bg']}; width: 10px; margin: 0; }}
 			QScrollBar::handle:vertical {{ background: #526078; min-height: 24px; border-radius: 4px; }}
 			QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+			QScrollBar:horizontal {{ background: {theme['output_bg']}; height: 10px; margin: 0; }}
+			QScrollBar::handle:horizontal {{ background: #526078; min-width: 24px; border-radius: 4px; }}
+			QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
+			QScrollArea#CompactToolScroll {{ background: transparent; border: none; }}
 			QSlider::groove:horizontal {{ background-color: {theme['output_bg']}; border: 1px solid #39445a; height: 4px; border-radius: 2px; }}
 			QSlider::sub-page:horizontal {{ background-color: {theme['keyword']}; border-radius: 2px; }}
 			QSlider::handle:horizontal {{ background-color: {theme['foreground']}; border: 1px solid {theme['keyword']}; width: 12px; margin: -5px 0; border-radius: 6px; }}
@@ -1908,20 +2016,7 @@ class X26IDE(QMainWindow):
 
 	def select_workspace_tool(self, name: str) -> bool:
 		"""Select a host workbench tab by a stable command-line friendly name."""
-		normalized = name.strip().casefold().replace("_", "-").replace(" ", "-")
-		aliases = {
-			"code": 0,
-			"editor": 0,
-			"xe-to-sb3": 1,
-			"converter": 1,
-			"sb3": 1,
-			"image": 2,
-			"image-editor": 2,
-			"image-studio": 2,
-			"help": 3,
-			"docs": 3,
-		}
-		index = aliases.get(normalized)
+		index = workbench_tab_index(name)
 		if index is None or index >= self.workspace_tabs.count():
 			return False
 		self.workspace_tabs.setCurrentIndex(index)
@@ -2000,20 +2095,30 @@ class X26IDE(QMainWindow):
 		)
 		if not ok or not new_name or new_name == old_name:
 			return
+		if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
+			QMessageBox.warning(self, "Invalid name", "Enter a valid Xe identifier.")
+			return
+		validation_tokens, validation_error = lex("<rename>", new_name)
+		if validation_error or not validation_tokens or validation_tokens[0]._type != TT.IDENT:
+			QMessageBox.warning(self, "Invalid name", "Xe keywords cannot be used as symbol names.")
+			return
 
-		doc = self.editor.document()
-		flags = (
-			QTextDocument.FindFlag.FindCaseSensitively
-			| QTextDocument.FindFlag.FindWholeWords
-		)
-
-		group_cursor = self.editor.textCursor()
-		group_cursor.beginEditBlock()
-		found = doc.find(old_name, 0, flags)
-		while not found.isNull():
-			found.insertText(new_name)
-			found = doc.find(old_name, found.position(), flags)
-		group_cursor.endEditBlock()
+		source = self.editor.toPlainText()
+		tokens, _ = lex("<editor>", source)
+		ranges = [
+			(token.start_pos.idx, token.end_pos.idx + 1)
+			for token in tokens
+			if token._type == TT.IDENT and token.value == old_name
+		]
+		if not ranges:
+			return
+		edit_cursor = QTextCursor(self.editor.document())
+		edit_cursor.beginEditBlock()
+		for start, end in reversed(ranges):
+			edit_cursor.setPosition(start)
+			edit_cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+			edit_cursor.insertText(new_name)
+		edit_cursor.endEditBlock()
 
 	def go_to_definition(self, cursor: QTextCursor):
 		word_cursor = QTextCursor(cursor)
@@ -2062,42 +2167,82 @@ class X26IDE(QMainWindow):
 		self.editor.setFocus()
 
 	def new_file(self):
+		if not self._confirm_editor_changes("create a new file"):
+			return False
 		self.workspace_tabs.setCurrentWidget(self.code_tab)
 		self.editor.clear()
 		self.output.clear()
+		self._ansi_stream.reset()
 		self.current_file = None
 		self.editor.document().setModified(False)
 		self.update_title()
+		return True
 
 	def open_file(self):
 		path, _ = QFileDialog.getOpenFileName(
 			self, "Open", "", "Xe Files (*.xe);;All Files (*)"
 		)
 		if path:
-			self.load_file(Path(path))
+			return self.load_file(Path(path))
+		return False
 
-	def load_file(self, path: Path) -> None:
+	def load_file(self, path: Path) -> bool:
+		if not self._confirm_editor_changes("open another file"):
+			return False
+		candidate = path.resolve()
+		try:
+			text = candidate.read_text(encoding="utf-8")
+		except (OSError, UnicodeError) as exc:
+			QMessageBox.warning(self, "Open failed", f"Could not open {candidate}:\n\n{exc}")
+			return False
 		self.workspace_tabs.setCurrentWidget(self.code_tab)
-		self.current_file = path.resolve()
-		self.editor.setPlainText(self.current_file.read_text(encoding="utf-8"))
+		self.current_file = candidate
+		self.editor.setPlainText(text)
 		self.editor.document().setModified(False)
 		self.update_title()
+		return True
 
-	def save_file(self):
+	def save_file(self) -> bool:
 		if not self.current_file:
-			self.save_as_file()
-		else:
-			self.current_file.write_text(self.editor.toPlainText())
-			self.editor.document().setModified(False)
-			self.update_title()
+			return self.save_as_file()
+		try:
+			_atomic_write_text(self.current_file, self.editor.toPlainText())
+		except OSError as exc:
+			QMessageBox.warning(self, "Save failed", f"Could not save {self.current_file}:\n\n{exc}")
+			return False
+		self.editor.document().setModified(False)
+		self.update_title()
+		return True
 
-	def save_as_file(self):
+	def save_as_file(self) -> bool:
 		path, _ = QFileDialog.getSaveFileName(
 			self, "Save", "", "Xe Files (*.xe);;All Files (*)"
 		)
-		if path:
-			self.current_file = Path(path)
-			self.save_file()
+		if not path:
+			return False
+		previous = self.current_file
+		self.current_file = Path(path).resolve()
+		if self.save_file():
+			return True
+		self.current_file = previous
+		self.update_title()
+		return False
+
+	def _confirm_editor_changes(self, action: str) -> bool:
+		if not self.editor.document().isModified():
+			return True
+		answer = QMessageBox.warning(
+			self,
+			"Unsaved Xe source",
+			f"Save changes before you {action}?",
+			QMessageBox.StandardButton.Save
+			| QMessageBox.StandardButton.Discard
+			| QMessageBox.StandardButton.Cancel,
+			QMessageBox.StandardButton.Save,
+		)
+		if answer == QMessageBox.StandardButton.Save:
+			return self.save_file()
+		return answer == QMessageBox.StandardButton.Discard
 
 	def update_title(self, *args):
 		modified = self.editor.document().isModified()
@@ -2125,7 +2270,7 @@ class X26IDE(QMainWindow):
 			if active_path == entry_path.resolve():
 				source = self.editor.toPlainText()
 			elif entry_path.is_file():
-				source = entry_path.read_text(encoding="utf-8")
+				source = read_xe_source(entry_path)
 			else:
 				source = self.editor.toPlainText()
 				entry_path = active_path
@@ -2146,13 +2291,9 @@ class X26IDE(QMainWindow):
 	def append_output(self, text: str):
 		cursor = self.output.textCursor()
 		cursor.movePosition(cursor.MoveOperation.End)
-		html_text = (
-			text.replace("&", "&amp;")
-			.replace("<", "&lt;")
-			.replace(">", "&gt;")
-			.replace("\n", "<br>")
+		cursor.insertHtml(
+			f'<span style="white-space: pre-wrap;">{self._ansi_stream.feed(text)}</span>'
 		)
-		cursor.insertHtml(f'<span style="white-space: pre-wrap;">{html_text}</span>')
 		self.output.setTextCursor(cursor)
 		self.output.verticalScrollBar().setValue(
 			self.output.verticalScrollBar().maximum()
@@ -2224,6 +2365,7 @@ class X26IDE(QMainWindow):
 				return
 
 		self.output.setHtml("")
+		self._ansi_stream.reset()
 		self.audio_engine.silence()
 		self.runtime_context = RuntimeContext(os_device=self.os_device)
 		filename = str(self.current_file) if self.current_file else "<editor>"
@@ -2253,11 +2395,12 @@ class X26IDE(QMainWindow):
 		self.cancel_program_input()
 		self.audio_engine.silence()
 		if error:
-			self.output.append(ansi_to_html(f"{error}"))
+			self.append_output(f"{error}\n")
 		else:
 			if self.output.toPlainText() and not self.output.toPlainText().endswith("\n"):
 				self.append_output("\n")
-			self.append_output(f"Execution finished successfully.\n\nStack: {result[:16]}")
+			stack = result[:16] if result is not None else []
+			self.append_output(f"Execution finished successfully.\n\nStack: {stack}")
 
 		if hasattr(self.runtime_context, "vm") and self.runtime_context.vm:
 			frame = self.runtime_context.vm._last_snapshot
@@ -2266,10 +2409,40 @@ class X26IDE(QMainWindow):
 			)
 
 	def closeEvent(self, event):
+		if not self._confirm_editor_changes("close the IDE"):
+			event.ignore()
+			return
+		if self.image_studio_view.document.modified and not self.image_studio_view._confirm_discard_changes():
+			event.ignore()
+			return
+		if not self.image_studio_view.shutdown():
+			QMessageBox.warning(
+				self,
+				"Image operation still running",
+				"The current import or export is still finishing. Try closing again shortly.",
+			)
+			event.ignore()
+			return
+		if not self.converter_view.shutdown():
+			QMessageBox.warning(
+				self,
+				"Export still running",
+				"The current compatibility or export job is still finishing. Try closing again shortly.",
+			)
+			event.ignore()
+			return
 		if self.worker and self.worker.isRunning():
 			self.cancel_program_input()
 			self.runtime_context.cancel()
 			self.worker.wait(2000)
+			if self.worker.isRunning():
+				QMessageBox.warning(
+					self,
+					"Program still running",
+					"The current program did not stop cooperatively. The IDE will remain open.",
+				)
+				event.ignore()
+				return
 		self.audio_engine.shutdown()
 		event.accept()
 

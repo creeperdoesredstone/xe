@@ -40,8 +40,8 @@ def render_one_frame(
 	width, height = size
 	loop = f"while ({target}.state != graphics::WINDOW_CLOSED) {{"
 	update = f"call graphics::update({target})"
-	modified = source.replace(f"{target}.width = {default_width}", f"{target}.width = {width}", 1)
-	modified = modified.replace(f"{target}.height = {default_height}", f"{target}.height = {height}", 1)
+	modified = source.replace(f"{target}.width = APP_DEFAULT_WIDTH", f"{target}.width = {width}", 1)
+	modified = modified.replace(f"{target}.height = APP_DEFAULT_HEIGHT", f"{target}.height = {height}", 1)
 	modified = modified.replace(loop, "var probe_frame: int\nprobe_frame = 0\nwhile (probe_frame < 1) {", 1)
 	modified = modified.replace(update, f"{update}\n\t\tprobe_frame += 1", 1)
 	frames = []
@@ -64,8 +64,8 @@ def render_settings_frame(
 ):
 	width, height = size
 	loop = "while (settings_window.state != graphics::WINDOW_CLOSED) {"
-	modified = source.replace("settings_window.width = 280", f"settings_window.width = {width}", 1)
-	modified = modified.replace("settings_window.height = 210", f"settings_window.height = {height}", 1)
+	modified = source.replace("settings_window.width = APP_DEFAULT_WIDTH", f"settings_window.width = {width}", 1)
+	modified = modified.replace("settings_window.height = APP_DEFAULT_HEIGHT", f"settings_window.height = {height}", 1)
 	modified = modified.replace(
 		"active_tab = 0\n",
 		f"active_tab = {active_tab}\n{staged_values}\n",
@@ -283,7 +283,7 @@ out << staged_background'''
 		self.assertIn("call draw_preview_box(preview_x, preview_y, preview_width, preview_height, staged_corners", self.source)
 		self.assertIn("proc draw_palette_background_preview", self.source)
 		self.assertIn("background = settings_preview_background()", self.source)
-		self.assertIn("variant = staged_palette % 3", self.source)
+		self.assertIn("variant = staged_palette % palette_group_count", self.source)
 		self.assertIn("if (staged_background == 2)", self.source)
 		self.assertIn("proc draw_icons_time_preview", self.source)
 		self.assertIn("staged_icons == os::ICON_SMALL", self.source)
@@ -368,6 +368,38 @@ out << staged_background'''
 					"staged_icons = os::ICON_MEDIUM\nstaged_clock = os::CLOCK_12_HOUR",
 				)
 				self.assertGreater(len(set(frame.indices)), 5)
+
+	def test_ultra_short_compact_page_scroll_reaches_every_sound_control_and_actions(self) -> None:
+		self.assertIn("proc draw_scrollable_compact_page", self.source)
+		self.assertIn("page_scroll_maximum = page_total - (panel_height - 2)", self.source)
+		self.assertIn("page_scroll -= scroll_value * 7", self.source)
+
+		def render_at(scroll: int):
+			modified = self.source.replace("settings_window.width = APP_DEFAULT_WIDTH", "settings_window.width = 160", 1)
+			modified = modified.replace("settings_window.height = APP_DEFAULT_HEIGHT", "settings_window.height = 36", 1)
+			modified = modified.replace("page_scroll_tab = -1", f"page_scroll_tab = 0\npage_scroll = {scroll}", 1)
+			modified = modified.replace(
+				"while (settings_window.state != graphics::WINDOW_CLOSED) {",
+				"var short_frame: int\nshort_frame = 0\nwhile (short_frame < 1) {",
+				1,
+			)
+			modified = modified.replace(
+				"call graphics::update(settings_window)",
+				"call graphics::update(settings_window)\n\tshort_frame += 1",
+				1,
+			)
+			frames = []
+			context = RuntimeContext(frame_handler=frames.append)
+			with redirect_stdout(StringIO()):
+				_, error, _ = run("settings-short-scroll.xe", modified, context)
+			self.assertIsNone(error, str(error))
+			self.assertEqual(1, len(frames))
+			return frames[0]
+
+		top = render_at(0)
+		bottom = render_at(50)
+		self.assertNotEqual(top.indices, bottom.indices)
+		self.assertGreater(len(set(bottom.indices)), 4)
 
 	def test_preview_uses_current_light_palette_without_applying_staged_edits(self) -> None:
 		frame = render_settings_frame(

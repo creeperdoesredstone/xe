@@ -3,9 +3,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Iterable
-import zipfile
+from xe_lang.archive_safety import ArchiveSafetyError, load_safe_zip_members, normalize_archive_member
 
 from xe_lang.compiler_service import (
 	MAX_ADDRESS_COUNT,
@@ -25,8 +25,11 @@ MANIFEST_PATH = ROOT / "scratch_vm" / "capability-manifest.json"
 
 
 def _safe_member_name(name: str) -> bool:
-	value = PurePosixPath(name)
-	return bool(value.parts) and not value.is_absolute() and ".." not in value.parts
+	try:
+		normalize_archive_member(name)
+		return True
+	except ArchiveSafetyError:
+		return False
 
 
 def _input_block_id(value: object) -> str | None:
@@ -164,12 +167,14 @@ def _list_count(project: dict[str, object], target_name: str, list_name: str) ->
 
 def audit_template(template_path: Path, profile: ScratchVMProfile) -> dict[str, object]:
 	payload = template_path.read_bytes()
-	with zipfile.ZipFile(template_path, "r") as archive:
-		names = [item.filename for item in archive.infolist()]
-		project_entries = [name for name in names if name == "project.json"]
-		if len(project_entries) != 1:
-			raise ValueError(f"Template must contain exactly one project.json; found {len(project_entries)}")
-		project = json.loads(archive.read("project.json"))
+	members = load_safe_zip_members(payload)
+	names = [name for name, _ in members]
+	projects = [data for name, data in members if name == "project.json"]
+	if len(projects) != 1:
+		raise ValueError(f"Template must contain exactly one project.json; found {len(projects)}")
+	project = json.loads(projects[0])
+	if not isinstance(project, dict):
+		raise ValueError("Template project.json must contain an object")
 	dispatcher = _dispatcher_syscalls(project)
 	return {
 		"archive_member_count": len(names),

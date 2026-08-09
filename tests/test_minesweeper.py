@@ -202,8 +202,8 @@ out << mine_flags_used'''
 		)
 		self.assertEqual("10", output)
 
-		compact = self.source.replace("mine_window.width = 292", "mine_window.width = 120", 1)
-		compact = compact.replace("mine_window.height = 248", "mine_window.height = 82", 1)
+		compact = self.source.replace("mine_window.width = APP_DEFAULT_WIDTH", "mine_window.width = 120", 1)
+		compact = compact.replace("mine_window.height = APP_DEFAULT_HEIGHT", "mine_window.height = 82", 1)
 		compact = compact.replace(
 			"while (mine_window.state != graphics::WINDOW_CLOSED) {",
 			"var probe_frame: int\nprobe_frame = 0\nwhile (probe_frame < 1) {",

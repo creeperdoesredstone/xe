@@ -13,6 +13,8 @@ from xe_lang.syscall_abi import KeyboardEvent, MouseEvent
 LEFT_BUTTON = 1
 RIGHT_BUTTON = 2
 MIDDLE_BUTTON = 4
+INPUT_QUEUE_LIMIT = 4096
+MAX_FRAME_SCROLL_STEPS = 32767
 
 
 def normalize_tk_scroll_steps(
@@ -93,11 +95,11 @@ class InputDevice:
 		self._pending_released = 0
 		self._pending_scroll = 0
 		self._keys_down: set[int] = set()
-		self._key_queue: deque[int] = deque()
+		self._key_queue: deque[int] = deque(maxlen=INPUT_QUEUE_LIMIT)
 		self._repeat_next: dict[int, float] = {}
 		self._key_modifiers: dict[int, int] = {}
-		self._mouse_events: deque[tuple[int, int, int]] = deque()
-		self._keyboard_events: deque[tuple[int, int, int]] = deque()
+		self._mouse_events: deque[tuple[int, int, int]] = deque(maxlen=INPUT_QUEUE_LIMIT)
+		self._keyboard_events: deque[tuple[int, int, int]] = deque(maxlen=INPUT_QUEUE_LIMIT)
 		self._last_mouse_event = int(MouseEvent.NONE)
 		self._last_keyboard_event = int(KeyboardEvent.NONE)
 		self._modifiers = 0
@@ -105,11 +107,13 @@ class InputDevice:
 
 	@property
 	def keys_down(self) -> set[int]:
-		return self._keys_down
+		with self._lock:
+			return set(self._keys_down)
 
 	@property
 	def key_queue(self) -> deque[int]:
-		return self._key_queue
+		with self._lock:
+			return deque(self._key_queue, maxlen=self._key_queue.maxlen)
 
 	@property
 	def modifiers(self) -> int:
@@ -149,7 +153,10 @@ class InputDevice:
 	def add_scroll_delta(self, steps: int) -> None:
 		"""Accumulate signed logical wheel notches for the next input frame."""
 		with self._lock:
-			self._pending_scroll += int(steps)
+			self._pending_scroll = max(
+				-MAX_FRAME_SCROLL_STEPS,
+				min(MAX_FRAME_SCROLL_STEPS, self._pending_scroll + int(steps)),
+			)
 
 	def set_key(self, key: int, down: bool, modifiers: int = 0) -> None:
 		key = int(key)
@@ -201,13 +208,27 @@ class InputDevice:
 
 	def release_all(self) -> None:
 		with self._lock:
-			self._pending_released |= self._buttons
+			buttons = self._buttons
+			keys = tuple(self._keys_down)
+			self._pending_pressed = 0
+			self._pending_released |= buttons
+			if buttons:
+				self._last_mouse_event = int(MouseEvent.RELEASE)
+				for button in (LEFT_BUTTON, RIGHT_BUTTON, MIDDLE_BUTTON):
+					if buttons & button:
+						self._mouse_events.append((self._last_mouse_event, self._x, self._y))
+			for key in keys:
+				modifiers = self._key_modifiers.get(key, self._modifiers)
+				self._keyboard_events.append((int(KeyboardEvent.RELEASE), key, modifiers))
+			if keys:
+				self._last_keyboard_event = int(KeyboardEvent.RELEASE)
 			self._buttons = 0
 			self._keys_down.clear()
 			self._repeat_next.clear()
 			self._key_modifiers.clear()
 			self._modifiers = 0
 			self._pending_scroll = 0
+			self._latched = None
 
 	def frame(self) -> InputFrame:
 		with self._lock:

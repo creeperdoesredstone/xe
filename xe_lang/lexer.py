@@ -82,7 +82,7 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 			tokens.append(Token(no_char_type, None, start_pos, operator_end_pos))
 
 	def make_comment() -> None:
-		while current_char != None and current_char != "\n":
+		while current_char is not None and current_char != "\n":
 			advance()
 
 	def make_number() -> LexError | None:
@@ -90,7 +90,7 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 		dot_count: int = 0
 		end_pos: Position = pos.copy()
 
-		while current_char != None and current_char in (DIGITS + "."):
+		while current_char is not None and current_char in (DIGITS + "."):
 			if current_char == ".":
 				dot_count += 1
 				if dot_count > 1:
@@ -117,7 +117,7 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 		res: str = ""
 		end_pos: Position = pos.copy()
 
-		while current_char != None and current_char in VALID_IDEN:
+		while current_char is not None and current_char in VALID_IDEN:
 			res += current_char
 			end_pos = pos.copy()
 			advance()
@@ -134,7 +134,9 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 	def turn_to_asgn_tok() -> None:
 		if current_char == "=":
 			current_tok: Token = tokens[-1]
-			new_type: TT = getattr(TT, f"{current_tok._type.name}_ASGN")
+			new_type: TT | None = getattr(TT, f"{current_tok._type.name}_ASGN", None)
+			if new_type is None:
+				return
 
 			tokens[-1]._type = new_type
 			tokens[-1].end_pos = pos.copy()
@@ -149,7 +151,7 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 	}
 	hex_digits = "0123456789abcdefABCDEF"
 
-	def read_hex_escape() -> tuple[str, None] | tuple[None, LexError]:
+	def read_hex_escape(*, allow_nul: bool) -> tuple[str, None] | tuple[None, LexError]:
 		nonlocal current_char
 		escape_start = pos.copy()
 		advance()
@@ -168,10 +170,18 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 				pos.copy(),
 			)
 
-		return chr(int(digits, 16)), None
+		value = int(digits, 16)
+		if (value == 0 and not allow_nul) or value > 0xFF:
+			return None, LexError(
+				"Character escapes must fit in one byte and cannot embed NUL in a string.",
+				escape_start,
+				pos.copy(),
+			)
+
+		return chr(value), None
 
 	# lex
-	while current_char != None:
+	while current_char is not None:
 		start_pos = pos.copy()
 
 		if current_char in " \t":
@@ -185,7 +195,8 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 			turn_to_asgn_tok()
 		elif current_char == "-":
 			make_compound_tok(TT.SUB, TT.ARROW, ">")
-			if tokens[-1]._type == TT.SUB: turn_to_asgn_tok()
+			if tokens[-1]._type == TT.SUB:
+				turn_to_asgn_tok()
 		elif current_char == "*":
 			make_compound_tok(TT.MUL, TT.POW, "*")
 			turn_to_asgn_tok()
@@ -203,7 +214,6 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 			turn_to_asgn_tok()
 		elif current_char == "~":
 			make_operator_tok(TT.NOT, start_pos)
-			turn_to_asgn_tok()
 		elif current_char == "!":
 			make_compound_tok(TT.NOTL, TT.NE, "=")
 		elif current_char == "^":
@@ -237,13 +247,32 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 			make_compound_tok(TT.GT, (TT.GE, TT.ISTREAM), "=>")
 		elif current_char == "'":
 			advance()
-			char: str = "\0"
+			if current_char == "'":
+				return tokens, LexError(
+					"Character literals cannot be empty.",
+					start_pos,
+					pos.copy(),
+				)
+			if current_char in (None, "\n"):
+				return tokens, LexError(
+					"Expected a character before the closing quote.",
+					start_pos,
+					pos.copy(),
+				)
+
+			char: str
 
 			if current_char != "'":
 				if current_char == "\\":
 					advance()
+					if current_char in (None, "\n"):
+						return tokens, LexError(
+							"Expected an escape value in character literal.",
+							start_pos,
+							pos.copy(),
+						)
 					if current_char == "x":
-						char, hex_error = read_hex_escape()
+						char, hex_error = read_hex_escape(allow_nul=True)
 						if hex_error is not None:
 							return tokens, hex_error
 					else:
@@ -252,6 +281,13 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 				else:
 					char = current_char
 					advance()
+
+				if ord(char) > 0xFF:
+					return tokens, LexError(
+						"Character literals must fit in one byte.",
+						start_pos,
+						pos.copy(),
+					)
 
 				if current_char != "'":
 					return tokens, LexError(
@@ -266,23 +302,43 @@ def lex(fn: str, ftxt: str) -> tuple[list[Token], None] | tuple[None, LexError]:
 			string: str = ""
 			escape: bool = False
 
-			while current_char not in (None, "\n") and current_char != '"' or escape:
+			while current_char not in (None, "\n") and (current_char != '"' or escape):
 				if escape:
 					if current_char == "x":
-						hex_char, hex_error = read_hex_escape()
+						hex_char, hex_error = read_hex_escape(allow_nul=False)
 						if hex_error is not None:
 							return tokens, hex_error
 						string += hex_char
 						escape = False
 						continue
-					string += escape_map.get(current_char, current_char)
+					escaped = escape_map.get(current_char, current_char)
+					if escaped == "\0" or ord(escaped) > 0xFF:
+						return tokens, LexError(
+							"String characters must be in the range 0x01 through 0xFF.",
+							start_pos,
+							pos.copy(),
+						)
+					string += escaped
 					escape = False
 				else:
 					if current_char == "\\":
 						escape = True
 					else:
+						if current_char == "\0" or ord(current_char) > 0xFF:
+							return tokens, LexError(
+								"String characters must be in the range 0x01 through 0xFF.",
+								start_pos,
+								pos.copy(),
+							)
 						string += current_char
 				advance()
+
+			if escape:
+				return tokens, LexError(
+					"Expected an escape value before the end of the string.",
+					start_pos,
+					pos.copy(),
+				)
 
 			if current_char != '"':
 				return tokens, LexError(

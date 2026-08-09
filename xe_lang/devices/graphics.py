@@ -2,11 +2,128 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from json import load
+from math import isqrt
 from pathlib import Path
 from threading import RLock
 from typing import Callable, Sequence
 
 from .theme import SCREEN_HEIGHT, SCREEN_WIDTH
+
+
+def _clip_line_to_rect(
+	x0: int,
+	y0: int,
+	x1: int,
+	y1: int,
+	left: int,
+	top: int,
+	right: int,
+	bottom: int,
+) -> tuple[int, int, int, int] | None:
+	"""Clip a segment to an inclusive rectangle before rasterization."""
+	if left > right or top > bottom:
+		return None
+	dx = x1 - x0
+	dy = y1 - y0
+	enter = 0.0
+	exit = 1.0
+	for p, q in ((-dx, x0 - left), (dx, right - x0), (-dy, y0 - top), (dy, bottom - y0)):
+		if p == 0:
+			if q < 0:
+				return None
+			continue
+		ratio = q / p
+		if p < 0:
+			if ratio > exit:
+				return None
+			enter = max(enter, ratio)
+		else:
+			if ratio < enter:
+				return None
+			exit = min(exit, ratio)
+	return (
+		max(left, min(right, round(x0 + enter * dx))),
+		max(top, min(bottom, round(y0 + enter * dy))),
+		max(left, min(right, round(x0 + exit * dx))),
+		max(top, min(bottom, round(y0 + exit * dy))),
+	)
+
+
+def _visible_bresenham_points(
+	x0: int,
+	y0: int,
+	x1: int,
+	y1: int,
+	left: int,
+	top: int,
+	right: int,
+	bottom: int,
+):
+	"""Yield the exact legacy Bresenham pixels inside an inclusive rectangle.
+
+	The major-axis coordinate identifies the iteration directly, so even a
+	billion-cell guest segment costs at most one framebuffer row or column.
+	"""
+	dx = abs(x1 - x0)
+	dy = abs(y1 - y0)
+	sx = 1 if x0 < x1 else -1
+	sy = 1 if y0 < y1 else -1
+	if dx >= dy:
+		if dx == 0:
+			if left <= x0 <= right and top <= y0 <= bottom:
+				yield x0, y0
+			return
+		if sx > 0:
+			start = max(0, left - x0)
+			stop = min(dx, right - x0)
+		else:
+			start = max(0, x0 - right)
+			stop = min(dx, x0 - left)
+		for step in range(start, stop + 1):
+			x = x0 + sx * step
+			y_steps = (2 * step * dy + dx) // (2 * dx)
+			y = y0 + sy * y_steps
+			if top <= y <= bottom:
+				yield x, y
+		return
+	if sy > 0:
+		start = max(0, top - y0)
+		stop = min(dy, bottom - y0)
+	else:
+		start = max(0, y0 - bottom)
+		stop = min(dy, y0 - top)
+	for step in range(start, stop + 1):
+		y = y0 + sy * step
+		x_steps = (2 * step * dx + dy) // (2 * dy)
+		x = x0 + sx * x_steps
+		if left <= x <= right:
+			yield x, y
+
+
+def _scaled_clip_rect(
+	origin_x: int,
+	origin_y: int,
+	scale: int,
+	clip_rect: tuple[int, int, int, int],
+) -> tuple[int, int, int, int] | None:
+	"""Return inclusive logical cells whose scaled blocks intersect the clip."""
+	clip_x0, clip_y0, clip_x1, clip_y1 = clip_rect
+	if clip_x0 >= clip_x1 or clip_y0 >= clip_y1:
+		return None
+	return (
+		(clip_x0 - origin_x - scale) // scale + 1,
+		(clip_y0 - origin_y - scale) // scale + 1,
+		(clip_x1 - 1 - origin_x) // scale,
+		(clip_y1 - 1 - origin_y) // scale,
+	)
+
+
+def _midpoint_circle_span(delta: int) -> int:
+	"""Return the radius-axis sample selected by the legacy midpoint raster."""
+	span = isqrt(delta)
+	if delta - span * span > span:
+		span += 1
+	return span
 
 
 DEFAULT_PALETTE = (
@@ -310,33 +427,60 @@ class GraphicsDevice:
 		if width <= 0 or height <= 0 or len(pixels) < width * height:
 			return
 		clip_x0, clip_y0, clip_x1, clip_y1 = self.clip_rect
-		for source_y in range(height):
+		logical_clip = _scaled_clip_rect(int(x), int(y), scale, self.clip_rect)
+		if logical_clip is None:
+			return
+		source_x0 = max(0, logical_clip[0])
+		source_y0 = max(0, logical_clip[1])
+		source_x1 = min(width - 1, logical_clip[2])
+		source_y1 = min(height - 1, logical_clip[3])
+		if source_x0 > source_x1 or source_y0 > source_y1:
+			return
+		for source_y in range(source_y0, source_y1 + 1):
 			destination_y = int(y) + source_y * scale
-			if destination_y >= clip_y1 or destination_y + scale <= clip_y0:
-				continue
 			row_start = source_y * width
-			source_x = 0
-			while source_x < width:
-				while source_x < width and int(pixels[row_start + source_x]) == transparent:
+			source_x = source_x0
+			while source_x <= source_x1:
+				while (
+					source_x <= source_x1
+					and int(pixels[row_start + source_x]) == transparent
+				):
 					source_x += 1
+				if source_x > source_x1:
+					break
 				run_start = source_x
-				while source_x < width and int(pixels[row_start + source_x]) != transparent:
+				while (
+					source_x <= source_x1
+					and int(pixels[row_start + source_x]) != transparent
+				):
 					source_x += 1
-				if run_start == source_x:
+				run_left = int(x) + run_start * scale
+				visible_left = max(clip_x0, run_left)
+				visible_right = min(clip_x1, int(x) + source_x * scale)
+				if visible_left >= visible_right:
 					continue
-				destination_x = int(x) + run_start * scale
-				run = bytes(
-					int(pixels[row_start + index]) % 16
-					for index in range(run_start, source_x)
-					for _ in range(scale)
-				)
-				left = max(clip_x0, destination_x)
-				right = min(clip_x1, destination_x + len(run))
-				if left >= right:
-					continue
-				visible = run[left - destination_x:right - destination_x]
-				for destination_row in range(max(clip_y0, destination_y), min(clip_y1, destination_y + scale)):
-					self.back_buffer[destination_row][left:right] = visible
+				if scale == 1:
+					first_cell = visible_left - int(x)
+					last_cell = visible_right - int(x)
+					visible = bytes(
+						int(pixels[row_start + cell_x]) % 16
+						for cell_x in range(first_cell, last_cell)
+					)
+				else:
+					visible = bytearray()
+					for cell_x in range(run_start, source_x):
+						cell_left = max(visible_left, int(x) + cell_x * scale)
+						cell_right = min(visible_right, int(x) + (cell_x + 1) * scale)
+						if cell_left < cell_right:
+							visible.extend(
+								bytes((int(pixels[row_start + cell_x]) % 16,))
+								* (cell_right - cell_left)
+							)
+				for destination_row in range(
+					max(clip_y0, destination_y),
+					min(clip_y1, destination_y + scale),
+				):
+					self.back_buffer[destination_row][visible_left:visible_right] = visible
 
 	def fill_dithered_rect(
 		self,
@@ -400,6 +544,15 @@ class GraphicsDevice:
 				self.back_buffer[y][x0] = color
 			return
 
+		# Rasterize ordinary lines from their original endpoints. Geometrically
+		# clipping first changes Bresenham's error phase and can omit a visible
+		# edge pixel. Only hostile, extremely long segments use the bounded
+		# clipping fallback.
+		if max(abs(x1 - x0), abs(y1 - y0)) > 8192:
+			for px, py in _visible_bresenham_points(x0, y0, x1, y1, cx0, cy0, cx1 - 1, cy1 - 1):
+				self.back_buffer[py][px] = color
+			return
+
 		buffer = self.back_buffer
 		dx = abs(x1 - x0)
 		sx = 1 if x0 < x1 else -1
@@ -440,6 +593,13 @@ class GraphicsDevice:
 				color,
 			)
 			return
+		logical_clip = _scaled_clip_rect(origin_x, origin_y, scale, self.clip_rect)
+		if logical_clip is None:
+			return
+		if max(abs(x1 - x0), abs(y1 - y0)) > 8192:
+			for px, py in _visible_bresenham_points(x0, y0, x1, y1, *logical_clip):
+				self.fill_rect(origin_x + px * scale, origin_y + py * scale, scale, scale, color)
+			return
 		dx = abs(x1 - x0)
 		sx = 1 if x0 < x1 else -1
 		dy = -abs(y1 - y0)
@@ -467,8 +627,27 @@ class GraphicsDevice:
 		if radius < 0:
 			return
 		cx0, cy0, cx1, cy1 = self.clip_rect
+		if cx + radius < cx0 or cx - radius >= cx1 or cy + radius < cy0 or cy - radius >= cy1:
+			return
 		buffer = self.back_buffer
 		color %= 16
+		if radius > 4 * ((cx1 - cx0) + (cy1 - cy0)):
+			radius_sq = radius * radius
+			for py in range(cy0, cy1):
+				delta = radius_sq - (py - cy) * (py - cy)
+				if delta >= 0:
+					x_span = _midpoint_circle_span(delta)
+					for px in (cx - x_span, cx + x_span):
+						if cx0 <= px < cx1:
+							buffer[py][px] = color
+			for px in range(cx0, cx1):
+				delta = radius_sq - (px - cx) * (px - cx)
+				if delta >= 0:
+					y_span = _midpoint_circle_span(delta)
+					for py in (cy - y_span, cy + y_span):
+						if cy0 <= py < cy1:
+							buffer[py][px] = color
+			return
 		x = radius
 		y = 0
 		error = 1 - radius
@@ -503,6 +682,27 @@ class GraphicsDevice:
 		scale = max(1, int(scale))
 		if scale == 1:
 			self.draw_circle(origin_x + cx, origin_y + cy, radius, color)
+			return
+		logical_clip = _scaled_clip_rect(origin_x, origin_y, scale, self.clip_rect)
+		if logical_clip is None:
+			return
+		lx0, ly0, lx1, ly1 = logical_clip
+		if cx + radius < lx0 or cx - radius > lx1 or cy + radius < ly0 or cy - radius > ly1:
+			return
+		if radius > 4 * ((lx1 - lx0 + 1) + (ly1 - ly0 + 1)):
+			radius_sq = radius * radius
+			for py in range(ly0, ly1 + 1):
+				delta = radius_sq - (py - cy) * (py - cy)
+				if delta >= 0:
+					x_span = _midpoint_circle_span(delta)
+					for px in (cx - x_span, cx + x_span):
+						self.fill_rect(origin_x + px * scale, origin_y + py * scale, scale, scale, color)
+			for px in range(lx0, lx1 + 1):
+				delta = radius_sq - (px - cx) * (px - cx)
+				if delta >= 0:
+					y_span = _midpoint_circle_span(delta)
+					for py in (cy - y_span, cy + y_span):
+						self.fill_rect(origin_x + px * scale, origin_y + py * scale, scale, scale, color)
 			return
 		x = radius
 		y = 0
@@ -555,7 +755,8 @@ class GraphicsDevice:
 		if radius < 0:
 			return
 		radius_sq = radius * radius
-		for y in range(cy - radius, cy + radius + 1):
+		_, clip_y0, _, clip_y1 = self.clip_rect
+		for y in range(max(cy - radius, clip_y0), min(cy + radius + 1, clip_y1)):
 			delta = radius_sq - (y - cy) * (y - cy)
 			if delta < 0:
 				continue
@@ -578,8 +779,11 @@ class GraphicsDevice:
 		if scale == 1:
 			self.fill_circle(origin_x + cx, origin_y + cy, radius, color)
 			return
+		logical_clip = _scaled_clip_rect(origin_x, origin_y, scale, self.clip_rect)
+		if logical_clip is None:
+			return
 		radius_sq = radius * radius
-		for y in range(cy - radius, cy + radius + 1):
+		for y in range(max(cy - radius, logical_clip[1]), min(cy + radius, logical_clip[3]) + 1):
 			delta = radius_sq - (y - cy) * (y - cy)
 			if delta < 0:
 				continue
@@ -614,15 +818,23 @@ class GraphicsDevice:
 		scale: int,
 	) -> None:
 		x1, y1, x2, y2, x3, y3 = points
-		minimum_y = min(y1, y2, y3)
-		maximum_y = max(y1, y2, y3)
+		scale = max(1, int(scale))
+		logical_clip = _scaled_clip_rect(origin_x, origin_y, scale, self.clip_rect)
+		if logical_clip is None:
+			return
+		minimum_y = max(min(y1, y2, y3), logical_clip[1])
+		maximum_y = min(max(y1, y2, y3), logical_clip[3])
+		minimum_x = max(min(x1, x2, x3), logical_clip[0])
+		maximum_x = min(max(x1, x2, x3), logical_clip[2])
+		if minimum_x > maximum_x or minimum_y > maximum_y:
+			return
 		area = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
 		if area == 0:
 			self.draw_triangle_scaled(origin_x, origin_y, points, color, scale)
 			return
 		for y in range(minimum_y, maximum_y + 1):
 			covered = []
-			for x in range(min(x1, x2, x3), max(x1, x2, x3) + 1):
+			for x in range(minimum_x, maximum_x + 1):
 				a = ((y2 - y3) * (x - x3) + (x3 - x2) * (y - y3)) / area
 				b = ((y3 - y1) * (x - x3) + (x1 - x3) * (y - y3)) / area
 				c = 1.0 - a - b

@@ -36,7 +36,10 @@ VIRTUAL_DRIVE_DIRECTORY = "XenonOS/VirtualDrive"
 VIRTUAL_DRIVE_MARKER = ".xenon-virtual-drive"
 TRASH_DIRECTORY = ".xenon-trash"
 INTERNAL_NAMES = frozenset((VIRTUAL_DRIVE_MARKER, TRASH_DIRECTORY))
+INTERNAL_NAMES_CASEFOLD = frozenset(name.casefold() for name in INTERNAL_NAMES)
 ENTRY_CACHE_LIMIT = 128
+MAX_TEXT_FILE_BYTES = 1_048_576
+MAX_TEXT_FILE_CHARACTERS = 200_000
 
 
 def default_virtual_drive_root() -> Path:
@@ -76,12 +79,12 @@ class FileSystemDevice:
 		candidate = Path(str(name).replace("\\", "/"))
 		if not name or candidate.is_absolute():
 			return None
-		if candidate.parts and candidate.parts[0] in INTERNAL_NAMES:
-			return None
 		resolved = (self.root / candidate).resolve()
 		try:
-			resolved.relative_to(self.root)
+			relative = resolved.relative_to(self.root)
 		except ValueError:
+			return None
+		if any(part.casefold() in INTERNAL_NAMES_CASEFOLD for part in relative.parts):
 			return None
 		return resolved
 
@@ -101,6 +104,8 @@ class FileSystemDevice:
 		if path is None:
 			return 0
 		try:
+			if mode == "r" and path.stat().st_size > MAX_TEXT_FILE_BYTES:
+				return 0
 			if mode in {"w", "a"}:
 				path.parent.mkdir(parents=True, exist_ok=True)
 			stream = path.open(mode, encoding="utf-8", newline="")
@@ -129,7 +134,12 @@ class FileSystemDevice:
 			if not record or record.mode != "r":
 				return ""
 			try:
-				return record.stream.read()
+				start = record.stream.tell()
+				text = record.stream.read(MAX_TEXT_FILE_CHARACTERS + 1)
+				if len(text) > MAX_TEXT_FILE_CHARACTERS:
+					record.stream.seek(start)
+					return ""
+				return text
 			except (OSError, UnicodeError):
 				return ""
 
@@ -138,7 +148,11 @@ class FileSystemDevice:
 		if path is None or not path.is_file():
 			return None
 		try:
-			return path.read_text(encoding="utf-8")
+			if path.stat().st_size > MAX_TEXT_FILE_BYTES:
+				return None
+			with path.open("r", encoding="utf-8", newline="") as stream:
+				text = stream.read(MAX_TEXT_FILE_CHARACTERS + 1)
+			return text if len(text) <= MAX_TEXT_FILE_CHARACTERS else None
 		except (OSError, UnicodeError):
 			return None
 
@@ -264,13 +278,16 @@ class FileSystemDevice:
 		destination = self._resolve(new_name)
 		if path is None or destination is None or not path.exists() or destination.exists():
 			return False
-		try:
-			destination.parent.mkdir(parents=True, exist_ok=True)
-			path.rename(destination)
-			self._changed()
-			return True
-		except OSError:
-			return False
+		with self._lock:
+			if any(record.path == path or path in record.path.parents for record in self._records.values()):
+				return False
+			try:
+				destination.parent.mkdir(parents=True, exist_ok=True)
+				path.rename(destination)
+				self._changed()
+				return True
+			except OSError:
+				return False
 
 	def copy(self, name: str, destination_name: str) -> bool:
 		path = self._resolve(name)

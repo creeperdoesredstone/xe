@@ -12,6 +12,7 @@ from xe_lang.codegen import compile_ast, format_instructions
 from xe_lang.executable import decode_static_layout
 from xe_lang.ir_optimize import DEFAULT_PASSES, optimize
 from xe_lang.lexer import lex
+from xe_lang.memory import MAX_ADDRESS_COUNT
 from xe_lang.nodes import (
 	ArrayDeclaration,
 	ConstantDeclaration,
@@ -29,7 +30,6 @@ from xe_lang.syscall_abi import SyscallID
 
 
 HEAP_START = 0x2000
-MAX_ADDRESS_COUNT = 200_000
 
 
 _DECLARATION_STATEMENTS = (
@@ -291,6 +291,19 @@ def _finish(units: tuple[SourceUnit, ...], entry_path: str, program_ast: Program
 	)
 
 
+def _internal_compiler_diagnostic(error: Exception, path: str) -> Diagnostic:
+	message = str(error).strip()
+	detail = f": {message}" if message else ""
+	return Diagnostic(
+		"error",
+		f"Compiler rejected the source safely ({type(error).__name__}){detail}",
+		path,
+		1,
+		1,
+		"XE1099",
+	)
+
+
 def compile_source(source: str, filename: str = "workspace.xe") -> CompileArtifact:
 	try:
 		unit = SourceUnit(filename, source).normalized()
@@ -298,10 +311,18 @@ def compile_source(source: str, filename: str = "workspace.xe") -> CompileArtifa
 		portable = str(filename).replace("\\", "/")
 		logical_name = PurePosixPath(portable).name or "workspace.xe"
 		unit = SourceUnit(logical_name, source.replace("\r\n", "\n").replace("\r", "\n"))
-	program, diagnostic = _parse_unit(unit)
-	if diagnostic is not None or program is None:
-		return CompileArtifact(False, (unit,), unit.path, diagnostics=(diagnostic,) if diagnostic else ())
-	return _finish((unit,), unit.path, program)
+	try:
+		program, diagnostic = _parse_unit(unit)
+		if diagnostic is not None or program is None:
+			return CompileArtifact(False, (unit,), unit.path, diagnostics=(diagnostic,) if diagnostic else ())
+		return _finish((unit,), unit.path, program)
+	except Exception as error:
+		return CompileArtifact(
+			False,
+			(unit,),
+			unit.path,
+			diagnostics=(_internal_compiler_diagnostic(error, unit.path),),
+		)
 
 
 def compile_workspace(
@@ -327,7 +348,11 @@ def compile_workspace(
 	parsed: dict[str, Program] = {}
 	diagnostics: list[Diagnostic] = []
 	for unit in units:
-		program, diagnostic = _parse_unit(unit)
+		try:
+			program, diagnostic = _parse_unit(unit)
+		except Exception as error:
+			program = None
+			diagnostic = _internal_compiler_diagnostic(error, unit.path)
 		if diagnostic is not None:
 			diagnostics.append(diagnostic)
 		elif program is not None:
@@ -359,7 +384,16 @@ def compile_workspace(
 
 	entry_program = parsed[entry]
 	combined = Program(entry_program.start_pos, entry_program.end_pos, statements, sub_defs)
-	return _finish(units, entry, combined)
+	try:
+		return _finish(units, entry, combined)
+	except Exception as error:
+		return CompileArtifact(
+			False,
+			units,
+			entry,
+			diagnostics=(_internal_compiler_diagnostic(error, entry),),
+			source_hash=_canonical_source_hash(units, entry),
+		)
 
 
 def syscall_name(value: int) -> str:

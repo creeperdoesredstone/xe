@@ -26,7 +26,21 @@ def test_nucleus_highlight_is_fixed_in_screen_space() -> None:
     assert "orbit_project_rotation_offset" not in body
     anchor = SOURCE.split("base_center_radius =", 1)[1].split("visual_fade =", 1)[0]
     assert "!nucleus_highlight_ready || !rotating" in anchor
-    assert "nucleus_highlight_x = viewport_center_x - center_radius / 2" in anchor
+    assert "nucleus_highlight_x = center_x - center_radius / 2" in anchor
+
+
+def test_file_viewer_incrementally_seeks_and_never_forces_a_larger_modal() -> None:
+    assert "proc viewer_seek_to_line" in SOURCE
+    viewer = SOURCE.split("proc draw_file_viewer", 1)[1].split("proc draw_context_menu", 1)[0]
+    assert "viewer_seek_index = 0" in viewer
+    assert "if (panel_width < 40) { panel_width = 40 }" not in viewer
+    assert "if (panel_height < 34) { panel_height = 34 }" not in viewer
+
+
+def test_breadcrumb_segments_are_clamped_to_the_available_header_width() -> None:
+    breadcrumbs = SOURCE.split("proc draw_breadcrumbs", 1)[1].split("fn viewer_row_height", 1)[0]
+    assert "remaining_width = x + area_width - cursor_x" in breadcrumbs
+    assert "if (segment_width > remaining_width) { segment_width = remaining_width }" in breadcrumbs
 
 
 def test_depth_order_and_overlay_layers_are_explicit() -> None:

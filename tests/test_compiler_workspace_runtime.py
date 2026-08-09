@@ -7,6 +7,16 @@ from xe_lang.compiler_service import compile_source
 from xe_lang.devices.compiler import CompilerDevice
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_small_draggable_window_example_compiles() -> None:
+	path = ROOT / "examples" / "small_draggable_window.xe"
+	artifact = compile_source(path.read_text(encoding="utf-8"), path.as_posix())
+	assert artifact.success, artifact.diagnostics
+	assert "app.graphics" in artifact.required_capabilities
+
+
 def test_compiler_device_links_workspace_declarations_deterministically() -> None:
 	device = CompilerDevice()
 	sources = {
@@ -51,6 +61,64 @@ out << compiler::run_workspace("workspace.xe")
 	_, error, _ = run("ide_workspace_test.xe", source, context)
 	assert error is None
 	assert "".join(output) == "42"
+
+
+def test_in_vm_workspace_run_presents_graphical_child_frames(tmp_path: Path) -> None:
+	drive = tmp_path / "drive"
+	drive.mkdir()
+	(drive / "workspace.xe").write_text(
+		'''var win: graphics::Window
+win.x = 24
+win.y = 20
+win.width = 120
+win.height = 80
+win.title = "Preview"
+win.ui_scale = 1
+win.state = graphics::WINDOW_NORMAL
+call graphics::begin_draw(win)
+call graphics::clear(win, graphics::BLACK)
+call graphics::fill_rect(win, 8, 8, 40, 18, graphics::COLOR_5)
+call graphics::update(win)
+win.close()
+''',
+		encoding="utf-8",
+	)
+	frames = []
+	context = RuntimeContext(filesystem_root=drive, frame_handler=frames.append)
+	_, error, _ = run(
+		"graphical_workspace_test.xe",
+		'out << compiler::run_workspace("workspace.xe")',
+		context,
+	)
+	assert error is None
+	assert frames
+	assert any(color != 0 for color in frames[-1].indices)
+
+
+def test_in_vm_workspace_run_routes_audio_only_child_to_host(tmp_path: Path) -> None:
+	from xe_lang.media import NoteEvent, Track, encode_xmusic
+
+	drive = tmp_path / "drive"
+	drive.mkdir()
+	(drive / "workspace.xe").write_text(
+		'''var track: audio::Track
+var playing: bool
+track = audio::load("tone.xmusic")
+playing = audio::play(track)
+''',
+		encoding="utf-8",
+	)
+	words = encode_xmusic(Track(120, 480, (NoteEvent(0, 480, 60),)))
+	(drive / "tone.xmusic").write_text("\n".join(hex(word) for word in words), encoding="ascii")
+	states = []
+	context = RuntimeContext(filesystem_root=drive, audio_handler=states.append)
+	_, error, _ = run(
+		"audio_workspace_test.xe",
+		'out << compiler::run_workspace("workspace.xe")',
+		context,
+	)
+	assert error is None
+	assert any(state.playing and state.voices for state in states)
 
 
 def test_nested_workspace_ignores_unrelated_projects_in_private_drive(tmp_path: Path) -> None:

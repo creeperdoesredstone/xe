@@ -23,7 +23,7 @@ def parse(tokens: list[Token]) -> Result:
 
 	# helper subroutines
 	def make_binary_op(token_types: list[TT], left_func, right_func=None) -> Result:
-		if right_func == None:
+		if right_func is None:
 			right_func = left_func
 
 		res: Result = Result()

@@ -302,7 +302,13 @@ class DeviceRuntime:
 		handler = self._handlers.get(syscall_id)
 		if handler is None:
 			return False
-		handler(vm, result)
+		try:
+			handler(vm, result)
+		except Exception as error:
+			self._fail(
+				result,
+				f"Syscall {int(syscall_id)} failed safely: {type(error).__name__}: {error}",
+			)
 		return True
 
 	def _args(self, vm: Any, result: Any, count: int) -> list[int] | None:
@@ -596,7 +602,8 @@ class DeviceRuntime:
 			self._fail(result, "Image data extends beyond memory")
 			return
 		scale_value = _float(scale_bits)
-		if scale_value <= 0:
+		if not math.isfinite(scale_value) or scale_value <= 0 or scale_value > 4096.0:
+			self._fail(result, "Invalid image scale")
 			return
 		left = _signed(x)
 		top = _signed(y)
@@ -741,14 +748,14 @@ class DeviceRuntime:
 		if args is None:
 			return
 		char = args[0]
-		vm.push(self.graphics.get_chr_width(char))
+		vm.push(self.graphics.get_chr_width(char & 0xFF))
 
 	def _raw_width_small(self, vm: Any, result: Any) -> None:
 		args = self._args(vm, result, 1)
 		if args is None:
 			return
 		char = args[0]
-		vm.push(self.graphics.get_chr_width_small(char))
+		vm.push(self.graphics.get_chr_width_small(char & 0xFF))
 
 	def _raw_mouse_poll(self, vm: Any, result: Any) -> None:
 		event, x, y = self.input.poll_mouse()
@@ -1855,6 +1862,11 @@ class DeviceRuntime:
 			from xe_lang.vm import VM
 
 			_compiler_run_state.depth = depth + 1
+			interactive_graphics = any(
+				capability in {"core.graphics", "app.graphics", "app.window"}
+				for capability in self.compiler.required_capabilities
+			)
+			interactive_audio = "app.audio" in self.compiler.required_capabilities
 			child = VM(
 				list(self.compiler.bytecode),
 				output_handler=capture,
@@ -1866,9 +1878,23 @@ class DeviceRuntime:
 				request_handler=None,
 				memory_words=len(vm.data_memory),
 			)
+			if interactive_graphics:
+				# The virtual IDE pauses while its child program owns the stage. Sharing
+				# the live framebuffer and input device makes graphical workspace runs
+				# visible and draggable; closing the child window returns to the IDE.
+				child.devices.graphics = self.graphics
+				child.devices.input = self.input
+				child.devices.windows = WindowManager(
+					self.graphics,
+					self.input,
+					appearance=self.os,
+				)
+				child.devices.images = self.images
+			if interactive_audio:
+				child.devices.audio = self.audio
 			run_result = child.run(
-				instruction_limit=COMPILER_RUN_INSTRUCTION_LIMIT,
-				wall_time_limit=COMPILER_RUN_TIME_LIMIT,
+				instruction_limit=None if interactive_graphics else COMPILER_RUN_INSTRUCTION_LIMIT,
+				wall_time_limit=None if interactive_graphics else COMPILER_RUN_TIME_LIMIT,
 			)
 			if vm.cancel_event.is_set():
 				message = "Runtime canceled."

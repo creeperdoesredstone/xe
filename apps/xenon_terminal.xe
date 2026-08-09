@@ -1,5 +1,11 @@
 # Xenon Terminal: a deterministic, sandboxed command workspace.
 
+# App metadata and default geometry.
+const APP_TITLE = "Xenon Terminal"
+const APP_DEFAULT_WIDTH = 300
+const APP_DEFAULT_HEIGHT = 230
+
+# Model and state.
 var terminal_window: graphics::Window
 var terminal_command: string
 var terminal_clipboard: string
@@ -102,6 +108,7 @@ proc terminal_paste_clipboard() {
 	}
 }
 
+# Input and interaction.
 proc handle_terminal_control_shortcut(key: int) {
 	if (key == 1 || key == 65 || key == 97) {
 		call terminal_select_all()
@@ -806,10 +813,13 @@ proc execute_terminal_command() {
 	}
 	elseif (terminal_arg_0 == "tree") {
 		path = terminal_resolve_path(terminal_arg_1)
-		call clear_terminal_text(terminal_echo)
-		call xestring::append(terminal_echo, terminal_base_name(path))
-		call terminal_tree_directory(path, "", 0)
-		call set_active_output(terminal_echo)
+		if (!terminal_path_is_directory(path)) { call set_active_output("tree: directory not found") }
+		else {
+			call clear_terminal_text(terminal_echo)
+			call xestring::append(terminal_echo, terminal_base_name(path))
+			call terminal_tree_directory(path, "", 0)
+			call set_active_output(terminal_echo)
+		}
 	}
 	elseif (terminal_arg_0 == "cat" || terminal_arg_0 == "type") {
 		if (xestring::strlen(terminal_arg_1) == 0) { call set_active_output("Usage: cat <file>") }
@@ -896,7 +906,7 @@ proc execute_terminal_command() {
 	}
 	elseif (terminal_arg_0 == "wc") {
 		path = terminal_resolve_path(terminal_arg_1)
-		if (xestring::strlen(terminal_arg_1) == 0 || !os::path_exists(path)) { call set_active_output("Usage: wc <file>") }
+		if (xestring::strlen(terminal_arg_1) == 0 || !os::path_exists(path) || terminal_path_is_directory(path)) { call set_active_output("Usage: wc <file>") }
 		else {
 			call terminal_read_path(path)
 			source_text = xestring::concat("", terminal_echo)
@@ -906,7 +916,7 @@ proc execute_terminal_command() {
 	}
 	elseif (terminal_arg_0 == "xe-check") {
 		path = terminal_resolve_path(terminal_arg_1)
-		if (xestring::strlen(terminal_arg_1) == 0 || !os::path_exists(path)) { call set_active_output("Usage: xe-check <file.xe>") }
+		if (xestring::strlen(terminal_arg_1) == 0 || !os::path_exists(path) || terminal_path_is_directory(path)) { call set_active_output("Usage: xe-check <file.xe>") }
 		else {
 			call terminal_read_path(path)
 			if (compiler::check(terminal_echo)) { call set_active_output("Xe check passed") }
@@ -915,7 +925,7 @@ proc execute_terminal_command() {
 	}
 	elseif (terminal_arg_0 == "xe-run") {
 		path = terminal_resolve_path(terminal_arg_1)
-		if (xestring::strlen(terminal_arg_1) == 0 || !os::path_exists(path)) { call set_active_output("Usage: xe-run <file.xe>") }
+		if (xestring::strlen(terminal_arg_1) == 0 || !os::path_exists(path) || terminal_path_is_directory(path)) { call set_active_output("Usage: xe-run <file.xe>") }
 		else {
 			call terminal_read_path(path)
 			source_text = compiler::run(terminal_echo)
@@ -1111,6 +1121,7 @@ proc erase_terminal_character() {
 	}
 }
 
+# Layout helpers.
 proc draw_terminal_line(x: int, y: int, width: int, text: string) {
 	var length: int
 	var visible: int
@@ -1165,6 +1176,9 @@ fn terminal_wrapped_rows(text: string, columns: int) int {
 	var word_length: int
 	var column: int
 	var rows: int
+	var spaces: int
+	var space_index: int
+	if (columns < 1) { columns = 1 }
 	index = 0
 	column = 0
 	rows = 1
@@ -1174,22 +1188,27 @@ fn terminal_wrapped_rows(text: string, columns: int) int {
 			column = 0
 			index += 1
 		}
-		elseif ((int)(text[index]) == 32) {
+		elseif ((int)(text[index]) == 32 || (int)(text[index]) == 9) {
+			spaces = 1
+			if ((int)(text[index]) == 9) { spaces = 4 - column % 4 }
+			space_index = 0
+			while (space_index < spaces) {
+				if (column >= columns) { rows += 1; column = 0 }
+				column += 1
+				space_index += 1
+			}
 			index += 1
 		}
 		else {
 			word_end = index
-			while (word_end < xestring::strlen(text) && (int)(text[word_end]) != 10 && (int)(text[word_end]) != 32) { word_end += 1 }
+			while (word_end < xestring::strlen(text) && (int)(text[word_end]) != 10 && (int)(text[word_end]) != 32 && (int)(text[word_end]) != 9) { word_end += 1 }
 			word_length = word_end - index
-			if (column > 0 && column + 1 + word_length > columns) {
+			if (column > 0 && column + word_length > columns) {
 				rows += 1
 				column = 0
 			}
 			if (word_length > columns) { column = columns }
-			else {
-				if (column > 0) { column += 1 }
-				column += word_length
-			}
+			else { column += word_length }
 			index = word_end
 		}
 	}
@@ -1210,6 +1229,8 @@ proc draw_terminal_wrapped(x: int, y: int, width: int, height: int, text: string
 	var word_scroll: int
 	var column: int
 	var row: int
+	var spaces: int
+	var space_index: int
 	character_width = 4
 	row_height = 6
 	if (large) {
@@ -1233,18 +1254,25 @@ proc draw_terminal_wrapped(x: int, y: int, width: int, height: int, text: string
 			row += 1
 			index += 1
 		}
-		elseif ((int)(text[index]) == 32) {
+		elseif ((int)(text[index]) == 32 || (int)(text[index]) == 9) {
+			spaces = 1
+			if ((int)(text[index]) == 9) { spaces = 4 - column % 4 }
+			space_index = 0
+			while (space_index < spaces) {
+				if (column >= columns) { row += 1; column = 0 }
+				column += 1
+				space_index += 1
+			}
 			index += 1
 		}
 		else {
 			word_end = index
-			while (word_end < xestring::strlen(text) && (int)(text[word_end]) != 10 && (int)(text[word_end]) != 32) { word_end += 1 }
+			while (word_end < xestring::strlen(text) && (int)(text[word_end]) != 10 && (int)(text[word_end]) != 32 && (int)(text[word_end]) != 9) { word_end += 1 }
 			word_length = word_end - index
-			if (column > 0 && column + 1 + word_length > columns) {
+			if (column > 0 && column + word_length > columns) {
 				row += 1
 				column = 0
 			}
-			if (column > 0) { column += 1 }
 			word_index = 0
 			word_scroll = 0
 			if (word_length > columns) {
@@ -1282,6 +1310,7 @@ fn terminal_ease_out(progress: int) int {
 	return 100 - remaining * remaining / 100
 }
 
+# Paint and replaceable asset hooks.
 proc draw_revealing_tab(x: int, target_width: int, label: string, progress: int, color: int) {
 	var width: int
 	var pixel_x: int
@@ -1569,14 +1598,17 @@ var maximum_command_chars: int
 var command_color: int
 var output_width: int
 var output_page_rows: int
+var output_body_height: int
+var monitor_height: int
 var wheel_delta: int
 var latest_label: string
 
+# Application driver.
 terminal_window.x = 44
 terminal_window.y = 34
-terminal_window.width = 300
-terminal_window.height = 230
-terminal_window.title = "Xenon Terminal"
+terminal_window.width = APP_DEFAULT_WIDTH
+terminal_window.height = APP_DEFAULT_HEIGHT
+terminal_window.title = APP_TITLE
 terminal_window.ui_scale = 1
 terminal_window.state = graphics::WINDOW_NORMAL
 previous_ticks = os::ticks()
@@ -1612,7 +1644,7 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 
 		tab_width = (content_width - 24) / 3
 		if (tab_width > 38) { tab_width = 38 }
-		if (tab_width < 14) { tab_width = 14 }
+		if (tab_width < 4) { tab_width = 4 }
 		tab_step = tab_width + 2
 		plus_width = 14
 		animation_eased = terminal_ease_out(tab_animation_progress)
@@ -1677,7 +1709,8 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 				call draw_terminal_tab(2, tab_draw_x, tab_width, "T3", accent_color)
 			}
 		}
-		if (graphics::button_tone(terminal_window, plus_x, 2, plus_width, 7, "+", graphics::COLOR_2)) {
+		if (plus_x + plus_width > content_width - 2) { plus_width = content_width - plus_x - 2 }
+		if (plus_width >= 4 && graphics::button_tone(terminal_window, plus_x, 2, plus_width, 7, "+", graphics::COLOR_2)) {
 			if (tab_count < 3 && tab_animation_progress == 100 && !tab_closing) {
 				call initialize_terminal_tab(tab_count)
 				tab_count += 1
@@ -1702,24 +1735,27 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 		theme_label = "Theme Xenon"
 		if (tab_theme[active_tab] == 1) { theme_label = "Theme Amber" }
 		elseif (tab_theme[active_tab] == 2) { theme_label = "Theme Mono" }
-		if (graphics::button_flat(terminal_window, 4, 11, ribbon_button_width, 7, view_label, graphics::COLOR_8)) {
-			if (active_terminal_split()) { tab_split[active_tab] = 0 }
-			else { tab_split[active_tab] = 1 }
-		}
-		if (graphics::button_flat(terminal_window, 6 + ribbon_button_width, 11, ribbon_button_width, 7, monitor_label, graphics::COLOR_8)) {
-			if (active_terminal_monitor()) { tab_monitor[active_tab] = 0 }
-			else { tab_monitor[active_tab] = 1 }
-		}
-		if (graphics::button_flat(terminal_window, 8 + ribbon_button_width * 2, 11, ribbon_button_width, 7, theme_label, graphics::COLOR_8)) {
-			tab_theme[active_tab] += 1
-			if (tab_theme[active_tab] > 2) { tab_theme[active_tab] = 0 }
-		}
-		if (graphics::button_flat(terminal_window, 10 + ribbon_button_width * 3, 11, ribbon_button_width, 7, text_label, graphics::COLOR_8)) {
-			if (active_terminal_text_large()) { tab_text_large[active_tab] = 0 }
-			else { tab_text_large[active_tab] = 1 }
+		if (content_width >= 46) {
+			if (graphics::button_flat(terminal_window, 4, 11, ribbon_button_width, 7, view_label, graphics::COLOR_8)) {
+				if (active_terminal_split()) { tab_split[active_tab] = 0 }
+				else { tab_split[active_tab] = 1 }
+			}
+			if (graphics::button_flat(terminal_window, 6 + ribbon_button_width, 11, ribbon_button_width, 7, monitor_label, graphics::COLOR_8)) {
+				if (active_terminal_monitor()) { tab_monitor[active_tab] = 0 }
+				else { tab_monitor[active_tab] = 1 }
+			}
+			if (graphics::button_flat(terminal_window, 8 + ribbon_button_width * 2, 11, ribbon_button_width, 7, theme_label, graphics::COLOR_8)) {
+				tab_theme[active_tab] += 1
+				if (tab_theme[active_tab] > 2) { tab_theme[active_tab] = 0 }
+			}
+			if (graphics::button_flat(terminal_window, 10 + ribbon_button_width * 3, 11, ribbon_button_width, 7, text_label, graphics::COLOR_8)) {
+				if (active_terminal_text_large()) { tab_text_large[active_tab] = 0 }
+				else { tab_text_large[active_tab] = 1 }
+			}
 		}
 
 		command_width = content_width - 8
+		if (command_width < 1) { command_width = 1 }
 		command_y = content_height - 12
 		command_height = 10
 		if (content_height < 42) {
@@ -1727,6 +1763,7 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 			command_height = 6
 		}
 		body_y = 20
+		if (content_width < 46) { body_y = 11 }
 		body_height = command_y - body_y - 2
 		if (body_height < 0) { body_height = 0 }
 		side_width = 0
@@ -1740,9 +1777,12 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 		call graphics::draw_rect(terminal_window, 4, body_y, main_width, body_height, graphics::COLOR_8)
 
 		if (body_height >= 8) {
+			monitor_height = 0
+			if (active_terminal_monitor() && body_height >= 22) { monitor_height = 12 }
+			output_body_height = body_height - monitor_height
 			output_width = main_width - 4
-			if (main_width >= 54) { output_width = main_width - 22 }
-			output_page_rows = (body_height - 4) / 7
+			if (main_width >= 54 && output_body_height >= 24) { output_width = main_width - 22 }
+			output_page_rows = (output_body_height - 4) / 7
 			if (output_page_rows < 1) { output_page_rows = 1 }
 			wheel_delta = graphics::scroll_delta()
 			if (wheel_delta != 0 && terminal_pointer_inside(4, body_y, main_width, body_height)) {
@@ -1752,16 +1792,16 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 				}
 				else { call terminal_scroll_output(wheel_delta * 3) }
 			}
-			if (active_terminal_split() && body_height >= 30) {
-				split_height = body_height / 2
+			if (active_terminal_split() && output_body_height >= 30) {
+				split_height = output_body_height / 2
 				call draw_active_terminal_output(6, body_y + 3, output_width, split_height - 4, output_color)
 				call graphics::draw_line(terminal_window, 4, body_y + split_height, 4 + main_width, body_y + split_height, graphics::COLOR_8)
-				call draw_secondary_terminal_output(6, body_y + split_height + 3, output_width, body_height - split_height - 4, output_color)
+				call draw_secondary_terminal_output(6, body_y + split_height + 3, output_width, output_body_height - split_height - 4, output_color)
 			}
 			else {
-				call draw_active_terminal_output(6, body_y + 3, output_width, body_height - 4, output_color)
+				call draw_active_terminal_output(6, body_y + 3, output_width, output_body_height - 4, output_color)
 			}
-			if (main_width >= 54 && body_height >= 24) {
+			if (main_width >= 54 && output_body_height >= 24) {
 				if (graphics::button_flat(terminal_window, 5 + main_width - 18, body_y + 2, 14, 6, "^", graphics::COLOR_5)) {
 					call terminal_scroll_output(output_page_rows)
 				}
@@ -1774,14 +1814,14 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 					call terminal_follow_latest()
 				}
 			}
-			if (active_terminal_monitor() && body_height >= 22) {
+			if (monitor_height > 0) {
 				call graphics::draw_text_small(terminal_window, 7, body_y + body_height - 12, "ms", graphics::COLOR_8)
 				call graphics::draw_int_small(terminal_window, 17, body_y + body_height - 12, os::ticks(), output_color)
 				call graphics::draw_text_small(terminal_window, 7, body_y + body_height - 6, "VM 64K", graphics::COLOR_8)
 			}
 		}
 
-		if (side_width > 0) {
+		if (side_width > 0 && body_height >= 47) {
 			side_x = content_width - side_width - 4
 			if (!saved_list_open) {
 				if (graphics::button(terminal_window, side_x, body_y, side_width, 7, "Help")) {

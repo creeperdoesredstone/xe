@@ -8,6 +8,7 @@ service be replaced without coupling it to PyQt.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import importlib
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
 
@@ -260,9 +261,12 @@ def load_default_converter_service() -> XeSb3ExportService:
 	"""Load the optional canonical exporter without making it an IDE dependency."""
 
 	try:
-		import xe_lang.compiler_service
-		import xe_lang.sb3_exporter
-		import xe_lang.scratch_profile
+		for module_name in (
+			"xe_lang.compiler_service",
+			"xe_lang.sb3_exporter",
+			"xe_lang.scratch_profile",
+		):
+			importlib.import_module(module_name)
 		return CanonicalExporterAdapter()
 	except (ImportError, AttributeError, RuntimeError) as exc:
 		return UnavailableConverterService(str(exc) or None)
