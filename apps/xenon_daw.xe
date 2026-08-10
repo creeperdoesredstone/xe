@@ -1,0 +1,128 @@
+const APP_TITLE = "Xenon DAW"
+const APP_WIDTH = 300
+const APP_HEIGHT = 230
+
+const KEY_WIDTH = 20
+const KEY_HEIGHT = 7
+const KEY_NAMES       = "CCDDEFFGGAAB"
+const KEY_ACCIDENTALS = " # #  # # # "
+
+var daw_window: graphics::Window
+array channel_1_grid: int[256]
+array channel_2_grid: int[256]
+array channel_3_grid: int[256]
+
+var scroll_x: int
+var scroll_y: int
+var menu_left_x: float
+var menu_top_y: float
+
+var current_channel: int
+
+# Helper for setting note
+proc toggle_note(note_x: int, note_y: int, channel: int) {
+	var note: int
+	if (channel == 0) { note = channel_1_grid[note_x] }
+	if (channel == 1) { note = channel_2_grid[note_x] }
+	if (channel == 2) { note = channel_3_grid[note_x] }
+	if (note == note_y) { note = 0 }
+	else { note = note_y }
+	if (channel == 0) { channel_1_grid[note_x] = note_y }
+	if (channel == 1) { channel_2_grid[note_x] = note_y }
+	if (channel == 2) { channel_3_grid[note_x] = note_y }
+}
+
+# Keyboard drawing.
+proc draw_keys(vx: int, vy: int, vw: int, vh: int) {
+	var key_y: int
+	var key_idx: int
+	var key_col: int
+	var name_col: int
+	var grid_col: int
+	
+	var mouse_x: int
+	var mouse_y: int
+	var mouse_grid_x: int
+	var mouse_grid_y: int
+	var sel_box_x: int
+	var sel_box_y: int
+	
+	var grid_x: int
+	var grid_y: int
+	
+	key_y = vh - KEY_HEIGHT
+	key_idx = scroll_y % 12
+	mouse_x = graphics::mouse_x() - daw_window.x - 2
+	mouse_y = graphics::mouse_y() - daw_window.y - 17
+	
+	while (key_y >= 0) {
+		if (KEY_ACCIDENTALS[key_idx] == ' ') {
+			key_col = graphics::WHITE
+			name_col = graphics::BLACK
+			grid_col = graphics::COLOR_8
+		} else {
+			key_col = graphics::BLACK
+			name_col = graphics::WHITE
+			grid_col = graphics::COLOR_1
+		}
+		
+		call graphics::fill_rect(daw_window, vx, vy + key_y, KEY_WIDTH, KEY_HEIGHT, key_col)
+		call graphics::draw_char_small(daw_window, vx + 10, vy + key_y + 1, KEY_NAMES[key_idx], name_col)
+		call graphics::draw_char_small(daw_window, vx + 14, vy + key_y + 1, KEY_ACCIDENTALS[key_idx], name_col)
+		call graphics::fill_rect(daw_window, vx + KEY_WIDTH, vy + key_y, vw - KEY_WIDTH, KEY_HEIGHT, grid_col)
+		
+		key_y -= KEY_HEIGHT
+		key_idx = (key_idx + 1) % 12
+	}
+	
+	if (mouse_x >= vx + KEY_WIDTH && mouse_x < vx + vw && mouse_y >= vy && mouse_y < vy + vh) {
+		mouse_grid_x = (mouse_x - (vx + KEY_WIDTH)) / 8
+		mouse_grid_y = (mouse_y - vy) / KEY_HEIGHT
+		sel_box_x = 8*mouse_grid_x + vx + KEY_WIDTH
+		sel_box_y = KEY_HEIGHT*mouse_grid_y + vy
+		
+		if (graphics::button_tone(daw_window, sel_box_x, sel_box_y, 8, KEY_HEIGHT, " ", graphics::COLOR_1)) {
+			call toggle_note(mouse_grid_x + scroll_x, mouse_grid_y + scroll_y, current_channel)
+		}
+	}
+}
+
+proc draw_note_grid(vx: int, vy: int, vw: int, vh: int, scrollx: int, scrolly: int, channel: int) {
+	var draw_x: int
+	var draw_y: int
+}
+
+# GUI drawing.
+proc draw_vscroll(x: int, y: int, h: int, scrolly: int) {
+	call graphics::fill_rect(daw_window, x, y, 9, h, graphics::COLOR_1)
+	call graphics::draw_rect(daw_window, x, y, 9, h, graphics::COLOR_8)
+}
+
+proc draw_hscroll(x: int, y: int, w: int, scrollx: int) {}
+
+# Application driver.
+daw_window.x = 50
+daw_window.y = 50
+daw_window.width = APP_WIDTH
+daw_window.height = APP_HEIGHT
+daw_window.title = APP_TITLE
+daw_window.ui_scale = 1
+daw_window.state = graphics::WINDOW_NORMAL
+
+scroll_x = 0
+scroll_y = 0
+menu_left_x = 11.0
+menu_top_y = 11.0
+current_channel = 0
+
+while (daw_window.state != graphics::WINDOW_CLOSED) {
+	call graphics::begin_draw(daw_window)
+	
+	if (!daw_window.is_minimized()) {
+		call draw_keys((int)menu_left_x, (int)menu_top_y, daw_window.width - (int)menu_left_x - 17, daw_window.height - (int)menu_top_y - 30)
+		call draw_note_grid((int)menu_left_x, (int)menu_top_y, daw_window.width - (int)menu_left_x - 17, daw_window.height - (int)menu_top_y - 30, scroll_x, scroll_y, current_channel)
+		call draw_vscroll(daw_window.width - 15, (int)menu_top_y, daw_window.height - (int)menu_top_y - 30, scroll_y)
+	}
+
+	call graphics::update(daw_window)
+}

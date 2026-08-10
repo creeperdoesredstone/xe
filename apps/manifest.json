@@ -155,6 +155,20 @@
         "assembly": "asm/xenon_terminal.xas",
         "bytecode": "exe/xenon_terminal.xbn"
       }
+    },
+    {
+      "id": "xenon_daw",
+      "title": "Xenon DAW",
+      "category": "media",
+      "status": "current",
+      "entry": "apps/xenon_daw.xe",
+      "default_window": [300, 230],
+      "asset_namespace": "SystemAssets/XenonDAW",
+      "assets": [],
+      "artifacts": {
+        "assembly": "asm/xenon_daw.xas",
+        "bytecode": "exe/xenon_daw.xbn"
+      }
     }
   ]
 }

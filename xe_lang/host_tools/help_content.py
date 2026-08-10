@@ -198,6 +198,8 @@ Keyboard shortcuts:
 | New / Open / Save | Ctrl+N / Ctrl+O / Ctrl+S |
 | Find / Replace | Ctrl+F / Ctrl+H |
 | Run | Ctrl+Enter |
+| Toggle Comment | Ctrl+/ |
+| Rename Symbol | F2 |
 | Maximize graphics | Ctrl+Shift+G |
 | Open Help | F1 |
 
