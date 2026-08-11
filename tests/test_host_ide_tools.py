@@ -247,7 +247,7 @@ def test_converter_fallback_picker_never_uses_an_sb3_suffix(app, monkeypatch, tm
 	pane.close()
 
 
-def test_canonical_converter_analysis_is_side_effect_free(tmp_path):
+def test_canonical_converter_analysis_is_side_effect_free(app, tmp_path):
 	entry = tmp_path / "workspace.xe"
 	entry.write_text("out << 42", encoding="utf-8")
 	before = {path.name for path in tmp_path.iterdir()}
@@ -256,6 +256,7 @@ def test_canonical_converter_analysis_is_side_effect_free(tmp_path):
 	pane = ConverterPane(service=service)
 	assert profile.name in pane.profile_field.text()
 	assert f"{profile.address_limit:,}" in pane.profile_field.text()
+	assert "local load" in pane.profile_field.text()
 	assert "scratch-200k" not in pane.profile_field.text().casefold()
 	pane.close()
 	report = service.analyze(
@@ -266,6 +267,8 @@ def test_canonical_converter_analysis_is_side_effect_free(tmp_path):
 			workspace_root=tmp_path,
 		)
 	)
+	assert report.exact
+	assert not report.blocked
 	assert "Profile" in report.details
 	assert not any(issue.code == "export-service-unavailable" for issue in report.issues)
 	assert {path.name for path in tmp_path.iterdir()} == before

@@ -117,7 +117,8 @@ class CanonicalExporterAdapter:
 		profile = load_bundled_profile()
 		return (
 			f"{profile.name} · {profile.version} · "
-			f"{profile.address_limit:,} addresses"
+			f"{profile.address_limit:,} addresses · "
+			f"{profile.distribution.replace('-', ' ')}"
 		)
 
 	def _compile(self, request: ConversionRequest):

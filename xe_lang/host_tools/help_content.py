@@ -138,9 +138,8 @@ the same program can be moved to the Scratch VM profile.
 
 The `os` library exposes process, settings, time, and virtual-file operations. The
 Python host uses a private Xenon virtual drive rather than the computer's real
-folders. A future full Scratch profile can map that drive to project-backed lists;
-the bundled legacy profile currently blocks file syscalls instead of approximating
-them.
+folders. The full-ABI Scratch profile maps portable file operations to a
+project-local list-backed VFS. It never exposes the computer's filesystem.
 
 ```xe
 os::volume = 75
@@ -219,10 +218,22 @@ read-only Xenon virtual-drive picker. The picker opens a selected source immedia
 on double-click and offers an explicit computer browser for files outside the private
 drive. Run **Check compatibility** first.
 
-An **Exact** result means the pinned VM profile can reproduce the program. A
+An **Exact** result means the pinned full-ABI VM profile can reproduce the program. A
 **Blocked** result lists the source locations, syscalls, assets, or memory constraints
 that prevent exact export. If enabled, fallback export writes an XBN compatibility
 bundle and labels it as a fallback; it never claims to be an exact `.sb3`.
+
+The full profile includes the ten-bank 2,000,000-word memory router and a conservative
+allowlist of verified portable services. A dispatcher branch by itself never counts
+as exact. File Explorer's native right-click and command-stream calls are allowed only
+for the pinned artifact whose left-hold and primitive-drawing fallbacks are tested.
+Host compiler calls and portable image/audio assets remain blocked until a
+deterministic project ROM is implemented. The older 65,536-word template is retained
+only as a regression-audit fixture.
+
+The full-ABI profile is labeled **local load**: its two million physical list cells
+make the project JSON larger than the Scratch website's save/share service limit.
+Use **File → Load from your computer** to run the exported project.
 
 Exports are explicit. Compatibility analysis is side-effect free.
 """,

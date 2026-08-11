@@ -291,8 +291,23 @@ class ImageCanvas(QWidget):
 			painter.drawRect(self._screen_rect(self.selection_rect))
 
 	def wheelEvent(self, event: QWheelEvent) -> None:
+		if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+			angle = event.angleDelta()
+			delta = angle.x() if angle.x() else angle.y()
+			if not delta:
+				pixel = event.pixelDelta()
+				delta = pixel.x() if pixel.x() else pixel.y()
+			if delta:
+				self.pan += QPointF(delta / 120.0 * 32.0, 0.0)
+				self.update()
+				event.accept()
+				return
 		old_zoom = self.zoom
-		factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
+		delta = event.angleDelta().y() or event.pixelDelta().y()
+		if not delta:
+			event.ignore()
+			return
+		factor = 1.15 if delta > 0 else 1 / 1.15
 		new_zoom = min(64.0, max(0.125, old_zoom * factor))
 		if abs(new_zoom - old_zoom) < 0.0001:
 			return

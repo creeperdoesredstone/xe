@@ -25,7 +25,7 @@ from scratch_vm.build_file_explorer_port import (
 )
 from xe_lang.compiler_service import compile_source
 from xe_lang.sb3_exporter import analyze_compatibility
-from xe_lang.scratch_profile import load_bundled_profile
+from xe_lang.scratch_profile import load_bundled_profile, load_legacy_profile
 
 
 def _project() -> dict[str, object]:
@@ -47,7 +47,7 @@ def test_native_file_explorer_artifact_is_a_deterministic_valid_sb3() -> None:
 	first = build_bytes()
 	second = build_bytes()
 	assert first == second == DEFAULT_OUTPUT.read_bytes()
-	assert hashlib.sha256(first).hexdigest() == "28418c85522d91182f3cb511d0c5317718c85cd44b2892d04ccb62c2d8216c20"
+	assert hashlib.sha256(first).hexdigest() == "bc7694a157e20e199d7f0809711cf9878f67b6cbc9ebc379da93b91f208a0ef2"
 	with zipfile.ZipFile(DEFAULT_OUTPUT) as archive:
 		assert archive.testzip() is None
 		assert archive.namelist() == sorted(archive.namelist())
@@ -156,12 +156,15 @@ def test_metadata_truthfully_marks_direct_port_and_source_snapshot() -> None:
 	assert meta["sourceSha256"] == source_hash()
 
 
-def test_xe_file_explorer_remains_blocked_by_the_legacy_exact_exporter() -> None:
+def test_xe_file_explorer_is_supported_by_full_profile_but_blocked_by_legacy() -> None:
 	source_path = Path("apps/file_explorer.xe")
 	artifact = compile_source(source_path.read_text(encoding="utf-8"), source_path.as_posix())
 	assert artifact.success
-	report = analyze_compatibility(artifact, load_bundled_profile())
+	report = analyze_compatibility(artifact, load_legacy_profile())
 	assert report.exact is False
 	unsupported = {issue.syscall for issue in report.issues if issue.code == "unsupported-syscall"}
-	assert unsupported == set(artifact.required_syscalls) - set(load_bundled_profile().supported_syscalls)
+	assert unsupported == set(artifact.required_syscalls) - set(load_legacy_profile().supported_syscalls)
 	assert unsupported
+	full_report = analyze_compatibility(artifact, load_bundled_profile())
+	assert full_report.exact
+	assert not full_report.issues

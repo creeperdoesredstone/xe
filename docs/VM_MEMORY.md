@@ -54,7 +54,7 @@ an allocator policy, not an address-permission boundary.
 
 Python embedders can still request `65,536..2,000,000` logical words for compatibility
 tests. A shorter host memory uses the minimum number of banks, with a shorter final
-bank if necessary. The eventual Scratch VM target is the full ten-bank default.
+bank if necessary. The full Scratch VM uses the ten-bank default.
 
 ## Host storage and performance
 

@@ -21,7 +21,7 @@ from .currency import CurrencyDevice
 from .compiler import CompilerDevice
 from .assets import AudioDevice, AudioState, ImageAssetStore
 from .filesystem import FileSystemDevice
-from .graphics import FrameSnapshot, GraphicsDevice
+from .graphics import FrameSnapshot, GraphicsBufferSnapshot, GraphicsDevice
 from .input import InputDevice
 from .os_state import OSDevice
 from .theme import SCREEN_HEIGHT, SCREEN_WIDTH
@@ -97,6 +97,7 @@ class DeviceRuntime:
 		self._frame_window_handle = 0
 		self._frame_is_screen = False
 		self._next_frame_at = 0.0
+		self._graphics_backdrop: GraphicsBufferSnapshot | None = None
 		self._handlers = {
 			SyscallID.OS_RAND32: self._raw_rand32,
 			SyscallID.OS_RANDF: self._raw_randf,
@@ -223,6 +224,8 @@ class DeviceRuntime:
 			SyscallID.APP_OS_GET_SETTINGS_ENABLED: self._os_get_settings_enabled,
 			SyscallID.APP_OS_SET_SETTINGS_ENABLED: self._os_set_settings_enabled,
 			SyscallID.APP_OS_APPLY_PREFERENCES: self._os_apply_preferences,
+			SyscallID.APP_OS_PREVIEW_PREFERENCES: self._os_preview_preferences,
+			SyscallID.APP_OS_CLEAR_PREVIEW: self._os_clear_preview,
 			SyscallID.APP_CURRENCY_COUNT: self._currency_count,
 			SyscallID.APP_CURRENCY_CODE: self._currency_code,
 			SyscallID.APP_CURRENCY_LOAD: self._currency_load,
@@ -297,6 +300,15 @@ class DeviceRuntime:
 
 	def set_frame_handler(self, handler: Callable[[FrameSnapshot], None] | None) -> None:
 		self.graphics.set_frame_handler(handler)
+
+	def set_graphics_backdrop(self, snapshot: GraphicsBufferSnapshot | None) -> None:
+		self._graphics_backdrop = snapshot
+
+	def _draw_graphics_background(self) -> None:
+		if self._graphics_backdrop is None:
+			self.os.draw_background(self.graphics)
+		else:
+			self.graphics.restore_backdrop(self._graphics_backdrop)
 
 	def dispatch(self, syscall_id: int, vm: Any, result: Any) -> bool:
 		handler = self._handlers.get(syscall_id)
@@ -831,7 +843,7 @@ class DeviceRuntime:
 			return
 		pointer, handle, _ = entry
 		self.graphics.reset_clip()
-		self.os.draw_background(self.graphics)
+		self._draw_graphics_background()
 		if not handle:
 			self.graphics.set_clip(0, 0, 0, 0)
 			return
@@ -1570,6 +1582,15 @@ class DeviceRuntime:
 			values = [_signed(value) for value in args]
 			self._push_bool(vm, self.os.apply_preferences(*values))
 
+	def _os_preview_preferences(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 4)
+		if args is not None:
+			values = [_signed(value) for value in args]
+			self._push_bool(vm, self.os.preview_preferences(*values))
+
+	def _os_clear_preview(self, vm: Any, result: Any) -> None:
+		self.os.clear_preview()
+
 	def _currency_count(self, vm: Any, result: Any) -> None:
 		vm.push(self.currency.count)
 
@@ -1858,6 +1879,7 @@ class DeviceRuntime:
 			output.append(piece)
 			output_length += len(piece)
 
+		parent_buffers: GraphicsBufferSnapshot | None = None
 		try:
 			from xe_lang.vm import VM
 
@@ -1867,6 +1889,8 @@ class DeviceRuntime:
 				for capability in self.compiler.required_capabilities
 			)
 			interactive_audio = "app.audio" in self.compiler.required_capabilities
+			if interactive_graphics:
+				parent_buffers = self.graphics.capture_buffers()
 			child = VM(
 				list(self.compiler.bytecode),
 				output_handler=capture,
@@ -1879,11 +1903,12 @@ class DeviceRuntime:
 				memory_words=len(vm.data_memory),
 			)
 			if interactive_graphics:
-				# The virtual IDE pauses while its child program owns the stage. Sharing
-				# the live framebuffer and input device makes graphical workspace runs
-				# visible and draggable; closing the child window returns to the IDE.
+				# Child windows share host presentation and input, but their manager owns
+				# only child handles. A fixed parent backdrop keeps the invoking app
+				# visible while its synchronous child is running.
 				child.devices.graphics = self.graphics
 				child.devices.input = self.input
+				child.devices.set_graphics_backdrop(parent_buffers)
 				child.devices.windows = WindowManager(
 					self.graphics,
 					self.input,
@@ -1914,6 +1939,10 @@ class DeviceRuntime:
 			return
 		finally:
 			_compiler_run_state.depth = depth
+			if parent_buffers is not None:
+				self.graphics.restore_buffers(parent_buffers)
+				self.graphics.reset_clip()
+				self.graphics.publish(self.os.palette)
 
 		text = "".join(output)
 		if truncated:

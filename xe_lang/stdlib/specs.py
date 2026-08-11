@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from xe_lang import graphics_commands as gc
+from xe_lang.design_tokens import WINDOW_COMPONENT_TOKENS
 from xe_lang.stdlib.ids import BuiltInID
 from xe_lang.syscall_abi import SyscallID
 
@@ -172,6 +173,17 @@ GRAPHICS_SPEC = LibrarySpec(
 		ConstantSpec("TEXT_BOLD", 1),
 		ConstantSpec("TEXT_ITALIC", 2),
 		ConstantSpec("TEXT_UNDERLINE", 4),
+		ConstantSpec("WINDOW_TITLE_HEIGHT", WINDOW_COMPONENT_TOKENS.title_height),
+		ConstantSpec("WINDOW_BORDER_WIDTH", WINDOW_COMPONENT_TOKENS.border_width),
+		ConstantSpec("WINDOW_BORDER_COLOR", WINDOW_COMPONENT_TOKENS.border_color),
+		ConstantSpec("WINDOW_TITLE_COLOR", WINDOW_COMPONENT_TOKENS.title_color),
+		ConstantSpec("WINDOW_CONTENT_COLOR", WINDOW_COMPONENT_TOKENS.content_color),
+		ConstantSpec("WINDOW_TEXT_COLOR", WINDOW_COMPONENT_TOKENS.text_color),
+		ConstantSpec("WINDOW_CONTROL_COLOR", WINDOW_COMPONENT_TOKENS.button_color),
+		ConstantSpec("WINDOW_CONTROL_SIZE", WINDOW_COMPONENT_TOKENS.control_size),
+		ConstantSpec("WINDOW_CONTROL_GAP", WINDOW_COMPONENT_TOKENS.control_gap),
+		ConstantSpec("WINDOW_TITLE_TEXT_OFFSET", WINDOW_COMPONENT_TOKENS.title_text_offset),
+		ConstantSpec("WINDOW_ROUNDED_INSET", WINDOW_COMPONENT_TOKENS.rounded_corner_inset),
 		ConstantSpec("COMMAND_MAGIC", gc.MAGIC),
 		ConstantSpec("COMMAND_VERSION", gc.VERSION),
 		ConstantSpec("COMMAND_HEADER_WORDS", gc.HEADER_WORDS),
@@ -271,6 +283,14 @@ OS_SPEC = LibrarySpec(
 		_builtin("clipboard_read", BuiltInID.OS_CLIPBOARD_READ, (), "string", SyscallID.APP_OS_CLIPBOARD_READ),
 		_builtin("clipboard_write", BuiltInID.OS_CLIPBOARD_WRITE, ("string",), "bool", SyscallID.APP_OS_CLIPBOARD_WRITE),
 		_builtin(
+			"preview_preferences",
+			BuiltInID.OS_PREVIEW_PREFERENCES,
+			("int", "int", "int", "int"),
+			"bool",
+			SyscallID.APP_OS_PREVIEW_PREFERENCES,
+		),
+		_builtin("clear_preview", BuiltInID.OS_CLEAR_PREVIEW, (), None, SyscallID.APP_OS_CLEAR_PREVIEW),
+		_builtin(
 			"apply_preferences",
 			BuiltInID.OS_APPLY_PREFERENCES,
 			("int", "int", "int", "int", "int", "int", "int", "int", "int", "int", "bool"),
@@ -285,7 +305,6 @@ OS_SPEC = LibrarySpec(
 		ConstantSpec("THEME_LIGHT", 1),
 		ConstantSpec("CORNER_SQUARE", 0),
 		ConstantSpec("CORNER_ROUNDED", 1),
-		ConstantSpec("CORNER_SOFT", 2),
 		ConstantSpec("ICON_SMALL", 0),
 		ConstantSpec("ICON_MEDIUM", 1),
 		ConstantSpec("ICON_LARGE", 2),

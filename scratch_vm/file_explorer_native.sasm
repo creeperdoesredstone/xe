@@ -9,6 +9,8 @@ stage {
   var selectedType = ""
   var lastClickedID = 0
   var lastClickTime = -10
+  var contextTargetID = 0
+  var contextOpen = 0
   var nextID = 8
   var statusText = "Double-click a folder to open it"
 
@@ -30,6 +32,11 @@ stage {
   list VFS_TYPES = ["folder", "folder", "file", "file", "file", "file", "file"]
   list VFS_PARENTS = [0, 0, 0, 0, 1, 1, 2]
   list VFS_PATHS = ["/Documents/", "/Pictures/", "/notes.xe", "/readme.txt", "/Documents/demo.xe", "/Documents/guide.txt", "/Pictures/icon.ximg"]
+
+  list XE_DESIGN_TOKEN_NAMES = ["window_body", "window_titlebar", "window_border", "text_primary", "text_muted", "accent", "danger", "titlebar_height", "control_height", "corner_radius"]
+  list XE_DESIGN_TOKEN_VALUES = ["#020817", "#a94eed", "#b04af3", "#ffffff", "#c8d8ff", "#2dd4bf", "#6b2737", 38, 28, 0]
+  list XE_DESIGN_STATE_NAMES = ["background", "palette", "theme_mode", "corner_style", "icon_size", "clock_format", "master_volume", "music_volume", "sfx_volume", "settings_enabled"]
+  list XE_DESIGN_STATE_VALUES = [0, 0, 0, 0, 1, 24, 100, 100, 100, 1]
 
   # One logical 32-bit word maps to exactly one Scratch list item. Banks 0-4
   # form the 1M working tier and banks 5-9 form the 1M standby tier.
@@ -132,6 +139,8 @@ stage {
     selectedType = ""
     lastClickedID = 0
     lastClickTime = -10
+    contextTargetID = 0
+    contextOpen = 0
     statusText = "Double-click a folder to open it"
     MEM_STANDBY_ACTIVE = 0
     MEM_NEXT_ADDRESS = 4
@@ -186,6 +195,12 @@ sprite "Item" {
   var nodeCount = 1
   var orbitAngle = 0
   var orbitSpeed = 0.7
+  var holdArmed = 0
+  var holdBlocked = 0
+  var holdConsumed = 0
+  var holdStartTime = 0
+  var holdStartX = 0
+  var holdStartY = 0
   state x=0 y=0 direction=90 size=100 visible=false layer=2
   rotationStyle "don't rotate"
   costume "File" 34x40 center 17,20 {
@@ -231,6 +246,9 @@ sprite "Item" {
 
   @control.clone:
     isClone = 1
+    holdArmed = 0
+    holdBlocked = 0
+    holdConsumed = 0
     orbitAngle = ((nodeSlot - 1) * 360) / nodeCount
     if nodeType == "folder":
       looks.costume "Folder"
@@ -240,8 +258,36 @@ sprite "Item" {
     forever:
       if sensing.touching("_mouse_"):
         orbitSpeed = 0.12
+        if sensing.mousedown():
+          if holdArmed == 0 and holdBlocked == 0:
+            holdArmed = 1
+            holdStartTime = sensing.timer()
+            holdStartX = sensing.mousex()
+            holdStartY = sensing.mousey()
+          if holdArmed == 1 and (abs(sensing.mousex() - holdStartX) > 4 or abs(sensing.mousey() - holdStartY) > 4):
+            holdArmed = 0
+            holdBlocked = 1
+          if holdArmed == 1 and sensing.timer() - holdStartTime >= 0.5:
+            holdArmed = 0
+            holdBlocked = 1
+            holdConsumed = 1
+            contextTargetID = nodeID
+            contextOpen = 1
+            selectedID = nodeID
+            selectedName = nodeName
+            selectedType = nodeType
+            statusText = join("Actions ready for ", nodeName)
+        else:
+          holdArmed = 0
+          holdBlocked = 0
       else:
         orbitSpeed = 0.7
+        if sensing.mousedown():
+          holdArmed = 0
+          holdBlocked = 1
+        else:
+          holdArmed = 0
+          holdBlocked = 0
       orbitAngle += orbitSpeed
       motion.goto cos(orbitAngle) * 126, -25 + sin(orbitAngle) * 73
       if sensing.touching("_mouse_") or selectedID == nodeID:
@@ -252,22 +298,27 @@ sprite "Item" {
 
   @event.clicked:
     if isClone == 1:
-      selectedID = nodeID
-      selectedName = nodeName
-      selectedType = nodeType
-      statusText = join("Selected: ", nodeName)
-      if nodeType == "folder" and lastClickedID == nodeID and sensing.timer() - lastClickTime < 0.5:
-        currentFolder = nodeID
-        currentPath = nodePath
-        selectedID = 0
-        selectedName = "None"
-        selectedType = ""
-        lastClickedID = 0
-        statusText = join("Opened ", nodeName)
-        event.broadcast refreshRequest
+      if holdConsumed == 1:
+        holdConsumed = 0
       else:
-        lastClickedID = nodeID
-        lastClickTime = sensing.timer()
+        contextOpen = 0
+        contextTargetID = 0
+        selectedID = nodeID
+        selectedName = nodeName
+        selectedType = nodeType
+        statusText = join("Selected: ", nodeName)
+        if nodeType == "folder" and lastClickedID == nodeID and sensing.timer() - lastClickTime < 0.5:
+          currentFolder = nodeID
+          currentPath = nodePath
+          selectedID = 0
+          selectedName = "None"
+          selectedType = ""
+          lastClickedID = 0
+          statusText = join("Opened ", nodeName)
+          event.broadcast refreshRequest
+        else:
+          lastClickedID = nodeID
+          lastClickTime = sensing.timer()
 }
 
 sprite "Controller" {

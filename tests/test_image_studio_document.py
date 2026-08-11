@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, Qt
-from PyQt6.QtGui import QColor, QMouseEvent, QPainter
+from PyQt6.QtGui import QColor, QMouseEvent, QPainter, QWheelEvent
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from xe_lang.host_tools.image_document import (
@@ -391,6 +391,31 @@ def test_canvas_empty_surround_pans_and_brush_hover_tracks_grid(app):
 	)
 	canvas.mouseMoveEvent(hover)
 	assert canvas._hover_image_pos == QPoint(3, 2)
+	pane.close()
+
+
+def test_canvas_shift_wheel_pans_sideways_without_zooming(app):
+	pane = ImageStudioPane()
+	canvas = pane.canvas
+	canvas.resize(320, 240)
+	canvas.zoom = 8.0
+	canvas.pan = QPointF()
+	event = QWheelEvent(
+		QPointF(40, 40),
+		QPointF(40, 40),
+		QPoint(),
+		QPoint(120, 0),
+		Qt.MouseButton.NoButton,
+		Qt.KeyboardModifier.ShiftModifier,
+		Qt.ScrollPhase.ScrollUpdate,
+		False,
+	)
+
+	canvas.wheelEvent(event)
+
+	assert canvas.zoom == 8.0
+	assert canvas.pan == QPointF(32, 0)
+	assert event.isAccepted()
 	pane.close()
 
 

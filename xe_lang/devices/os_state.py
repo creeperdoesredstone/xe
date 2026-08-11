@@ -9,50 +9,19 @@ import tempfile
 from threading import RLock
 from typing import Callable
 
+from xe_lang.design_tokens import (
+	BACKGROUND_COLOR_INDICES,
+	BACKGROUND_NAMES,
+	PALETTES,
+	THEME_DARK,
+	THEME_LIGHT,
+	normalize_theme_palette,
+	normalize_window_corner_style,
+)
 from .graphics import GraphicsDevice
 
 
-PALETTES = (
-	(
-		"#020716", "#102552", "#006b67", "#00a7a0",
-		"#7f1d1d", "#43008f", "#a16207", "#b8bcd8",
-		"#273b63", "#6c18d8", "#4dffae", "#aefcff",
-		"#fb7185", "#ad55ef", "#fde047", "#f4f0ff",
-	),
-	(
-		"#09030f", "#21113a", "#183447", "#147d92",
-		"#9f2445", "#5112a8", "#c26c22", "#d8c9eb",
-		"#5b496c", "#7c35e8", "#39d98a", "#66e3ff",
-		"#ff6685", "#c45cff", "#ffcf5c", "#fff8ff",
-	),
-	(
-		"#000000", "#101820", "#005a46", "#00a88f",
-		"#8b0000", "#660099", "#9a5b00", "#c0c0c0",
-		"#555555", "#246bfe", "#44d544", "#00ffff",
-		"#ff4040", "#d060ff", "#ffff00", "#ffffff",
-	),
-	(
-		"#f7f5ff", "#dce5ff", "#d5f5ef", "#86ded6",
-		"#ffd9df", "#e8dcff", "#fff0b8", "#42475d",
-		"#b9c8e8", "#b084ef", "#157a59", "#096a78",
-		"#b62949", "#6d2daf", "#8a6500", "#151525",
-	),
-	(
-		"#fff8ff", "#eadff5", "#d8ecf1", "#99d5df",
-		"#ffd0dc", "#e1cffc", "#ffe4bd", "#514a60",
-		"#c7b9d4", "#a87bea", "#147957", "#087081",
-		"#b5284b", "#7134b5", "#826000", "#1b1422",
-	),
-	(
-		"#f6f7f8", "#dce3e8", "#d1eee4", "#83d8c7",
-		"#ffd7d7", "#e9d8f0", "#f5e4bb", "#4d5359",
-		"#bcc4ca", "#87a9ec", "#31845b", "#147982",
-		"#b83535", "#75438c", "#746000", "#16191c",
-	),
-)
-
-BACKGROUND_NAMES = ("Black", "Navy", "Slate")
-BACKGROUND_COLORS = (0, 1, 8)
+BACKGROUND_COLORS = BACKGROUND_COLOR_INDICES
 SETTINGS_SCHEMA_VERSION = 1
 CLIPBOARD_TEXT_LIMIT = 32_768
 
@@ -79,6 +48,14 @@ class OSSettings:
 	settings_enabled: bool = True
 
 
+@dataclass(frozen=True)
+class AppearancePreview:
+	background_id: int
+	palette_id: int
+	theme_mode: int
+	window_corner_style: int
+
+
 class OSDevice:
 	def __init__(
 		self,
@@ -90,7 +67,8 @@ class OSDevice:
 	) -> None:
 		self._lock = RLock()
 		self._settings_path = Path(settings_path).resolve() if settings_path is not None else None
-		self._settings = settings or self._load_settings() or OSSettings()
+		self._settings = self._normalize_settings(settings or self._load_settings() or OSSettings())
+		self._preview: AppearancePreview | None = None
 		self._now_provider = now_provider or datetime.now
 		self._clipboard_reader = clipboard_reader
 		self._clipboard_writer = clipboard_writer
@@ -131,6 +109,19 @@ class OSDevice:
 		except (TypeError, ValueError):
 			return default
 
+	@staticmethod
+	def _normalize_settings(settings: OSSettings) -> OSSettings:
+		palette_id = normalize_theme_palette(settings.palette_id, settings.theme_mode)
+		corner_style = normalize_window_corner_style(settings.window_corner_style)
+		return replace(
+			settings,
+			palette_id=settings.palette_id if palette_id is None else palette_id,
+			window_transparency=0,
+			window_corner_style=(
+				OSSettings().window_corner_style if corner_style is None else corner_style
+			),
+		)
+
 	@classmethod
 	def _settings_from_payload(cls, payload: object) -> OSSettings | None:
 		if not isinstance(payload, dict) or payload.get("version") != SETTINGS_SCHEMA_VERSION:
@@ -138,11 +129,13 @@ class OSDevice:
 		defaults = OSSettings()
 		background_id = cls._bounded(payload.get("background_id"), defaults.background_id, 0, len(BACKGROUND_NAMES) - 1)
 		palette_id = cls._bounded(payload.get("palette_id"), defaults.palette_id, 0, len(PALETTES) - 1)
-		theme_mode = cls._bounded(payload.get("theme_mode"), defaults.theme_mode, 0, 1)
-		if theme_mode == 1 and palette_id < 3:
-			palette_id += 3
-		elif theme_mode == 0 and palette_id >= 3:
-			palette_id -= 3
+		theme_mode = cls._bounded(payload.get("theme_mode"), defaults.theme_mode, THEME_DARK, THEME_LIGHT)
+		palette_id = normalize_theme_palette(palette_id, theme_mode)
+		if palette_id is None:
+			palette_id = defaults.palette_id
+		corner_style = normalize_window_corner_style(payload.get("window_corner_style"))
+		if corner_style is None:
+			corner_style = defaults.window_corner_style
 		enabled = payload.get("settings_enabled", defaults.settings_enabled)
 		if not isinstance(enabled, bool):
 			enabled = defaults.settings_enabled
@@ -153,8 +146,8 @@ class OSDevice:
 			cls._bounded(payload.get("music_volume"), defaults.music_volume, 0, 100),
 			cls._bounded(payload.get("sound_effect_volume"), defaults.sound_effect_volume, 0, 100),
 			theme_mode,
-			cls._bounded(payload.get("window_transparency"), defaults.window_transparency, 0, 100),
-			cls._bounded(payload.get("window_corner_style"), defaults.window_corner_style, 0, 2),
+			0,
+			corner_style,
 			cls._bounded(payload.get("icon_size"), defaults.icon_size, 0, 2),
 			cls._bounded(payload.get("clock_format"), defaults.clock_format, 0, 1),
 			enabled,
@@ -223,6 +216,7 @@ class OSDevice:
 		previous = self._settings
 		self._settings = settings
 		if self._persist_locked():
+			self._preview = None
 			return True
 		self._settings = previous
 		return False
@@ -236,16 +230,29 @@ class OSDevice:
 			return self._settings
 
 	@property
+	def effective_settings(self) -> OSSettings:
+		with self._lock:
+			if self._preview is None:
+				return self._settings
+			return replace(
+				self._settings,
+				background_id=self._preview.background_id,
+				palette_id=self._preview.palette_id,
+				theme_mode=self._preview.theme_mode,
+				window_corner_style=self._preview.window_corner_style,
+			)
+
+	@property
 	def volume(self) -> int:
 		return self.settings.volume
 
 	@property
 	def background_id(self) -> int:
-		return self.settings.background_id
+		return self.effective_settings.background_id
 
 	@property
 	def palette_id(self) -> int:
-		return self.settings.palette_id
+		return self.effective_settings.palette_id
 
 	@property
 	def palette(self) -> tuple[str, ...]:
@@ -261,7 +268,7 @@ class OSDevice:
 
 	@property
 	def theme_mode(self) -> int:
-		return self.settings.theme_mode
+		return self.effective_settings.theme_mode
 
 	@property
 	def window_transparency(self) -> int:
@@ -269,7 +276,12 @@ class OSDevice:
 
 	@property
 	def window_corner_style(self) -> int:
-		return self.settings.window_corner_style
+		return self.effective_settings.window_corner_style
+
+	@property
+	def preview_active(self) -> bool:
+		with self._lock:
+			return self._preview is not None
 
 	@property
 	def icon_size(self) -> int:
@@ -306,10 +318,11 @@ class OSDevice:
 			return False
 		with self._lock:
 			palette_id = int(palette_id)
+			group_size = self.palette_count // 2
 			return self._store_locked(replace(
 				self._settings,
 				palette_id=palette_id,
-				theme_mode=1 if palette_id >= 3 else 0,
+				theme_mode=THEME_LIGHT if palette_id >= group_size else THEME_DARK,
 			))
 
 	def set_music_volume(self, value: int) -> bool:
@@ -322,26 +335,55 @@ class OSDevice:
 
 	def set_theme_mode(self, value: int) -> bool:
 		value = int(value)
-		if value not in (0, 1):
+		if value not in (THEME_DARK, THEME_LIGHT):
 			return False
 		with self._lock:
-			palette_id = self._settings.palette_id
-			if value == 1 and palette_id < 3:
-				palette_id += 3
-			elif value == 0 and palette_id >= 3:
-				palette_id -= 3
+			palette_id = normalize_theme_palette(self._settings.palette_id, value)
+			if palette_id is None:
+				return False
 			return self._store_locked(replace(self._settings, theme_mode=value, palette_id=palette_id))
 
 	def set_window_transparency(self, value: int) -> bool:
 		with self._lock:
-			return self._store_locked(replace(self._settings, window_transparency=max(0, min(100, int(value)))))
+			return self._store_locked(replace(self._settings, window_transparency=0))
 
 	def set_window_corner_style(self, value: int) -> bool:
-		value = int(value)
-		if value not in (0, 1, 2):
+		value = normalize_window_corner_style(value)
+		if value is None:
 			return False
 		with self._lock:
 			return self._store_locked(replace(self._settings, window_corner_style=value))
+
+	def preview_preferences(
+		self,
+		background_id: int,
+		palette_id: int,
+		theme_mode: int,
+		window_corner_style: int,
+	) -> bool:
+		background_id = int(background_id)
+		theme_mode = int(theme_mode)
+		corner_style = normalize_window_corner_style(window_corner_style)
+		palette_id = normalize_theme_palette(int(palette_id), theme_mode)
+		if (
+			not 0 <= background_id < self.background_count
+			or palette_id is None
+			or corner_style is None
+		):
+			self.clear_preview()
+			return False
+		with self._lock:
+			self._preview = AppearancePreview(
+				background_id,
+				palette_id,
+				theme_mode,
+				corner_style,
+			)
+		return True
+
+	def clear_preview(self) -> None:
+		with self._lock:
+			self._preview = None
 
 	def set_icon_size(self, value: int) -> bool:
 		value = int(value)
@@ -369,12 +411,13 @@ class OSDevice:
 		if not 0 <= palette_id < self.palette_count:
 			return False
 		with self._lock:
+			group_size = self.palette_count // 2
 			return self._store_locked(replace(
 				self._settings,
 				volume=max(0, min(100, int(volume))),
 				background_id=background_id,
 				palette_id=palette_id,
-				theme_mode=1 if palette_id >= 3 else 0,
+				theme_mode=THEME_LIGHT if palette_id >= group_size else THEME_DARK,
 			))
 
 	def apply_preferences(
@@ -394,25 +437,19 @@ class OSDevice:
 		background_id = int(background_id)
 		palette_id = int(palette_id)
 		theme_mode = int(theme_mode)
-		window_corner_style = int(window_corner_style)
+		window_corner_style = normalize_window_corner_style(window_corner_style)
 		icon_size = int(icon_size)
 		clock_format = int(clock_format)
-		if not 0 <= background_id < self.background_count:
+		palette_id = normalize_theme_palette(palette_id, theme_mode)
+		if (
+			not 0 <= background_id < self.background_count
+			or palette_id is None
+			or window_corner_style is None
+			or icon_size not in (0, 1, 2)
+			or clock_format not in (0, 1)
+		):
+			self.clear_preview()
 			return False
-		if not 0 <= palette_id < self.palette_count:
-			return False
-		if theme_mode not in (0, 1):
-			return False
-		if window_corner_style not in (0, 1, 2):
-			return False
-		if icon_size not in (0, 1, 2):
-			return False
-		if clock_format not in (0, 1):
-			return False
-		if theme_mode == 1 and palette_id < 3:
-			palette_id += 3
-		elif theme_mode == 0 and palette_id >= 3:
-			palette_id -= 3
 		with self._lock:
 			return self._store_locked(OSSettings(
 				max(0, min(100, int(volume))),
@@ -421,7 +458,7 @@ class OSDevice:
 				max(0, min(100, int(music_volume))),
 				max(0, min(100, int(sound_effect_volume))),
 				theme_mode,
-				max(0, min(100, int(window_transparency))),
+				0,
 				window_corner_style,
 				icon_size,
 				clock_format,

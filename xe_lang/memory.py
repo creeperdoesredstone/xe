@@ -89,13 +89,15 @@ class BankedMemory:
 		)
 
 	def split_address(self, address: int) -> tuple[int, int]:
-		address = integer_index(address)
+		if type(address) is not int:
+			address = integer_index(address)
 		if not 0 <= address < self._length:
 			raise IndexError("memory address out of range")
 		return divmod(address, SCRATCH_BANK_WORDS)
 
 	def _normalize_index(self, address: int) -> int:
-		address = integer_index(address)
+		if type(address) is not int:
+			address = integer_index(address)
 		if address < 0:
 			address += self._length
 		if not 0 <= address < self._length:
@@ -104,7 +106,8 @@ class BankedMemory:
 
 	@staticmethod
 	def _normalize_word(value: int) -> int:
-		value = integer_index(value)
+		if type(value) is not int:
+			value = integer_index(value)
 		if not -(1 << (WORD_BITS - 1)) <= value <= WORD_MASK:
 			raise OverflowError("memory word is outside the 32-bit register range")
 		return value & WORD_MASK
@@ -123,16 +126,24 @@ class BankedMemory:
 	def __getitem__(self, address: slice) -> list[int]: ...
 
 	def __getitem__(self, address: int | slice) -> int | list[int]:
-		if isinstance(address, slice):
+		if type(address) is int:
+			if 0 <= address < self._length:
+				logical_address = address
+			else:
+				logical_address = self._normalize_index(address)
+		elif isinstance(address, slice):
 			start, stop, step = address.indices(self._length)
 			if step != 1:
 				return [self[index] for index in range(start, stop, step)]
 			return self._read_contiguous(start, stop)
-
-		logical_address = self._normalize_index(address)
+		else:
+			logical_address = self._normalize_index(address)
+		if logical_address < SCRATCH_BANK_WORDS:
+			bank = self._storage[0]
+			return 0 if bank is None else bank[logical_address]
 		bank_index, offset = divmod(logical_address, SCRATCH_BANK_WORDS)
 		bank = self._storage[bank_index]
-		return 0 if bank is None else int(bank[offset])
+		return 0 if bank is None else bank[offset]
 
 	def _read_contiguous(self, start: int, stop: int) -> list[int]:
 		values: list[int] = []
@@ -150,12 +161,26 @@ class BankedMemory:
 		return values
 
 	def __setitem__(self, address: int | slice, value: int | Iterable[int]) -> None:
-		if isinstance(address, slice):
+		if type(address) is int:
+			if 0 <= address < self._length:
+				logical_address = address
+			else:
+				logical_address = self._normalize_index(address)
+		elif isinstance(address, slice):
 			self._write_slice(address, value)
 			return
-
-		logical_address = self._normalize_index(address)
-		word = self._normalize_word(value)  # type: ignore[arg-type]
+		else:
+			logical_address = self._normalize_index(address)
+		if type(value) is int and -(1 << (WORD_BITS - 1)) <= value <= WORD_MASK:
+			word = value & WORD_MASK
+		else:
+			word = self._normalize_word(value)  # type: ignore[arg-type]
+		if logical_address < SCRATCH_BANK_WORDS:
+			bank = self._storage[0]
+			if bank is None and word == 0:
+				return
+			self._materialize(0)[logical_address] = word
+			return
 		bank_index, offset = divmod(logical_address, SCRATCH_BANK_WORDS)
 		bank = self._storage[bank_index]
 		if bank is None and word == 0:

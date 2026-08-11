@@ -40,7 +40,7 @@ DECI
 LOADIND
 PUSH STR_LIT_1
 LOOKUP 9
-STORE 65
+STORE 66
 PUSH 3
 SYS 21
 DUP 0
@@ -61,7 +61,7 @@ DECI
 LOADIND
 PUSH STR_LIT_2
 LOOKUP 13
-STORE 66
+STORE 67
 PUSH 3
 SYS 21
 DUP 0
@@ -82,7 +82,7 @@ DECI
 LOADIND
 PUSH STR_LIT_3
 LOOKUP 7
-STORE 67
+STORE 68
 PUSH 3
 SYS 21
 DUP 0
@@ -103,7 +103,7 @@ DECI
 LOADIND
 PUSH STR_LIT_4
 LOOKUP 2
-STORE 68
+STORE 69
 PUSH 3
 SYS 21
 DUP 0
@@ -124,7 +124,7 @@ DECI
 LOADIND
 PUSH STR_LIT_5
 LOOKUP 2
-STORE 69
+STORE 70
 PUSH 3
 SYS 21
 DUP 0
@@ -145,7 +145,7 @@ DECI
 LOADIND
 PUSH STR_LIT_6
 LOOKUP 2
-STORE 70
+STORE 71
 PUSH 3
 SYS 21
 DUP 0
@@ -166,7 +166,7 @@ DECI
 LOADIND
 PUSH STR_LIT_7
 LOOKUP 7
-STORE 71
+STORE 72
 PUSH 3
 SYS 21
 DUP 0
@@ -187,7 +187,7 @@ DECI
 LOADIND
 PUSH STR_LIT_8
 LOOKUP 5
-STORE 72
+STORE 73
 PUSH 3
 SYS 21
 DUP 0
@@ -208,7 +208,7 @@ DECI
 LOADIND
 PUSH STR_LIT_9
 LOOKUP 2
-STORE 73
+STORE 74
 PUSH 3
 SYS 21
 DUP 0
@@ -229,7 +229,7 @@ DECI
 LOADIND
 PUSH STR_LIT_10
 LOOKUP 2
-STORE 74
+STORE 75
 PUSH 3
 SYS 21
 DUP 0
@@ -250,7 +250,7 @@ DECI
 LOADIND
 PUSH STR_LIT_11
 LOOKUP 6
-STORE 75
+STORE 76
 PUSH 3
 SYS 21
 DUP 0
@@ -271,7 +271,7 @@ DECI
 LOADIND
 PUSH STR_LIT_12
 LOOKUP 7
-STORE 76
+STORE 77
 PUSH 3
 SYS 21
 DUP 0
@@ -292,7 +292,7 @@ DECI
 LOADIND
 PUSH STR_LIT_13
 LOOKUP 6
-STORE 77
+STORE 78
 PUSH 3
 SYS 21
 DUP 0
@@ -313,7 +313,7 @@ DECI
 LOADIND
 PUSH STR_LIT_14
 LOOKUP 7
-STORE 78
+STORE 79
 PUSH 3
 SYS 21
 DUP 0
@@ -334,7 +334,7 @@ DECI
 LOADIND
 PUSH STR_LIT_15
 LOOKUP 2
-STORE 79
+STORE 80
 PUSH 3
 SYS 21
 DUP 0
@@ -355,7 +355,7 @@ DECI
 LOADIND
 PUSH STR_LIT_16
 LOOKUP 2
-STORE 80
+STORE 81
 PUSH 3
 SYS 21
 DUP 0
@@ -376,7 +376,7 @@ DECI
 LOADIND
 PUSH STR_LIT_17
 LOOKUP 14
-STORE 81
+STORE 82
 PUSH 3
 SYS 21
 DUP 0
@@ -397,7 +397,7 @@ DECI
 LOADIND
 PUSH STR_LIT_18
 LOOKUP 25
-STORE 82
+STORE 83
 PUSH 3
 SYS 21
 DUP 0
@@ -418,7 +418,7 @@ DECI
 LOADIND
 PUSH STR_LIT_19
 LOOKUP 2
-STORE 83
+STORE 84
 PUSH 3
 SYS 21
 DUP 0
@@ -439,7 +439,7 @@ DECI
 LOADIND
 PUSH STR_LIT_20
 LOOKUP 3
-STORE 84
+STORE 85
 PUSH 3
 SYS 21
 DUP 0
@@ -460,7 +460,7 @@ DECI
 LOADIND
 PUSH STR_LIT_21
 LOOKUP 9
-STORE 85
+STORE 86
 PUSH 3
 SYS 21
 DUP 0
@@ -481,7 +481,7 @@ DECI
 LOADIND
 PUSH STR_LIT_22
 LOOKUP 8
-STORE 86
+STORE 87
 PUSH 480
 SYS 21
 STORE 11
@@ -582,21 +582,21 @@ JUMP endif(2)
 PUSH 8
 STORE 58
 :endif(2)
-LOAD 65
-STORE 52
 LOAD 66
-STORE 53
+STORE 52
 LOAD 67
+STORE 53
+LOAD 68
 STORE 54
 LOAD 31
 PUSH 210
 ILT
 BRZ else(3)
-LOAD 68
-STORE 52
 LOAD 69
-STORE 53
+STORE 52
 LOAD 70
+STORE 53
+LOAD 71
 STORE 54
 JUMP endif(3)
 :else(3)
@@ -701,11 +701,11 @@ CALL mine_reset
 JUMP endif(7)
 :else(7)
 :endif(7)
-LOAD 71
+LOAD 72
 STORE 49
 LOAD 26
 BRZ else(8)
-LOAD 72
+LOAD 73
 STORE 49
 JUMP endif(8)
 :else(8)
@@ -716,11 +716,11 @@ ILT
 BRZ else(9)
 LOAD 26
 BRZ else(10)
-LOAD 73
+LOAD 74
 STORE 49
 JUMP endif(10)
 :else(10)
-LOAD 74
+LOAD 75
 STORE 49
 :endif(10)
 LOAD 31
@@ -751,7 +751,7 @@ ADDI
 PUSH 13
 LOAD 47
 PUSH 8
-LOAD 75
+LOAD 76
 PUSH 8
 SYS 145
 BRZ else(12)
@@ -769,7 +769,7 @@ ADDI
 PUSH 13
 LOAD 47
 PUSH 8
-LOAD 76
+LOAD 77
 PUSH 5
 SYS 145
 BRZ else(13)
@@ -803,7 +803,7 @@ PUSH 54
 PUSH 13
 PUSH 42
 PUSH 8
-LOAD 77
+LOAD 78
 PUSH 8
 SYS 145
 BRZ else(15)
@@ -817,7 +817,7 @@ PUSH 99
 PUSH 13
 PUSH 42
 PUSH 8
-LOAD 78
+LOAD 79
 PUSH 5
 SYS 145
 BRZ else(16)
@@ -832,7 +832,7 @@ JUMP endif(16)
 PUSH 1
 PUSH 147
 PUSH 15
-LOAD 79
+LOAD 80
 LOAD 48
 SYS 129
 PUSH 1
@@ -848,7 +848,7 @@ LOAD 31
 PUSH 42
 SUBI
 PUSH 15
-LOAD 80
+LOAD 81
 LOAD 48
 SYS 129
 PUSH 1
@@ -971,96 +971,162 @@ STORE 62
 JUMP endif(25)
 :else(25)
 :endif(25)
-LOAD 29
-LOAD 59
-ILT
+SYS 124
+STORE 65
+LOAD 65
+PUSH 0
+INE
 BRZ else(26)
+SYS 246
+PUSH 1
+AND
+PUSH 0
+INE
+BRZ else(27)
 LOAD 29
-STORE 59
+LOAD 65
+SUBI
+STORE 29
+LOAD 29
+PUSH 0
+ILT
+BRZ else(28)
+PUSH 0
+STORE 29
+JUMP endif(28)
+:else(28)
+:endif(28)
+LOAD 29
+LOAD 15
+IGE
+BRZ else(29)
+LOAD 15
+DECI
+STORE 29
+JUMP endif(29)
+:else(29)
+:endif(29)
+JUMP endif(27)
+:else(27)
+LOAD 30
+LOAD 65
+SUBI
+STORE 30
+LOAD 30
+PUSH 0
+ILT
+BRZ else(30)
+PUSH 0
+STORE 30
+JUMP endif(30)
+:else(30)
+:endif(30)
+LOAD 30
+LOAD 16
+IGE
+BRZ else(31)
+LOAD 16
+DECI
+STORE 30
+JUMP endif(31)
+:else(31)
+:endif(31)
+:endif(27)
+PUSH 4294967295
+STORE 55
 JUMP endif(26)
 :else(26)
 :endif(26)
 LOAD 29
 LOAD 59
+ILT
+BRZ else(32)
+LOAD 29
+STORE 59
+JUMP endif(32)
+:else(32)
+:endif(32)
+LOAD 29
+LOAD 59
 LOAD 61
 ADDI
 IGE
-BRZ else(27)
+BRZ else(33)
 LOAD 29
 LOAD 61
 SUBI
 INCI
 STORE 59
-JUMP endif(27)
-:else(27)
-:endif(27)
+JUMP endif(33)
+:else(33)
+:endif(33)
 LOAD 30
 LOAD 60
 ILT
-BRZ else(28)
+BRZ else(34)
 LOAD 30
 STORE 60
-JUMP endif(28)
-:else(28)
-:endif(28)
+JUMP endif(34)
+:else(34)
+:endif(34)
 LOAD 30
 LOAD 60
 LOAD 62
 ADDI
 IGE
-BRZ else(29)
+BRZ else(35)
 LOAD 30
 LOAD 62
 SUBI
 INCI
 STORE 60
-JUMP endif(29)
-:else(29)
-:endif(29)
+JUMP endif(35)
+:else(35)
+:endif(35)
 LOAD 59
 PUSH 0
 ILT
-BRZ else(30)
+BRZ else(36)
 PUSH 0
 STORE 59
-JUMP endif(30)
-:else(30)
-:endif(30)
+JUMP endif(36)
+:else(36)
+:endif(36)
 LOAD 60
 PUSH 0
 ILT
-BRZ else(31)
+BRZ else(37)
 PUSH 0
 STORE 60
-JUMP endif(31)
-:else(31)
-:endif(31)
+JUMP endif(37)
+:else(37)
+:endif(37)
 LOAD 59
 LOAD 15
 LOAD 61
 SUBI
 IGT
-BRZ else(32)
+BRZ else(38)
 LOAD 15
 LOAD 61
 SUBI
 STORE 59
-JUMP endif(32)
-:else(32)
-:endif(32)
+JUMP endif(38)
+:else(38)
+:endif(38)
 LOAD 60
 LOAD 16
 LOAD 62
 SUBI
 IGT
-BRZ else(33)
+BRZ else(39)
 LOAD 16
 LOAD 62
 SUBI
 STORE 60
-JUMP endif(33)
-:else(33)
-:endif(33)
+JUMP endif(39)
+:else(39)
+:endif(39)
 LOAD 37
 LOAD 61
 MULI
@@ -1098,7 +1164,7 @@ LOAD 36
 ADDI
 ILT
 AND
-BRZ else(34)
+BRZ else(40)
 LOAD 59
 LOAD 42
 LOAD 33
@@ -1115,9 +1181,9 @@ LOAD 37
 DIVI
 ADDI
 STORE 41
-JUMP endif(34)
-:else(34)
-:endif(34)
+JUMP endif(40)
+:else(40)
+:endif(40)
 LOAD 59
 STORE 38
 :beginwhile(1)
@@ -1193,53 +1259,53 @@ LOAD 36
 PUSH 8
 IGE
 AND
-BRZ else(35)
-LOAD 81
+BRZ else(41)
+LOAD 82
 STORE 50
 LOAD 22
 PUSH 2
 IEQ
-BRZ else(36)
-LOAD 82
+BRZ else(42)
+LOAD 83
 STORE 50
-JUMP endif(36)
-:else(36)
-:endif(36)
+JUMP endif(42)
+:else(42)
+:endif(42)
 LOAD 35
 PUSH 50
 ILT
-BRZ branch(37_0)
+BRZ branch(43_0)
 LOAD 22
 PUSH 2
 IEQ
-BRZ else(38)
-LOAD 83
-STORE 50
-JUMP endif(38)
-:else(38)
+BRZ else(44)
 LOAD 84
 STORE 50
-:endif(38)
-JUMP endif(37)
-:branch(37_0)
+JUMP endif(44)
+:else(44)
+LOAD 85
+STORE 50
+:endif(44)
+JUMP endif(43)
+:branch(43_0)
 LOAD 35
 PUSH 100
 ILT
-BRZ else(37)
+BRZ else(43)
 LOAD 22
 PUSH 2
 IEQ
-BRZ else(39)
-LOAD 85
-STORE 50
-JUMP endif(39)
-:else(39)
+BRZ else(45)
 LOAD 86
 STORE 50
-:endif(39)
-JUMP endif(37)
-:else(37)
-:endif(37)
+JUMP endif(45)
+:else(45)
+LOAD 87
+STORE 50
+:endif(45)
+JUMP endif(43)
+:else(43)
+:endif(43)
 LOAD 50
 PUSHFP
 CALL mine_small_text_width
@@ -1279,9 +1345,9 @@ SUBI
 LOAD 50
 PUSH 15
 SYS 129
-JUMP endif(35)
-:else(35)
-:endif(35)
+JUMP endif(41)
+:else(41)
+:endif(41)
 SYS 118
 SYS 248
 OR
@@ -1293,7 +1359,7 @@ LOAD 41
 PUSH 0
 IGE
 AND
-BRZ else(40)
+BRZ else(46)
 LOAD 40
 STORE 29
 LOAD 41
@@ -1303,13 +1369,13 @@ STORE 55
 SYS 248
 LOAD 26
 OR
-BRZ branch(41_0)
+BRZ branch(47_0)
 LOAD 40
 LOAD 41
 PUSHFP
 CALL mine_toggle_flag
-JUMP endif(41)
-:branch(41_0)
+JUMP endif(47)
+:branch(47_0)
 LOAD 40
 LOAD 41
 PUSHFP
@@ -1319,21 +1385,21 @@ ADDI
 LOADIND
 PUSH 0
 INE
-BRZ else(41)
+BRZ else(47)
 LOAD 40
 LOAD 41
 PUSHFP
 CALL mine_chord
-JUMP endif(41)
-:else(41)
+JUMP endif(47)
+:else(47)
 LOAD 40
 LOAD 41
 PUSHFP
 CALL mine_reveal_cell
-:endif(41)
-JUMP endif(40)
-:else(40)
-:endif(40)
+:endif(47)
+JUMP endif(46)
+:else(46)
+:endif(46)
 SYS 121
 STORE 44
 :beginwhile(3)
@@ -1344,36 +1410,36 @@ BRZ endwhile(3)
 LOAD 44
 PUSH 49
 IEQ
-BRZ branch(42_0)
+BRZ branch(48_0)
 PUSH 0
 PUSHFP
 CALL mine_apply_difficulty
 PUSHFP
 CALL mine_reset
-JUMP endif(42)
-:branch(42_0)
+JUMP endif(48)
+:branch(48_0)
 LOAD 44
 PUSH 50
 IEQ
-BRZ branch(42_1)
+BRZ branch(48_1)
 PUSH 1
 PUSHFP
 CALL mine_apply_difficulty
 PUSHFP
 CALL mine_reset
-JUMP endif(42)
-:branch(42_1)
+JUMP endif(48)
+:branch(48_1)
 LOAD 44
 PUSH 51
 IEQ
-BRZ branch(42_2)
+BRZ branch(48_2)
 PUSH 2
 PUSHFP
 CALL mine_apply_difficulty
 PUSHFP
 CALL mine_reset
-JUMP endif(42)
-:branch(42_2)
+JUMP endif(48)
+:branch(48_2)
 LOAD 44
 PUSH 70
 IEQ
@@ -1381,12 +1447,12 @@ LOAD 44
 PUSH 102
 IEQ
 OR
-BRZ branch(42_3)
+BRZ branch(48_3)
 LOAD 26
 NOT
 STORE 26
-JUMP endif(42)
-:branch(42_3)
+JUMP endif(48)
+:branch(48_3)
 LOAD 44
 PUSH 82
 IEQ
@@ -1394,89 +1460,89 @@ LOAD 44
 PUSH 114
 IEQ
 OR
-BRZ branch(42_4)
+BRZ branch(48_4)
 PUSHFP
 CALL mine_reset
-JUMP endif(42)
-:branch(42_4)
+JUMP endif(48)
+:branch(48_4)
 LOAD 44
 PUSH 3
 IEQ
-BRZ branch(42_5)
+BRZ branch(48_5)
 LOAD 29
 PUSH 0
 IGT
-BRZ else(43)
+BRZ else(49)
 LOAD 29
 DECI
 STORE 29
-JUMP endif(43)
-:else(43)
-:endif(43)
+JUMP endif(49)
+:else(49)
+:endif(49)
 PUSH 4294967295
 STORE 55
-JUMP endif(42)
-:branch(42_5)
+JUMP endif(48)
+:branch(48_5)
 LOAD 44
 PUSH 5
 IEQ
-BRZ branch(42_6)
+BRZ branch(48_6)
 LOAD 29
 INCI
 LOAD 15
 ILT
-BRZ else(44)
+BRZ else(50)
 LOAD 29
 INCI
 STORE 29
-JUMP endif(44)
-:else(44)
-:endif(44)
+JUMP endif(50)
+:else(50)
+:endif(50)
 PUSH 4294967295
 STORE 55
-JUMP endif(42)
-:branch(42_6)
+JUMP endif(48)
+:branch(48_6)
 LOAD 44
 PUSH 4
 IEQ
-BRZ branch(42_7)
+BRZ branch(48_7)
 LOAD 30
 PUSH 0
 IGT
-BRZ else(45)
+BRZ else(51)
 LOAD 30
 DECI
 STORE 30
-JUMP endif(45)
-:else(45)
-:endif(45)
+JUMP endif(51)
+:else(51)
+:endif(51)
 PUSH 4294967295
 STORE 55
-JUMP endif(42)
-:branch(42_7)
+JUMP endif(48)
+:branch(48_7)
 LOAD 44
 PUSH 6
 IEQ
-BRZ branch(42_8)
+BRZ branch(48_8)
 LOAD 30
 INCI
 LOAD 16
 ILT
-BRZ else(46)
+BRZ else(52)
 LOAD 30
 INCI
 STORE 30
-JUMP endif(46)
-:else(46)
-:endif(46)
+JUMP endif(52)
+:else(52)
+:endif(52)
 PUSH 4294967295
 STORE 55
-JUMP endif(42)
-:branch(42_8)
+JUMP endif(48)
+:branch(48_8)
 LOAD 44
 PUSH 13
 IEQ
-BRZ branch(42_9)
+BRZ branch(48_9)
 LOAD 29
 LOAD 30
 PUSHFP
@@ -1486,31 +1552,31 @@ ADDI
 LOADIND
 PUSH 0
 INE
-BRZ else(47)
+BRZ else(53)
 LOAD 29
 LOAD 30
 PUSHFP
 CALL mine_chord
-JUMP endif(47)
-:else(47)
+JUMP endif(53)
+:else(53)
 LOAD 29
 LOAD 30
 PUSHFP
 CALL mine_reveal_cell
-:endif(47)
-JUMP endif(42)
-:branch(42_9)
+:endif(53)
+JUMP endif(48)
+:branch(48_9)
 LOAD 44
 PUSH 32
 IEQ
-BRZ else(42)
+BRZ else(48)
 LOAD 29
 LOAD 30
 PUSHFP
 CALL mine_toggle_flag
-JUMP endif(42)
-:else(42)
-:endif(42)
+JUMP endif(48)
+:else(48)
+:endif(48)
 SYS 121
 STORE 44
 JUMP beginwhile(3)
@@ -1570,34 +1636,34 @@ STORE 21
 LOADSP 1
 PUSH 0
 IEQ
-BRZ branch(48_0)
+BRZ branch(54_0)
 PUSH 9
 STORE 15
 PUSH 9
 STORE 16
 PUSH 10
 STORE 18
-JUMP endif(48)
-:branch(48_0)
+JUMP endif(54)
+:branch(54_0)
 LOADSP 1
 PUSH 1
 IEQ
-BRZ else(48)
+BRZ else(54)
 PUSH 16
 STORE 15
 PUSH 16
 STORE 16
 PUSH 40
 STORE 18
-JUMP endif(48)
-:else(48)
+JUMP endif(54)
+:else(54)
 PUSH 30
 STORE 15
 PUSH 16
 STORE 16
 PUSH 99
 STORE 18
-:endif(48)
+:endif(54)
 LOAD 15
 LOAD 16
 MULI
@@ -1639,13 +1705,13 @@ STORE 24
 LOAD 24
 PUSH 0
 ILT
-BRZ else(49)
+BRZ else(55)
 LOAD 24
 NEGI
 STORE 24
-JUMP endif(49)
-:else(49)
-:endif(49)
+JUMP endif(55)
+:else(55)
+:endif(55)
 :cleanup(mine_reset)
 POPFP
 POP 1
@@ -1663,13 +1729,13 @@ STORE 24
 LOAD 24
 PUSH 0
 ILT
-BRZ else(50)
+BRZ else(56)
 LOAD 24
 NEGI
 STORE 24
-JUMP endif(50)
-:else(50)
-:endif(50)
+JUMP endif(56)
+:else(56)
+:endif(56)
 LOAD 24
 JUMP cleanup(mine_next_random)
 :cleanup(mine_next_random)
@@ -1781,7 +1847,7 @@ PUSHFP
 CALL mine_in_safe_area
 NOT
 AND
-BRZ else(51)
+BRZ else(57)
 LOAD 11
 LOADSP -2
 ADDI
@@ -1790,9 +1856,9 @@ STREIND
 LOADSP -1
 INCI
 STORESP -1
-JUMP endif(51)
-:else(51)
-:endif(51)
+JUMP endif(57)
+:else(57)
+:endif(57)
 JUMP beginwhile(5)
 :endwhile(5)
 :cleanup(mine_place_exact)
@@ -1839,7 +1905,7 @@ ADDI
 PUSHFP
 CALL mine_valid
 AND
-BRZ else(52)
+BRZ else(58)
 LOADSP -3
 LOADSP 2
 LOADSP -1
@@ -1854,9 +1920,9 @@ ADDI
 LOADIND
 ADDI
 STORESP -3
-JUMP endif(52)
-:else(52)
-:endif(52)
+JUMP endif(58)
+:else(58)
+:endif(58)
 LOADSP -1
 INCI
 STORESP -1
@@ -1914,7 +1980,7 @@ ADDI
 PUSHFP
 CALL mine_valid
 AND
-BRZ else(53)
+BRZ else(59)
 LOADSP -3
 LOADSP 2
 LOADSP -1
@@ -1929,9 +1995,9 @@ ADDI
 LOADIND
 ADDI
 STORESP -3
-JUMP endif(53)
-:else(53)
-:endif(53)
+JUMP endif(59)
+:else(59)
+:endif(59)
 LOADSP -1
 INCI
 STORESP -1
@@ -1966,15 +2032,15 @@ ADDI
 LOADIND
 PUSH 0
 INE
-BRZ else(54)
+BRZ else(60)
 LOAD 12
 LOADSP -1
 ADDI
 PUSH 1
 STREIND
-JUMP endif(54)
-:else(54)
-:endif(54)
+JUMP endif(60)
+:else(60)
+:endif(60)
 LOADSP -1
 INCI
 STORESP -1
@@ -1996,14 +2062,14 @@ LOAD 18
 SUBI
 IEQ
 AND
-BRZ else(55)
+BRZ else(61)
 PUSH 1
 STORE 22
 SYS 20
 STORE 28
-JUMP endif(55)
-:else(55)
-:endif(55)
+JUMP endif(61)
+:else(61)
+:endif(61)
 :cleanup(mine_finish_if_won)
 POPFP
 POP 1
@@ -2028,11 +2094,11 @@ PUSHFP
 CALL mine_valid
 NOT
 OR
-BRZ else(56)
+BRZ else(62)
 JUMP cleanup(mine_reveal_cell)
-JUMP endif(56)
-:else(56)
-:endif(56)
+JUMP endif(62)
+:else(62)
+:endif(62)
 LOADSP 2
 LOADSP 1
 PUSHFP
@@ -2051,13 +2117,13 @@ LOADIND
 PUSH 0
 INE
 OR
-BRZ else(57)
+BRZ else(63)
 JUMP cleanup(mine_reveal_cell)
-JUMP endif(57)
-:else(57)
-:endif(57)
+JUMP endif(63)
+:else(63)
+:endif(63)
 LOAD 25
-BRZ else(58)
+BRZ else(64)
 LOADSP 2
 LOADSP 1
 PUSHFP
@@ -2066,16 +2132,16 @@ PUSH 0
 STORE 25
 SYS 20
 STORE 27
-JUMP endif(58)
-:else(58)
-:endif(58)
+JUMP endif(64)
+:else(64)
+:endif(64)
 LOADSP -1
 LOAD 11
 ADDI
 LOADIND
 PUSH 0
 INE
-BRZ else(59)
+BRZ else(65)
 LOAD 12
 LOADSP -1
 ADDI
@@ -2088,9 +2154,9 @@ STORE 28
 PUSHFP
 CALL mine_reveal_all_mines
 JUMP cleanup(mine_reveal_cell)
-JUMP endif(59)
-:else(59)
-:endif(59)
+JUMP endif(65)
+:else(65)
+:endif(65)
 PUSH 0
 STORESP -2
 PUSH 1
@@ -2135,7 +2201,7 @@ PUSHFP
 CALL mine_adjacent_count
 PUSH 0
 IEQ
-BRZ else(60)
+BRZ else(66)
 PUSH 1
 NEGI
 STORESP -8
@@ -2168,7 +2234,7 @@ ADDI
 PUSHFP
 CALL mine_valid
 AND
-BRZ else(61)
+BRZ else(67)
 LOADSP -5
 LOADSP -7
 ADDI
@@ -2198,7 +2264,7 @@ LOADIND
 PUSH 0
 IEQ
 AND
-BRZ else(62)
+BRZ else(68)
 LOAD 12
 LOADSP -9
 ADDI
@@ -2215,12 +2281,12 @@ STREIND
 LOADSP -3
 INCI
 STORESP -3
-JUMP endif(62)
-:else(62)
-:endif(62)
-JUMP endif(61)
-:else(61)
-:endif(61)
+JUMP endif(68)
+:else(68)
+:endif(68)
+JUMP endif(67)
+:else(67)
+:endif(67)
 LOADSP -7
 INCI
 STORESP -7
@@ -2231,9 +2297,9 @@ INCI
 STORESP -8
 JUMP beginwhile(12)
 :endwhile(12)
-JUMP endif(60)
-:else(60)
-:endif(60)
+JUMP endif(66)
+:else(66)
+:endif(66)
 JUMP beginwhile(11)
 :endwhile(11)
 PUSHFP
@@ -2255,11 +2321,11 @@ PUSHFP
 CALL mine_valid
 NOT
 OR
-BRZ else(63)
+BRZ else(69)
 JUMP cleanup(mine_toggle_flag)
-JUMP endif(63)
-:else(63)
-:endif(63)
+JUMP endif(69)
+:else(69)
+:endif(69)
 LOADSP 2
 LOADSP 1
 PUSHFP
@@ -2271,18 +2337,18 @@ ADDI
 LOADIND
 PUSH 0
 INE
-BRZ else(64)
+BRZ else(70)
 JUMP cleanup(mine_toggle_flag)
-JUMP endif(64)
-:else(64)
-:endif(64)
+JUMP endif(70)
+:else(70)
+:endif(70)
 LOADSP -1
 LOAD 13
 ADDI
 LOADIND
 PUSH 0
 INE
-BRZ branch(65_0)
+BRZ branch(71_0)
 LOAD 13
 LOADSP -1
 ADDI
@@ -2291,12 +2357,12 @@ STREIND
 LOAD 19
 DECI
 STORE 19
-JUMP endif(65)
-:branch(65_0)
+JUMP endif(71)
+:branch(71_0)
 LOAD 19
 LOAD 18
 ILT
-BRZ else(65)
+BRZ else(71)
 LOAD 13
 LOADSP -1
 ADDI
@@ -2305,9 +2371,9 @@ STREIND
 LOAD 19
 INCI
 STORE 19
-JUMP endif(65)
-:else(65)
-:endif(65)
+JUMP endif(71)
+:else(71)
+:endif(71)
 :cleanup(mine_toggle_flag)
 POP 1
 POPFP
@@ -2324,11 +2390,11 @@ LOADSP 1
 PUSHFP
 CALL mine_valid
 NOT
-BRZ else(66)
+BRZ else(72)
 JUMP cleanup(mine_chord)
-JUMP endif(66)
-:else(66)
-:endif(66)
+JUMP endif(72)
+:else(72)
+:endif(72)
 LOADSP 2
 LOADSP 1
 PUSHFP
@@ -2340,11 +2406,11 @@ ADDI
 LOADIND
 PUSH 0
 IEQ
-BRZ else(67)
+BRZ else(73)
 JUMP cleanup(mine_chord)
-JUMP endif(67)
-:else(67)
-:endif(67)
+JUMP endif(73)
+:else(73)
+:endif(73)
 LOADSP 2
 LOADSP 1
 PUSHFP
@@ -2360,11 +2426,11 @@ CALL mine_adjacent_flags
 LOADSP -2
 INE
 OR
-BRZ else(68)
+BRZ else(74)
 JUMP cleanup(mine_chord)
-JUMP endif(68)
-:else(68)
-:endif(68)
+JUMP endif(74)
+:else(74)
+:endif(74)
 PUSH 1
 NEGI
 STORESP -4
@@ -2405,7 +2471,7 @@ ADDI
 PUSHFP
 CALL mine_valid
 AND
-BRZ else(69)
+BRZ else(75)
 LOADSP 2
 LOADSP -3
 ADDI
@@ -2414,9 +2480,9 @@ LOADSP -4
 ADDI
 PUSHFP
 CALL mine_reveal_cell
-JUMP endif(69)
-:else(69)
-:endif(69)
+JUMP endif(75)
+:else(75)
+:endif(75)
 LOADSP -3
 INCI
 STORESP -3
@@ -2438,23 +2504,23 @@ PUSH 0
 LOAD 27
 PUSH 0
 IEQ
-BRZ else(70)
+BRZ else(76)
 PUSH 0
 JUMP cleanup(mine_elapsed_seconds)
-JUMP endif(70)
-:else(70)
-:endif(70)
+JUMP endif(76)
+:else(76)
+:endif(76)
 SYS 20
 STORESP -1
 LOAD 22
 PUSH 0
 INE
-BRZ else(71)
+BRZ else(77)
 LOAD 28
 STORESP -1
-JUMP endif(71)
-:else(71)
-:endif(71)
+JUMP endif(77)
+:else(77)
+:endif(77)
 LOADSP -1
 LOAD 27
 SUBI
@@ -2511,73 +2577,73 @@ SETFP
 LOADSP 2
 PUSH 1
 IEQ
-BRZ else(72)
-PUSH 10
-JUMP cleanup(mine_number_color)
-JUMP endif(72)
-:else(72)
-:endif(72)
-LOADSP 2
-PUSH 2
-IEQ
-BRZ else(73)
-PUSH 8
-JUMP cleanup(mine_number_color)
-JUMP endif(73)
-:else(73)
-:endif(73)
-LOADSP 2
-PUSH 3
-IEQ
-BRZ else(74)
-PUSH 14
-JUMP cleanup(mine_number_color)
-JUMP endif(74)
-:else(74)
-:endif(74)
-LOADSP 2
-PUSH 4
-IEQ
-BRZ else(75)
-PUSH 11
-JUMP cleanup(mine_number_color)
-JUMP endif(75)
-:else(75)
-:endif(75)
-LOADSP 2
-PUSH 5
-IEQ
-BRZ else(76)
-PUSH 6
-JUMP cleanup(mine_number_color)
-JUMP endif(76)
-:else(76)
-:endif(76)
-LOADSP 2
-PUSH 6
-IEQ
-BRZ else(77)
-PUSH 12
-JUMP cleanup(mine_number_color)
-JUMP endif(77)
-:else(77)
-:endif(77)
-LOADSP 2
-PUSH 7
-IEQ
 BRZ else(78)
-PUSH 7
+PUSH 10
 JUMP cleanup(mine_number_color)
 JUMP endif(78)
 :else(78)
 :endif(78)
-LOADSP 1
+LOADSP 2
+PUSH 2
+IEQ
 BRZ else(79)
-PUSH 1
+PUSH 8
 JUMP cleanup(mine_number_color)
 JUMP endif(79)
 :else(79)
 :endif(79)
+LOADSP 2
+PUSH 3
+IEQ
+BRZ else(80)
+PUSH 14
+JUMP cleanup(mine_number_color)
+JUMP endif(80)
+:else(80)
+:endif(80)
+LOADSP 2
+PUSH 4
+IEQ
+BRZ else(81)
+PUSH 11
+JUMP cleanup(mine_number_color)
+JUMP endif(81)
+:else(81)
+:endif(81)
+LOADSP 2
+PUSH 5
+IEQ
+BRZ else(82)
+PUSH 6
+JUMP cleanup(mine_number_color)
+JUMP endif(82)
+:else(82)
+:endif(82)
+LOADSP 2
+PUSH 6
+IEQ
+BRZ else(83)
+PUSH 12
+JUMP cleanup(mine_number_color)
+JUMP endif(83)
+:else(83)
+:endif(83)
+LOADSP 2
+PUSH 7
+IEQ
+BRZ else(84)
+PUSH 7
+JUMP cleanup(mine_number_color)
+JUMP endif(84)
+:else(84)
+:endif(84)
+LOADSP 1
+BRZ else(85)
+PUSH 1
+JUMP cleanup(mine_number_color)
+JUMP endif(85)
+:else(85)
+:endif(85)
 PUSH 15
 JUMP cleanup(mine_number_color)
 :cleanup(mine_number_color)
@@ -2670,7 +2736,7 @@ STORESP -2
 LOADSP 1
 PUSH 9
 IGE
-BRZ else(80)
+BRZ else(86)
 PUSH 1
 LOADSP -1
 LOADSP -2
@@ -2706,14 +2772,14 @@ LOADSP -2
 DECI
 PUSH 15
 SYS 105
-JUMP endif(80)
-:else(80)
+JUMP endif(86)
+:else(86)
 PUSH 1
 LOADSP -1
 LOADSP -2
 PUSH 6
 SYS 105
-:endif(80)
+:endif(86)
 :cleanup(mine_draw_mine)
 POP 2
 POPFP
@@ -2735,30 +2801,30 @@ STORESP -3
 PUSH 15
 STORESP -4
 LOADSP 1
-BRZ else(81)
+BRZ else(87)
 PUSH 7
 STORESP -3
 PUSH 1
 STORESP -4
-JUMP endif(81)
-:else(81)
-:endif(81)
+JUMP endif(87)
+:else(87)
+:endif(87)
 LOADSP -1
 LOAD 12
 ADDI
 LOADIND
 PUSH 0
 INE
-BRZ else(82)
+BRZ else(88)
 PUSH 1
 STORESP -3
 LOADSP 1
-BRZ else(83)
+BRZ else(89)
 PUSH 15
 STORESP -3
-JUMP endif(83)
-:else(83)
-:endif(83)
+JUMP endif(89)
+:else(89)
+:endif(89)
 PUSH 1
 LOADSP 8
 LOADSP 7
@@ -2772,14 +2838,14 @@ ADDI
 LOADIND
 PUSH 0
 INE
-BRZ else(84)
+BRZ else(90)
 LOADSP 8
 LOADSP 7
 LOADSP 6
 PUSHFP
 CALL mine_draw_mine
-JUMP endif(84)
-:else(84)
+JUMP endif(90)
+:else(90)
 LOADSP 5
 LOADSP 4
 PUSHFP
@@ -2792,7 +2858,7 @@ LOADSP 6
 PUSH 7
 IGE
 AND
-BRZ else(85)
+BRZ else(91)
 PUSH 1
 LOADSP 8
 LOADSP 6
@@ -2814,19 +2880,19 @@ LOADSP 1
 PUSHFP
 CALL mine_number_color
 SYS 143
-JUMP endif(85)
-:else(85)
-:endif(85)
-:endif(84)
-JUMP endif(82)
-:else(82)
+JUMP endif(91)
+:else(91)
+:endif(91)
+:endif(90)
+JUMP endif(88)
+:else(88)
 LOADSP 3
-BRZ else(86)
+BRZ else(92)
 PUSH 8
 STORESP -3
-JUMP endif(86)
-:else(86)
-:endif(86)
+JUMP endif(92)
+:else(92)
+:endif(92)
 PUSH 1
 LOADSP 8
 LOADSP 7
@@ -2837,7 +2903,7 @@ SYS 109
 LOADSP 6
 PUSH 4
 IGE
-BRZ else(87)
+BRZ else(93)
 PUSH 1
 LOADSP 8
 LOADSP 7
@@ -2890,27 +2956,27 @@ ADDI
 DECI
 PUSH 1
 SYS 107
-JUMP endif(87)
-:else(87)
-:endif(87)
+JUMP endif(93)
+:else(93)
+:endif(93)
 LOADSP -1
 LOAD 13
 ADDI
 LOADIND
 PUSH 0
 INE
-BRZ else(88)
+BRZ else(94)
 LOADSP 6
 PUSH 7
 IGE
-BRZ else(89)
+BRZ else(95)
 LOADSP 8
 LOADSP 7
 LOADSP 6
 PUSHFP
 CALL mine_draw_flag
-JUMP endif(89)
-:else(89)
+JUMP endif(95)
+:else(95)
 PUSH 1
 LOADSP 8
 LOADSP 6
@@ -2924,17 +2990,17 @@ DIVI
 ADDI
 PUSH 14
 SYS 105
-:endif(89)
-JUMP endif(88)
-:else(88)
+:endif(95)
+JUMP endif(94)
+:else(94)
+:endif(94)
 :endif(88)
-:endif(82)
 LOADSP 2
 LOADSP 6
 PUSH 5
 IGE
 AND
-BRZ else(90)
+BRZ else(96)
 PUSH 1
 LOADSP 8
 INCI
@@ -2948,9 +3014,9 @@ PUSH 2
 SUBI
 PUSH 15
 SYS 108
-JUMP endif(90)
-:else(90)
-:endif(90)
+JUMP endif(96)
+:else(96)
+:endif(96)
 :cleanup(mine_draw_cell)
 POP 4
 POPFP
@@ -3143,5 +3209,5 @@ HALT
 0
 1480938324
 1
-87
-4294967208
+88
+4294967207

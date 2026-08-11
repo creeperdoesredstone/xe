@@ -7,7 +7,8 @@ import unittest
 
 from runtime import RuntimeContext, run
 from xe_lang.compiler_service import compile_source
-from xe_lang.devices import OSDevice, OSSettings, PALETTES
+from xe_lang.devices import GraphicsDevice, InputDevice, OSDevice, OSSettings, PALETTES, WindowManager
+from xe_lang.syscall_abi import SyscallID
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -238,6 +239,8 @@ class SettingsTests(unittest.TestCase):
 	def test_source_compiles(self) -> None:
 		artifact = compile_source(self.source, str(SETTINGS_PATH))
 		self.assertTrue(artifact.success, "\n".join(map(str, artifact.diagnostics)))
+		self.assertIn(SyscallID.APP_OS_PREVIEW_PREFERENCES, artifact.required_syscalls)
+		self.assertIn(SyscallID.APP_OS_CLEAR_PREVIEW, artifact.required_syscalls)
 
 	def test_preferences_are_staged_then_applied_atomically(self) -> None:
 		output = self.probe(
@@ -281,9 +284,11 @@ out << staged_background'''
 	def test_live_previews_use_staged_values_and_centered_settings_controls(self) -> None:
 		self.assertIn("proc draw_window_preview", self.source)
 		self.assertIn("call draw_preview_box(preview_x, preview_y, preview_width, preview_height, staged_corners", self.source)
+		self.assertIn("os::preview_preferences(staged_background, staged_palette, staged_theme, staged_corners)", self.source)
+		self.assertIn("call os::clear_preview()", self.source)
 		self.assertIn("proc draw_palette_background_preview", self.source)
 		self.assertIn("background = settings_preview_background()", self.source)
-		self.assertIn("variant = staged_palette % palette_group_count", self.source)
+		self.assertIn("return graphics::WINDOW_TITLE_COLOR", self.source)
 		self.assertIn("if (staged_background == 2)", self.source)
 		self.assertIn("proc draw_icons_time_preview", self.source)
 		self.assertIn("staged_icons == os::ICON_SMALL", self.source)
@@ -292,6 +297,8 @@ out << staged_background'''
 		self.assertIn("call draw_centered_button_label", self.source)
 		self.assertIn("pointer_x >= x && pointer_x < x + width", self.source)
 		self.assertIn("os::theme_mode == os::THEME_LIGHT", self.source)
+		self.assertNotIn("CORNER_SOFT", self.source)
+		self.assertNotIn('"Soft corners"', self.source)
 
 	def test_preview_frames_change_before_apply_and_stay_clear_of_actions(self) -> None:
 		icons_24 = render_settings_frame(
@@ -317,15 +324,15 @@ out << staged_background'''
 			2,
 			"staged_corners = os::CORNER_SQUARE",
 		)
-		window_soft = render_settings_frame(
+		window_rounded = render_settings_frame(
 			self.source,
 			(280, 210),
 			2,
-			"staged_corners = os::CORNER_SOFT",
+			"staged_corners = os::CORNER_ROUNDED",
 		)
 		window_preview_square = frame_crop(window_square, 80, 102, 314, 222)
-		window_preview_soft = frame_crop(window_soft, 80, 102, 314, 222)
-		self.assertNotEqual(window_preview_square, window_preview_soft)
+		window_preview_rounded = frame_crop(window_rounded, 80, 102, 314, 222)
+		self.assertNotEqual(window_preview_square, window_preview_rounded)
 		personal_dark = render_settings_frame(
 			self.source,
 			(280, 210),
@@ -340,7 +347,7 @@ out << staged_background'''
 		)
 		self.assertNotEqual(frame_crop(personal_dark, 80, 134, 314, 222), frame_crop(personal_slate, 80, 134, 314, 222))
 		# The action row starts at absolute y=226 for the normal logical window.
-		self.assertEqual({1}, set(frame_crop(window_soft, 80, 222, 314, 226)))
+		self.assertEqual({1}, set(frame_crop(window_rounded, 80, 222, 314, 226)))
 
 	def test_previews_render_at_narrow_normal_and_large_sizes(self) -> None:
 		for size in ((180, 130), (280, 210), (400, 300)):
@@ -401,16 +408,35 @@ out << staged_background'''
 		self.assertNotEqual(top.indices, bottom.indices)
 		self.assertGreater(len(set(bottom.indices)), 4)
 
-	def test_preview_uses_current_light_palette_without_applying_staged_edits(self) -> None:
+	def test_preview_uses_staged_palette_without_applying_staged_edits(self) -> None:
 		frame = render_settings_frame(
 			self.source,
 			(280, 210),
 			2,
-			"staged_corners = os::CORNER_SOFT",
+			"staged_background = 0\nstaged_palette = 0\nstaged_theme = os::THEME_DARK\nstaged_corners = os::CORNER_ROUNDED",
 			OSSettings(theme_mode=1, palette_id=3, background_id=2),
 		)
-		self.assertEqual(PALETTES[3], frame.palette)
+		self.assertEqual(PALETTES[0], frame.palette)
 		self.assertGreater(len(set(frame.indices)), 5)
+
+	def test_window_preview_pixels_match_runtime_window_chrome(self) -> None:
+		frame = render_settings_frame(
+			self.source,
+			(280, 210),
+			2,
+			"staged_corners = os::CORNER_ROUNDED",
+		)
+		graphics = GraphicsDevice()
+		graphics.clear(0)
+		appearance = OSDevice(settings=OSSettings(window_corner_style=1))
+		manager = WindowManager(graphics, InputDevice(graphics.width, graphics.height), appearance=appearance)
+		handle = manager.create(122, 121, 150, 82, "Window", ui_scale=1)
+		manager.draw(handle)
+		expected = b"".join(
+			bytes(graphics.back_buffer[y][122:272])
+			for y in range(121, 203)
+		)
+		self.assertEqual(expected, frame_crop(frame, 122, 121, 272, 203))
 
 	def test_normal_and_large_windows_render_complete_frames(self) -> None:
 		normal = render_one_frame(self.source, "settings-frame.xe", "settings_window", (280, 210), (280, 210))

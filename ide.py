@@ -1073,6 +1073,8 @@ class VMGraphicsWidget(QWidget):
 		self._forwarded_keys: dict[int, int] = {}
 		self._wheel_angle_remainder = 0
 		self._wheel_pixel_remainder = 0
+		self._wheel_horizontal_angle_remainder = 0
+		self._wheel_horizontal_pixel_remainder = 0
 
 		self.setMouseTracking(True)
 		self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -1101,6 +1103,8 @@ class VMGraphicsWidget(QWidget):
 		self._forwarded_keys.clear()
 		self._wheel_angle_remainder = 0
 		self._wheel_pixel_remainder = 0
+		self._wheel_horizontal_angle_remainder = 0
+		self._wheel_horizontal_pixel_remainder = 0
 		self.active_vm = vm
 
 	@pyqtSlot(object)
@@ -1181,7 +1185,7 @@ class VMGraphicsWidget(QWidget):
 			return True
 		return False
 
-	def _modifier_mask(self, event: QKeyEvent) -> int:
+	def _modifier_mask(self, event: QKeyEvent | QWheelEvent) -> int:
 		modifiers = event.modifiers()
 		mask = 0
 		if modifiers & Qt.KeyboardModifier.ShiftModifier:
@@ -1280,19 +1284,44 @@ class VMGraphicsWidget(QWidget):
 		if not self._update_pointer(event):
 			event.ignore()
 			return
-		angle_delta = event.angleDelta().y()
+		modifiers = self._modifier_mask(event)
+		horizontal = bool(modifiers & 1)
+		angle_vector = event.angleDelta()
+		angle_delta = (
+			angle_vector.x()
+			if horizontal and angle_vector.x()
+			else angle_vector.y()
+		)
 		if angle_delta:
-			steps, self._wheel_angle_remainder = self._consume_wheel_units(
-				self._wheel_angle_remainder + angle_delta,
-				120,
-			)
+			if horizontal:
+				steps, self._wheel_horizontal_angle_remainder = self._consume_wheel_units(
+					self._wheel_horizontal_angle_remainder + angle_delta,
+					120,
+				)
+			else:
+				steps, self._wheel_angle_remainder = self._consume_wheel_units(
+					self._wheel_angle_remainder + angle_delta,
+					120,
+				)
 		else:
-			steps, self._wheel_pixel_remainder = self._consume_wheel_units(
-				self._wheel_pixel_remainder + event.pixelDelta().y(),
-				40,
+			pixel_vector = event.pixelDelta()
+			pixel_delta = (
+				pixel_vector.x()
+				if horizontal and pixel_vector.x()
+				else pixel_vector.y()
 			)
+			if horizontal:
+				steps, self._wheel_horizontal_pixel_remainder = self._consume_wheel_units(
+					self._wheel_horizontal_pixel_remainder + pixel_delta,
+					40,
+				)
+			else:
+				steps, self._wheel_pixel_remainder = self._consume_wheel_units(
+					self._wheel_pixel_remainder + pixel_delta,
+					40,
+				)
 		if steps:
-			self.active_vm.devices.input.add_scroll_delta(steps)
+			self.active_vm.devices.input.add_scroll_delta(steps, modifiers)
 		event.accept()
 
 	def keyPressEvent(self, event: QKeyEvent):
@@ -1324,6 +1353,8 @@ class VMGraphicsWidget(QWidget):
 			self._forwarded_keys.clear()
 			self._wheel_angle_remainder = 0
 			self._wheel_pixel_remainder = 0
+			self._wheel_horizontal_angle_remainder = 0
+			self._wheel_horizontal_pixel_remainder = 0
 		super().focusOutEvent(event)
 
 

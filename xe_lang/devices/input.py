@@ -94,6 +94,7 @@ class InputDevice:
 		self._pending_pressed = 0
 		self._pending_released = 0
 		self._pending_scroll = 0
+		self._pending_scroll_modifiers: int | None = None
 		self._keys_down: set[int] = set()
 		self._key_queue: deque[int] = deque(maxlen=INPUT_QUEUE_LIMIT)
 		self._repeat_next: dict[int, float] = {}
@@ -150,9 +151,11 @@ class InputDevice:
 				self._last_mouse_event = int(MouseEvent.RELEASE)
 				self._mouse_events.append((self._last_mouse_event, self._x, self._y))
 
-	def add_scroll_delta(self, steps: int) -> None:
-		"""Accumulate signed logical wheel notches for the next input frame."""
+	def add_scroll_delta(self, steps: int, modifiers: int | None = None) -> None:
+		"""Accumulate signed wheel notches and their event-time modifiers."""
 		with self._lock:
+			if modifiers is not None:
+				self._pending_scroll_modifiers = int(modifiers)
 			self._pending_scroll = max(
 				-MAX_FRAME_SCROLL_STEPS,
 				min(MAX_FRAME_SCROLL_STEPS, self._pending_scroll + int(steps)),
@@ -228,12 +231,18 @@ class InputDevice:
 			self._key_modifiers.clear()
 			self._modifiers = 0
 			self._pending_scroll = 0
+			self._pending_scroll_modifiers = None
 			self._latched = None
 
 	def frame(self) -> InputFrame:
 		with self._lock:
 			self._queue_repeats_locked()
 			if self._latched is None:
+				frame_modifiers = (
+					self._pending_scroll_modifiers
+					if self._pending_scroll and self._pending_scroll_modifiers is not None
+					else self._modifiers
+				)
 				self._latched = InputFrame(
 					self._x,
 					self._y,
@@ -241,12 +250,13 @@ class InputDevice:
 					self._pending_pressed,
 					self._pending_released,
 					frozenset(self._keys_down),
-					self._modifiers,
+					frame_modifiers,
 					self._pending_scroll,
 				)
 				self._pending_pressed = 0
 				self._pending_released = 0
 				self._pending_scroll = 0
+				self._pending_scroll_modifiers = None
 			return self._latched
 
 	def finish_frame(self) -> None:

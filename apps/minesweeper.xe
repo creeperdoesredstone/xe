@@ -400,6 +400,7 @@ var mine_visible_columns: int
 var mine_visible_rows: int
 var mine_available_width: int
 var mine_available_height: int
+var mine_scroll_delta: int
 
 # Application driver.
 mine_window.x = 74
@@ -495,6 +496,20 @@ while (mine_window.state != graphics::WINDOW_CLOSED) {
 		if (mine_visible_rows < 1) { mine_visible_rows = 1 }
 		if (mine_visible_columns > mine_columns) { mine_visible_columns = mine_columns }
 		if (mine_visible_rows > mine_rows) { mine_visible_rows = mine_rows }
+		mine_scroll_delta = graphics::scroll_delta()
+		if (mine_scroll_delta != 0) {
+			if ((graphics::modifiers() & graphics::MOD_SHIFT) != 0) {
+				mine_focus_column -= mine_scroll_delta
+				if (mine_focus_column < 0) { mine_focus_column = 0 }
+				if (mine_focus_column >= mine_columns) { mine_focus_column = mine_columns - 1 }
+			}
+			else {
+				mine_focus_row -= mine_scroll_delta
+				if (mine_focus_row < 0) { mine_focus_row = 0 }
+				if (mine_focus_row >= mine_rows) { mine_focus_row = mine_rows - 1 }
+			}
+			mine_focus_visible = true
+		}
 		if (mine_focus_column < mine_view_column) { mine_view_column = mine_focus_column }
 		if (mine_focus_column >= mine_view_column + mine_visible_columns) { mine_view_column = mine_focus_column - mine_visible_columns + 1 }
 		if (mine_focus_row < mine_view_row) { mine_view_row = mine_focus_row }

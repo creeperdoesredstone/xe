@@ -4,6 +4,9 @@
 const APP_TITLE = "Xenon File Explorer"
 const APP_DEFAULT_WIDTH = 300
 const APP_DEFAULT_HEIGHT = 220
+const ATOM_INNER_SHELL_RADIUS = 30
+const ATOM_IDEAL_SHELL_GAP = 22
+const ATOM_MINIMUM_SHELL_GAP = 4
 
 # Model and state.
 var explorer_window: graphics::Window
@@ -40,6 +43,8 @@ array entry_position_cache: int[64]
 array shell_population_cache: int[8]
 array shell_slot_cosine: float[64]
 array shell_slot_sine: float[64]
+array shell_layout_radius_x100: int[8]
+array shell_base_radius: int[8]
 array shell_render_radius: int[8]
 array orbit_command_stream: int[768]
 array entry_selected: int[64]
@@ -106,6 +111,11 @@ var context_open: bool
 var context_entry: int
 var context_x: int
 var context_y: int
+var context_hold_entry: int
+var context_hold_started: int
+var context_hold_x: int
+var context_hold_y: int
+var context_hold_triggered: bool
 var rename_open: bool
 var rename_text: string
 var rename_scratch: string
@@ -149,6 +159,7 @@ var camera_zoom_target: int
 var zoom_difference: int
 var zoom_step: int
 var scroll_steps: int
+var input_modifiers: int
 var orbit_speed_setting: int
 var orbit_speed_target: int
 var orbit_speed_difference: int
@@ -167,6 +178,7 @@ var orbit_stream_words: int
 var orbit_stream_result: int
 var orbit_native_drawn: bool
 var slot_animation_active: bool
+var shell_layout_animating: bool
 
 # Paint and replaceable asset hooks.
 # Placeholder visual tokens. Future asset work only needs to replace the five
@@ -211,6 +223,15 @@ fn insertion_slot_duration(population: int) int {
 	duration = 400 - (population - 2) * 30
 	if (duration < 220) { duration = 220 }
 	return duration
+}
+
+fn adaptive_shell_gap(radius_limit: int, active_shells: int) int {
+	var fitted_gap: int
+	if (active_shells <= 1) { return 0 }
+	fitted_gap = (radius_limit - ATOM_INNER_SHELL_RADIUS) / (active_shells - 1)
+	if (fitted_gap > ATOM_IDEAL_SHELL_GAP) { fitted_gap = ATOM_IDEAL_SHELL_GAP }
+	if (fitted_gap < ATOM_MINIMUM_SHELL_GAP) { fitted_gap = ATOM_MINIMUM_SHELL_GAP }
+	return fitted_gap
 }
 
 fn placeholder_pixel_visible(x: int, y: int) bool {
@@ -2762,6 +2783,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	var target_shell: int
 	var shell_button_color: int
 	var outer_radius: int
+	var radius_limit: int
 	var shell_gap: int
 	var transition_scale: int
 	var center_radius: int
@@ -2813,6 +2835,9 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	var native_candidate: bool
 	var command: int
 	var shell_table: int
+	var target_radius: int
+	var radius_difference: int
+	var radius_step: int
 	count = cached_entry_count
 	call prepare_orbit_projection(tilt, view_roll, rotation)
 	usable_width = area_width - sidebar_width
@@ -2829,7 +2854,9 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	drop_folder_entry = -1
 	zoom_controls_hovered = false
 	interaction_allowed = !context_open && !rename_open && !delete_confirm && !viewer_open && transition_progress == 0
-	if (usable_width < 108 || area_height < 94) {
+	radius_limit = (area_height - 34) / 2
+	if (radius_limit > (usable_width - 48) / 2) { radius_limit = (usable_width - 48) / 2 }
+	if (usable_width < 108 || area_height < 94 || radius_limit < ATOM_INNER_SHELL_RADIUS + (shell_count - 1) * ATOM_MINIMUM_SHELL_GAP) {
 		drag_entry = -1
 		drag_template = 0
 		rotating = false
@@ -2878,12 +2905,13 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 					if (focus_shell >= shell_count) { focus_shell = shell_count - 1 }
 					focus_population = shell_population_cache[focus_shell]
 					focus_position = entry_position_cache[transition_entry]
-					outer_radius = (area_height - 34) / 2
-					if (outer_radius > (usable_width - 48) / 2) { outer_radius = (usable_width - 48) / 2 }
-					if (outer_radius < 30) { outer_radius = 30 }
-					shell_gap = 0
-					if (shell_count > 1) { shell_gap = (outer_radius - 30) / (shell_count - 1) }
-					focus_radius = 30 + focus_shell * shell_gap
+					radius_limit = (area_height - 34) / 2
+					if (radius_limit > (usable_width - 48) / 2) { radius_limit = (usable_width - 48) / 2 }
+					if (radius_limit < ATOM_INNER_SHELL_RADIUS) { radius_limit = ATOM_INNER_SHELL_RADIUS }
+					shell_gap = adaptive_shell_gap(radius_limit, shell_count)
+					outer_radius = ATOM_INNER_SHELL_RADIUS + (shell_count - 1) * shell_gap
+					focus_radius = shell_base_radius[focus_shell]
+					if (focus_radius < ATOM_INNER_SHELL_RADIUS) { focus_radius = ATOM_INNER_SHELL_RADIUS + focus_shell * shell_gap }
 					slot_divisor = shell_slot_divisor(focus_shell, focus_population)
 					focus_angle = (float)(rotation + shell_phase[focus_shell] + focus_position * 360 / slot_divisor + focus_shell * 17)
 					call orbit_project(focus_radius, focus_angle)
@@ -2912,14 +2940,28 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		nucleus_highlight_ready = true
 	}
 	visual_fade = scene_visibility
-	outer_radius = (area_height - 34) / 2
-	if (outer_radius > (usable_width - 48) / 2) { outer_radius = (usable_width - 48) / 2 }
-	if (outer_radius < 30) { outer_radius = 30 }
-	shell_gap = 0
-	if (shell_count > 1) { shell_gap = (outer_radius - 30) / (shell_count - 1) }
+	radius_limit = (area_height - 34) / 2
+	if (radius_limit > (usable_width - 48) / 2) { radius_limit = (usable_width - 48) / 2 }
+	if (radius_limit < ATOM_INNER_SHELL_RADIUS) { radius_limit = ATOM_INNER_SHELL_RADIUS }
+	shell_gap = adaptive_shell_gap(radius_limit, shell_count)
+	outer_radius = ATOM_INNER_SHELL_RADIUS + (shell_count - 1) * shell_gap
+	shell_layout_animating = false
 	shell = 0
 	while (shell < shell_count && transition_scale >= 24) {
-		radius = (30 + shell * shell_gap) * render_scale / 100
+		target_radius = (ATOM_INNER_SHELL_RADIUS + shell * shell_gap) * 100
+		if (shell_layout_radius_x100[shell] <= 0) { shell_layout_radius_x100[shell] = target_radius }
+		radius_difference = target_radius - shell_layout_radius_x100[shell]
+		if (radius_difference != 0) {
+			radius_step = radius_difference * delta_ms / 140
+			if (radius_step == 0 && radius_difference > 0) { radius_step = 1 }
+			elseif (radius_step == 0) { radius_step = -1 }
+			shell_layout_radius_x100[shell] += radius_step
+			if (radius_difference > 0 && shell_layout_radius_x100[shell] > target_radius) { shell_layout_radius_x100[shell] = target_radius }
+			elseif (radius_difference < 0 && shell_layout_radius_x100[shell] < target_radius) { shell_layout_radius_x100[shell] = target_radius }
+			if (shell_layout_radius_x100[shell] != target_radius) { shell_layout_animating = true }
+		}
+		shell_base_radius[shell] = (shell_layout_radius_x100[shell] + 50) / 100
+		radius = shell_base_radius[shell] * render_scale / 100
 		shell_render_radius[shell] = radius
 		shell += 1
 	}
@@ -2936,7 +2978,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	}
 	shell_button_hovered = false
 	if (shell_count < 8 && transition_progress == 0) {
-		add_radius = (30 + (shell_count - 1) * shell_gap) * render_scale / 100 + 13
+		add_radius = shell_render_radius[shell_count - 1] + 13
 		if (shell_add_follows_rotation) { call orbit_project_rotation_offset(add_radius, 0.8191520, 0.5735764) }
 		else { call orbit_project(add_radius, 35.0) }
 		shell_button_x = center_x + projected_x
@@ -2952,7 +2994,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		zoom_controls_hovered = pointer_x >= zoom_minus_x - 1 && pointer_x < zoom_plus_x + 11 && pointer_y >= zoom_y - 1 && pointer_y < zoom_y + 10
 	}
 	orbit_native_drawn = false
-	native_candidate = transition_progress == 0 && !slot_animation_active && deletion_ghost_count == 0 && drag_entry < 0 && drag_template == 0 && camera_zoom == camera_zoom_target && visual_fade >= 100
+	native_candidate = transition_progress == 0 && !slot_animation_active && !shell_layout_animating && deletion_ghost_count == 0 && drag_entry < 0 && drag_template == 0 && camera_zoom == camera_zoom_target && visual_fade >= 100
 	if (native_candidate) {
 		if (orbit_stream_dirty) { call rebuild_orbit_command_stream() }
 		command = graphics::COMMAND_HEADER_WORDS
@@ -3114,11 +3156,11 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	if (drop_angle < 0.0) { drop_angle += 360.0 }
 	projected_distance = (int)(math::sqrt(plane_x * plane_x + plane_y * plane_y) * 100.0 / (float)render_scale)
 	closest_shell = 0
-	best_distance = projected_distance - 30
+	best_distance = projected_distance - shell_base_radius[0]
 	if (best_distance < 0) { best_distance = -best_distance }
 	shell = 1
 	while (shell < shell_count) {
-		shell_distance = projected_distance - (30 + shell * shell_gap)
+		shell_distance = projected_distance - shell_base_radius[shell]
 		if (shell_distance < 0) { shell_distance = -shell_distance }
 		if (shell_distance < best_distance) {
 			best_distance = shell_distance
@@ -3133,6 +3175,35 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	}
 	if (hovered_shell < 0 && best_distance <= 17 && projected_distance > base_center_radius + 4 && pointer_x > x + sidebar_width) {
 		hovered_shell = closest_shell
+	}
+	# Scratch exposes wheel/key hats portably but does not expose right mouse
+	# state. A stationary half-second primary hold is therefore the canonical
+	# context gesture; desktop right-click remains as a fast equivalent.
+	if (interaction_allowed && graphics::mouse_pressed() && hovered_entry >= 0) {
+		context_hold_entry = hovered_entry
+		context_hold_started = current_ticks
+		context_hold_x = pointer_x
+		context_hold_y = pointer_y
+		context_hold_triggered = false
+	}
+	if (context_hold_entry >= 0 && graphics::mouse_down()) {
+		dx = pointer_x - context_hold_x
+		dy = pointer_y - context_hold_y
+		if (dx * dx + dy * dy > 9 || drag_moved) { context_hold_entry = -1 }
+		elseif (!context_hold_triggered && current_ticks - context_hold_started >= 500) {
+			context_entry = context_hold_entry
+			if (entry_selected[context_entry] == 0) {
+				call select_only_entry(context_entry)
+				call update_selection_status()
+			}
+			else { selected_entry = context_entry }
+			context_x = pointer_x
+			context_y = pointer_y
+			context_open = true
+			context_hold_triggered = true
+			drag_entry = -1
+			last_click_entry = -1
+		}
 	}
 	if (interaction_allowed && graphics::right_mouse_pressed() && (hovered_entry >= 0 || (selected_entry_count() > 0 && pointer_x > x + sidebar_width && pointer_x < x + area_width && pointer_y > y && pointer_y < y + area_height))) {
 		if (hovered_entry >= 0) {
@@ -3217,7 +3288,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 					actual_target_shell = entry_shell[drag_entry]
 					entry_slot_start_x[drag_entry] = pointer_x
 					entry_slot_start_y[drag_entry] = pointer_y
-					call orbit_project((30 + actual_target_shell * shell_gap) * render_scale / 100, drop_angle)
+					call orbit_project(shell_render_radius[actual_target_shell], drop_angle)
 					entry_slot_start_depth[drag_entry] = projected_depth
 					entry_slot_progress[drag_entry] = 0
 					entry_slot_elapsed[drag_entry] = 0
@@ -3232,6 +3303,10 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		}
 		drag_entry = -1
 	}
+	if (graphics::mouse_released()) {
+		context_hold_entry = -1
+		context_hold_triggered = false
+	}
 	if (drag_template > 0 && graphics::mouse_released()) {
 		target_shell = drop_target_shell
 		target_was_empty = target_shell >= 0 && shell_population_cache[target_shell] == 0
@@ -3244,7 +3319,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 				slot_duration = insertion_slot_duration(shell_population_cache[target_shell] + 1)
 				call begin_slot_animation_for_shell(target_shell, slot_duration)
 				if (target_was_empty) { shell_incremental_layout[target_shell] = 1 }
-				call orbit_project((30 + target_shell * shell_gap) * render_scale / 100, drop_angle)
+				call orbit_project(shell_render_radius[target_shell], drop_angle)
 				drop_depth = projected_depth
 				created_entry = cache_created_entry(candidate_name, drag_template == 2, target_shell, pointer_x, pointer_y, drop_depth, slot_duration)
 				if (target_was_empty && created_entry >= 0) { call align_shell_entry_to_angle(target_shell, created_entry, drop_angle) }
@@ -3320,6 +3395,8 @@ while (animation_shell < 8) {
 	shell_accumulator[animation_shell] = 0
 	shell_speed[animation_shell] = 32
 	shell_incremental_layout[animation_shell] = 0
+	shell_layout_radius_x100[animation_shell] = 0
+	shell_base_radius[animation_shell] = 0
 	animation_shell += 1
 }
 rotation = 0
@@ -3348,6 +3425,11 @@ last_click_entry = -1
 last_click_ticks = -1000
 context_open = false
 context_entry = -1
+context_hold_entry = -1
+context_hold_started = 0
+context_hold_x = 0
+context_hold_y = 0
+context_hold_triggered = false
 rename_open = false
 rename_text = ""
 rename_scratch = ""
@@ -3494,7 +3576,12 @@ while (explorer_window.state != graphics::WINDOW_CLOSED) {
 				if (viewer_scroll < 0) { viewer_scroll = 0 }
 			}
 			elseif (!context_open && !rename_open && !delete_confirm && transition_progress == 0 && graphics::pointer_x(explorer_window) > sidebar_width + 4 && graphics::pointer_y(explorer_window) > 12 && graphics::pointer_y(explorer_window) < height - 10) {
-				call adjust_explorer_zoom(scroll_steps * 10)
+				input_modifiers = graphics::modifiers()
+				if ((input_modifiers & graphics::MOD_SHIFT) != 0) {
+					rotation_target = (rotation_target + scroll_steps * 8) % 360
+					if (rotation_target < 0) { rotation_target += 360 }
+				}
+				else { call adjust_explorer_zoom(scroll_steps * 10) }
 			}
 		}
 		call graphics::fill_rect(explorer_window, 0, 0, width, height, graphics::COLOR_0)

@@ -4,7 +4,7 @@ from runtime import RuntimeContext, run
 from xe_lang.compiler_service import capability_for_syscall, compile_source
 from xe_lang.devices import OSDevice
 from xe_lang.sb3_exporter import analyze_compatibility
-from xe_lang.scratch_profile import load_bundled_profile
+from xe_lang.scratch_profile import load_bundled_profile, load_legacy_profile
 from xe_lang.syscall_abi import SyscallID
 
 
@@ -43,7 +43,7 @@ def test_disabled_clipboard_contract_is_empty_and_read_only() -> None:
 	assert not device.clipboard_write("not leaked")
 
 
-def test_clipboard_syscalls_are_host_only_and_block_exact_scratch_export() -> None:
+def test_clipboard_syscalls_fail_closed_in_the_portable_scratch_profile() -> None:
 	artifact = compile_source('out << os::clipboard_read()\nvar ok: bool\nok = os::clipboard_write("x")')
 	assert artifact.success, artifact.diagnostics
 	assert SyscallID.APP_OS_CLIPBOARD_READ in artifact.required_syscalls
@@ -52,7 +52,7 @@ def test_clipboard_syscalls_are_host_only_and_block_exact_scratch_export() -> No
 	assert capability_for_syscall(SyscallID.APP_OS_CLIPBOARD_READ) == "app.os"
 	assert capability_for_syscall(SyscallID.APP_OS_CLIPBOARD_WRITE) == "app.os"
 	report = analyze_compatibility(artifact, load_bundled_profile())
-	assert not report.exact
-	unsupported = {issue.syscall for issue in report.issues if issue.code == "unsupported-syscall"}
-	assert SyscallID.APP_OS_CLIPBOARD_READ in unsupported
-	assert SyscallID.APP_OS_CLIPBOARD_WRITE in unsupported
+	assert report.exact
+	assert not report.issues
+	legacy_report = analyze_compatibility(artifact, load_legacy_profile())
+	assert not legacy_report.exact

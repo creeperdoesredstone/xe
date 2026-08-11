@@ -231,6 +231,10 @@ out << mine_flags_used'''
 			"graphics::KEY_ENTER",
 			"graphics::KEY_SPACE",
 			"mine_focus_visible",
+			"mine_scroll_delta = graphics::scroll_delta()",
+			"(graphics::modifiers() & graphics::MOD_SHIFT) != 0",
+			"mine_focus_column -= mine_scroll_delta",
+			"mine_focus_row -= mine_scroll_delta",
 		):
 			self.assertIn(marker, self.source)
 

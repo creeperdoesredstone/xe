@@ -71,6 +71,7 @@ var selected_all: bool
 var clipboard_text: string
 var source_scratch: string
 var source_insert: string
+var source_draw_segment: string
 var ide_clipped_text_scratch: string
 var cursor_index: int
 var selection_start: int
@@ -123,6 +124,27 @@ var source_scroll_column: int
 var source_follow_cursor: bool
 var source_cursor_line: int
 var source_cursor_column: int
+var source_revision: int
+var source_metrics_revision: int
+var source_metrics_font: int
+var source_cached_length: int
+var source_cached_line_count: int
+var source_cached_maximum_width: int
+var source_cursor_revision: int
+var source_cursor_index_cache: int
+var source_cursor_font: int
+var source_render_cache_revision: int
+var source_render_cache_font: int
+var source_render_count: int
+var source_render_overflow: bool
+var source_render_overflow_text: string
+var source_render_overflow_line: int
+var source_render_overflow_column: int
+array source_render_text: string[4096]
+array source_render_color: int[4096]
+array source_render_line: int[4096]
+array source_render_column: int[4096]
+array source_render_end_column: int[4096]
 var ide_terminal_scroll_rows: int
 array view_path: string[16]
 array view_is_folder: int[16]
@@ -227,14 +249,123 @@ fn ide_tab_advance(column: int, font_size: int) int {
 	return tab_width - column % tab_width
 }
 
+proc ide_invalidate_source_metrics() {
+	source_revision += 1
+	if (source_revision < 1) { source_revision = 1 }
+	source_metrics_revision = -1
+	source_cursor_revision = -1
+}
+
+proc ide_cache_source_segment(line: int, column: int, end_column: int, color: int) {
+	if (xestring::strlen(source_draw_segment) == 0) { return }
+	if (source_render_count >= 4096) {
+		if (!source_render_overflow) {
+			source_render_overflow = true
+			source_render_overflow_line = line
+			source_render_overflow_column = column
+		}
+		call xestring::append(source_render_overflow_text, source_draw_segment)
+		return
+	}
+	source_render_text[source_render_count] = xestring::concat("", source_draw_segment)
+	source_render_color[source_render_count] = color
+	source_render_line[source_render_count] = line
+	source_render_column[source_render_count] = column
+	source_render_end_column[source_render_count] = end_column
+	source_render_count += 1
+}
+
+proc ide_refresh_source_metrics() {
+	var index: int
+	var column: int
+	var font_size: int
+	var line: int
+	var color: int
+	var segment_color: int
+	var segment_column: int
+	var in_string: bool
+	var in_comment: bool
+	var escape_next: bool
+	font_size = ide_editor_font_size()
+	if (source_metrics_revision == source_revision && source_metrics_font == font_size && source_render_cache_revision == source_revision && source_render_cache_font == font_size) { return }
+	source_cached_length = xestring::strlen(source)
+	source_cached_line_count = 1
+	source_cached_maximum_width = 0
+	source_render_count = 0
+	source_render_overflow = false
+	source_render_overflow_line = 0
+	source_render_overflow_column = 0
+	call ide_clear(source_render_overflow_text)
+	index = 0
+	column = 0
+	line = 0
+	segment_color = -1
+	segment_column = 0
+	in_string = false
+	in_comment = false
+	escape_next = false
+	call ide_clear(source_draw_segment)
+	while (index < source_cached_length) {
+		if ((int)(source[index]) == 10) {
+			call ide_cache_source_segment(line, segment_column, column, segment_color)
+			if (source_render_overflow) { call xestring::append_char(source_render_overflow_text, '\n') }
+			call ide_clear(source_draw_segment)
+			segment_color = -1
+			if (column > source_cached_maximum_width) { source_cached_maximum_width = column }
+			source_cached_line_count += 1
+			line += 1
+			column = 0
+			in_string = false
+			in_comment = false
+			escape_next = false
+		}
+		elseif ((int)(source[index]) == 9) {
+			call ide_cache_source_segment(line, segment_column, column, segment_color)
+			if (source_render_overflow) { call xestring::append_char(source_render_overflow_text, '\t') }
+			call ide_clear(source_draw_segment)
+			segment_color = -1
+			column += ide_tab_advance(column, font_size)
+			escape_next = false
+		}
+		else {
+			if ((int)(source[index]) == 35 && !in_string) { in_comment = true }
+			if ((int)(source[index]) == 34 && !in_comment && !escape_next) { in_string = !in_string }
+			color = graphics::COLOR_10
+			if (in_comment) { color = graphics::COLOR_8 }
+			elseif (in_string || (int)(source[index]) == 34) { color = graphics::COLOR_11 }
+			elseif ((int)(source[index]) >= 48 && (int)(source[index]) <= 57) { color = graphics::COLOR_14 }
+			if (color != segment_color || column - segment_column >= 48) {
+				call ide_cache_source_segment(line, segment_column, column, segment_color)
+				call ide_clear(source_draw_segment)
+				segment_color = color
+				segment_column = column
+			}
+			call xestring::append_char(source_draw_segment, source[index])
+			column += graphics::char_advance(source[index], font_size)
+			if (in_string && (int)(source[index]) == 92 && !escape_next) { escape_next = true }
+			else { escape_next = false }
+		}
+		index += 1
+	}
+	call ide_cache_source_segment(line, segment_column, column, segment_color)
+	call ide_clear(source_draw_segment)
+	if (column > source_cached_maximum_width) { source_cached_maximum_width = column }
+	source_metrics_font = font_size
+	source_metrics_revision = source_revision
+	source_render_cache_font = font_size
+	source_render_cache_revision = source_revision
+}
+
 proc ide_measure_source_cursor() {
 	var index: int
 	var font_size: int
+	font_size = ide_editor_font_size()
+	if (source_cursor_revision == source_revision && source_cursor_index_cache == cursor_index && source_cursor_font == font_size) { return }
+	call ide_refresh_source_metrics()
 	source_cursor_line = 0
 	source_cursor_column = 0
-	font_size = ide_editor_font_size()
 	index = 0
-	while (index < cursor_index && index < xestring::strlen(source)) {
+	while (index < cursor_index && index < source_cached_length) {
 		if ((int)(source[index]) == 10) {
 			source_cursor_line += 1
 			source_cursor_column = 0
@@ -243,40 +374,19 @@ proc ide_measure_source_cursor() {
 		else { source_cursor_column += graphics::char_advance(source[index], font_size) }
 		index += 1
 	}
+	source_cursor_revision = source_revision
+	source_cursor_index_cache = cursor_index
+	source_cursor_font = font_size
 }
 
 fn ide_source_line_count() int {
-	var index: int
-	var count: int
-	count = 1
-	index = 0
-	while (index < xestring::strlen(source)) {
-		if ((int)(source[index]) == 10) { count += 1 }
-		index += 1
-	}
-	return count
+	call ide_refresh_source_metrics()
+	return source_cached_line_count
 }
 
 fn ide_source_maximum_width() int {
-	var index: int
-	var column: int
-	var maximum: int
-	var font_size: int
-	font_size = ide_editor_font_size()
-	index = 0
-	column = 0
-	maximum = 0
-	while (index < xestring::strlen(source)) {
-		if ((int)(source[index]) == 10) {
-			if (column > maximum) { maximum = column }
-			column = 0
-		}
-		elseif ((int)(source[index]) == 9) { column += ide_tab_advance(column, font_size) }
-		else { column += graphics::char_advance(source[index], font_size) }
-		index += 1
-	}
-	if (column > maximum) { maximum = column }
-	return maximum
+	call ide_refresh_source_metrics()
+	return source_cached_maximum_width
 }
 
 proc ide_clamp_source_view(area_width: int, area_height: int) {
@@ -321,10 +431,11 @@ fn ide_source_index_for_position(target_line: int, target_column: int) int {
 	var line: int
 	var column: int
 	font_size = ide_editor_font_size()
+	call ide_refresh_source_metrics()
 	index = 0
 	line = 0
 	column = 0
-	while (index < xestring::strlen(source)) {
+	while (index < source_cached_length) {
 		if ((int)(source[index]) == 10) {
 			if (line >= target_line) { return index }
 			line += 1
@@ -338,7 +449,7 @@ fn ide_source_index_for_position(target_line: int, target_column: int) int {
 		}
 		index += 1
 	}
-	return xestring::strlen(source)
+	return source_cached_length
 }
 
 proc ide_move_source_cursor_vertical(direction: int) {
@@ -571,6 +682,7 @@ proc ide_replace_selection(value: string) {
 		index += 1
 	}
 	call ide_set(source, source_scratch)
+	call ide_invalidate_source_metrics()
 	cursor_index = begin_index + xestring::strlen(value)
 	call ide_clear_selection()
 	dirty = true
@@ -936,6 +1048,7 @@ proc ide_restore_document(slot: int) {
 	if (slot < 0 || slot >= view_count || view_is_folder[slot] != 0) { return }
 	call ide_set(source_path, view_path[slot])
 	call ide_set(source, view_source[slot])
+	call ide_invalidate_source_metrics()
 	dirty = view_dirty[slot] != 0
 	cursor_index = view_cursor[slot]
 	if (cursor_index < 0) { cursor_index = 0 }
@@ -1056,6 +1169,7 @@ proc ide_open_file(name: string) {
 	source_path = xestring::concat("", name)
 	file_handle = os::open_read(source_path)
 	call ide_set(source, os::read(file_handle))
+	call ide_invalidate_source_metrics()
 	call os::close(source_path)
 	compile_ok = compiler::check(source)
 	visual_atom_count = compiler::load_visual(source)
@@ -1244,6 +1358,7 @@ proc ide_run_active_file() {
 proc ide_enter_code_mode() {
 	if (view_is_folder[active_view] == 0 && visual_mode) {
 		call ide_set(source, compiler::visual_source())
+		call ide_invalidate_source_metrics()
 		compile_ok = compiler::check(source)
 	}
 	visual_mode = false
@@ -1640,20 +1755,81 @@ proc draw_ide_inline_rename(x: int, y: int, field_width: int) {
 	}
 }
 
+proc draw_ide_source_segment(x: int, y: int, text: string, color: int, font_size: int) {
+	if (xestring::strlen(text) == 0) { return }
+	if (font_size == graphics::FONT_SMALL) { call graphics::draw_text_small(ide_window, x, y, text, color) }
+	else { call graphics::draw_text(ide_window, x, y, text, color) }
+}
+
+proc draw_ide_cached_source_segment(slot: int, x: int, y: int, visible_width: int, font_size: int) {
+	var index: int
+	var column: int
+	var first_column: int
+	var advance: int
+	if (source_render_end_column[slot] <= source_scroll_column || source_render_column[slot] >= source_scroll_column + visible_width) { return }
+	if (source_render_column[slot] >= source_scroll_column) {
+		call draw_ide_source_segment(x + 22 + source_render_column[slot] - source_scroll_column, y, source_render_text[slot], source_render_color[slot], font_size)
+		return
+	}
+	index = 0
+	column = source_render_column[slot]
+	first_column = -1
+	call ide_clear(source_draw_segment)
+	while (index < xestring::strlen(source_render_text[slot]) && column < source_scroll_column + visible_width) {
+		advance = graphics::char_advance(source_render_text[slot][index], font_size)
+		if (column + advance > source_scroll_column) {
+			if (first_column < 0) { first_column = column }
+			call xestring::append_char(source_draw_segment, source_render_text[slot][index])
+		}
+		column += advance
+		index += 1
+	}
+	if (first_column >= 0) { call draw_ide_source_segment(x + 22 + first_column - source_scroll_column, y, source_draw_segment, source_render_color[slot], font_size) }
+	call ide_clear(source_draw_segment)
+}
+
+proc draw_ide_source_overflow(x: int, y: int, visible_width: int, rows: int, row_height: int, font_size: int) {
+	var index: int
+	var line: int
+	var column: int
+	var visible_line: int
+	var advance: int
+	if (!source_render_overflow) { return }
+	index = 0
+	line = source_render_overflow_line
+	column = source_render_overflow_column
+	while (index < xestring::strlen(source_render_overflow_text) && line < source_scroll_line + rows) {
+		if ((int)(source_render_overflow_text[index]) == 10) {
+			line += 1
+			column = 0
+		}
+		elseif ((int)(source_render_overflow_text[index]) == 9) { column += ide_tab_advance(column, font_size) }
+		else {
+			advance = graphics::char_advance(source_render_overflow_text[index], font_size)
+			visible_line = line - source_scroll_line
+			if (visible_line >= 0 && visible_line < rows && column + advance > source_scroll_column && column < source_scroll_column + visible_width) {
+				call graphics::draw_char_styled(ide_window, x + 22 + column - source_scroll_column, y + visible_line * row_height, source_render_overflow_text[index], graphics::COLOR_10, font_size, 0)
+			}
+			column += advance
+		}
+		index += 1
+	}
+}
+
 proc draw_ide_source(x: int, y: int, area_width: int, area_height: int, show_cursor: bool) {
 	var index: int
+	var low: int
+	var high: int
+	var middle: int
 	var line: int
 	var column: int
 	var visible_line: int
 	var draw_column: int
 	var visible_width: int
 	var rows: int
-	var color: int
 	var advance: int
 	var font_size: int
 	var row_height: int
-	var in_string: bool
-	var in_comment: bool
 	var selection_begin: int
 	var selection_finish: int
 	var error_y: int
@@ -1663,7 +1839,6 @@ proc draw_ide_source(x: int, y: int, area_width: int, area_height: int, show_cur
 	var tab_width: int
 	var selection_width: int
 	var selection_x: int
-	var escape_next: bool
 	font_size = ide_editor_font_size()
 	row_height = ide_editor_row_height()
 	visible_width = area_width - 22
@@ -1671,64 +1846,53 @@ proc draw_ide_source(x: int, y: int, area_width: int, area_height: int, show_cur
 	if (visible_width < 1) { visible_width = 1 }
 	if (rows < 1) { rows = 1 }
 	call ide_measure_source_cursor()
-	index = 0
-	line = 0
-	column = 0
-	selection_begin = ide_selection_begin()
-	selection_finish = ide_selection_finish()
-	in_string = false
-	in_comment = false
-	escape_next = false
-	while (index < xestring::strlen(source) && line < source_scroll_line + rows) {
-		if ((int)(source[index]) == 10) {
-			line += 1
-			column = 0
-			in_string = false
-			in_comment = false
-			escape_next = false
-		}
-		else {
-			visible_line = line - source_scroll_line
-			if ((int)(source[index]) == 9) {
-				tab_width = ide_tab_advance(column, font_size)
-				draw_column = column - source_scroll_column
-				if (visible_line >= 0 && visible_line < rows && column + tab_width > source_scroll_column && column < source_scroll_column + visible_width && index >= selection_begin && index < selection_finish) {
-					selection_x = draw_column
-					selection_width = tab_width
-					if (selection_x < 0) { selection_width += selection_x; selection_x = 0 }
-					if (selection_x + selection_width > visible_width) { selection_width = visible_width - selection_x }
-					if (selection_width > 0) { call graphics::fill_rect(ide_window, x + 22 + selection_x, y + visible_line * row_height, selection_width, row_height, graphics::COLOR_5) }
-				}
-				column += tab_width
-				escape_next = false
-			}
-			else {
-				if ((int)(source[index]) == 35 && !in_string) { in_comment = true }
-				if ((int)(source[index]) == 34 && !in_comment && !escape_next) { in_string = !in_string }
-				advance = graphics::char_advance(source[index], font_size)
-				draw_column = column - source_scroll_column
-				if (visible_line >= 0 && visible_line < rows && column + advance > source_scroll_column && column < source_scroll_column + visible_width) {
-					color = graphics::COLOR_10
-					if (in_comment) { color = graphics::COLOR_8 }
-					elseif (in_string || (int)(source[index]) == 34) { color = graphics::COLOR_11 }
-					elseif ((int)(source[index]) >= 48 && (int)(source[index]) <= 57) { color = graphics::COLOR_14 }
-					if (index >= selection_begin && index < selection_finish) {
-						selection_x = draw_column
-						selection_width = advance
-						if (selection_x < 0) { selection_width += selection_x; selection_x = 0 }
-						if (selection_x + selection_width > visible_width) { selection_width = visible_width - selection_x }
-						if (selection_width > 0) { call graphics::fill_rect(ide_window, x + 22 + selection_x, y + visible_line * row_height, selection_width, row_height, graphics::COLOR_5) }
-						color = graphics::WHITE
-					}
-					if (draw_column >= 0 && draw_column < visible_width) { call graphics::draw_char_styled(ide_window, x + 22 + draw_column, y + visible_line * row_height, source[index], color, font_size, 0) }
-				}
-				if (in_string && (int)(source[index]) == 92 && !escape_next) { escape_next = true }
-				else { escape_next = false }
-				column += advance
-			}
+	low = 0
+	high = source_render_count
+	while (low < high) {
+		middle = (low + high) / 2
+		if (source_render_line[middle] < source_scroll_line) { low = middle + 1 }
+		else { high = middle }
+	}
+	index = low
+	while (index < source_render_count && source_render_line[index] < source_scroll_line + rows) {
+		visible_line = source_render_line[index] - source_scroll_line
+		if (visible_line >= 0 && visible_line < rows) {
+			call draw_ide_cached_source_segment(index, x, y + visible_line * row_height, visible_width, font_size)
 		}
 		index += 1
 	}
+	call draw_ide_source_overflow(x, y, visible_width, rows, row_height, font_size)
+	selection_begin = ide_selection_begin()
+	selection_finish = ide_selection_finish()
+	if (selection_begin != selection_finish) {
+		index = 0
+		line = 0
+		column = 0
+		while (index < source_cached_length && line < source_scroll_line + rows) {
+			if ((int)(source[index]) == 10) {
+				line += 1
+				column = 0
+			}
+			else {
+				if ((int)(source[index]) == 9) { advance = ide_tab_advance(column, font_size) }
+				else { advance = graphics::char_advance(source[index], font_size) }
+				visible_line = line - source_scroll_line
+				draw_column = column - source_scroll_column
+				if (visible_line >= 0 && visible_line < rows && column + advance > source_scroll_column && column < source_scroll_column + visible_width && index >= selection_begin && index < selection_finish) {
+					selection_x = draw_column
+					selection_width = advance
+					if (selection_x < 0) { selection_width += selection_x; selection_x = 0 }
+					if (selection_x + selection_width > visible_width) { selection_width = visible_width - selection_x }
+					if (selection_width > 0) { call graphics::fill_rect(ide_window, x + 22 + selection_x, y + visible_line * row_height, selection_width, row_height, graphics::COLOR_5) }
+					if ((int)(source[index]) != 9) { call graphics::draw_char_styled(ide_window, x + 22 + draw_column, y + visible_line * row_height, source[index], graphics::WHITE, font_size, 0) }
+				}
+				column += advance
+			}
+			index += 1
+		}
+	}
+	call graphics::fill_rect(ide_window, x, y, 22, rows * row_height, graphics::COLOR_1)
+	call graphics::fill_rect(ide_window, x + area_width, y, 2, rows * row_height, graphics::COLOR_0)
 	line = 0
 	while (line < rows) {
 		call graphics::draw_int_small(ide_window, x + 2, y + line * row_height, source_scroll_line + line + 1, graphics::COLOR_8)
@@ -1750,6 +1914,61 @@ proc draw_ide_source(x: int, y: int, area_width: int, area_height: int, show_cur
 	if (show_cursor && !ide_has_selection() && (current_ticks / 450) % 2 == 0 && source_cursor_column >= source_scroll_column && source_cursor_column <= source_scroll_column + visible_width && source_cursor_line >= source_scroll_line && source_cursor_line < source_scroll_line + rows) {
 		call graphics::draw_line(ide_window, x + 22 + source_cursor_column - source_scroll_column, y + (source_cursor_line - source_scroll_line) * row_height, x + 22 + source_cursor_column - source_scroll_column, y + (source_cursor_line - source_scroll_line) * row_height + row_height - 2, graphics::COLOR_13)
 	}
+}
+
+proc draw_ide_source_scroll_arrow(x: int, y: int, points_right: bool) {
+	if (points_right) {
+		call graphics::draw_line(ide_window, x + 2, y + 1, x + 3, y + 2, graphics::WHITE)
+		call graphics::draw_line(ide_window, x + 3, y + 2, x + 2, y + 3, graphics::WHITE)
+	}
+	else {
+		call graphics::draw_line(ide_window, x + 3, y + 1, x + 2, y + 2, graphics::WHITE)
+		call graphics::draw_line(ide_window, x + 2, y + 2, x + 3, y + 3, graphics::WHITE)
+	}
+}
+
+proc draw_ide_source_scrollbar(x: int, y: int, area_width: int, interaction_allowed: bool) {
+	var visible_width: int
+	var maximum_scroll: int
+	var track_x: int
+	var track_width: int
+	var thumb_width: int
+	var thumb_x: int
+	var pointer_x: int
+	var pointer_y: int
+	visible_width = area_width - 22
+	if (visible_width < 1) { visible_width = 1 }
+	maximum_scroll = ide_source_maximum_width() - visible_width
+	if (maximum_scroll <= 0 || area_width < 38) { return }
+	track_x = x + 30
+	track_width = area_width - 38
+	if (track_width < 6) { track_width = 6 }
+	call graphics::fill_rect(ide_window, track_x, y + 2, track_width, 2, graphics::COLOR_8)
+	thumb_width = track_width * visible_width / (visible_width + maximum_scroll)
+	if (thumb_width < 5) { thumb_width = 5 }
+	if (thumb_width > track_width) { thumb_width = track_width }
+	thumb_x = track_x
+	if (maximum_scroll > 0 && track_width > thumb_width) { thumb_x += (track_width - thumb_width) * source_scroll_column / maximum_scroll }
+	call graphics::fill_rect(ide_window, thumb_x, y + 1, thumb_width, 4, graphics::COLOR_13)
+	if (!interaction_allowed) {
+		call graphics::fill_rect(ide_window, x + 22, y, 7, 6, graphics::COLOR_8)
+		call graphics::fill_rect(ide_window, x + area_width - 7, y, 7, 6, graphics::COLOR_8)
+		call draw_ide_source_scroll_arrow(x + 22, y + 1, false)
+		call draw_ide_source_scroll_arrow(x + area_width - 7, y + 1, true)
+		return
+	}
+	if (graphics::button_flat(ide_window, x + 22, y, 7, 6, " ", graphics::COLOR_8)) { source_scroll_column -= visible_width / 2 }
+	if (graphics::button_flat(ide_window, x + area_width - 7, y, 7, 6, " ", graphics::COLOR_8)) { source_scroll_column += visible_width / 2 }
+	call draw_ide_source_scroll_arrow(x + 22, y + 1, false)
+	call draw_ide_source_scroll_arrow(x + area_width - 7, y + 1, true)
+	pointer_x = graphics::pointer_x(ide_window)
+	pointer_y = graphics::pointer_y(ide_window)
+	if (graphics::mouse_down() && pointer_x >= track_x && pointer_x < track_x + track_width && pointer_y >= y && pointer_y < y + 6 && track_width > thumb_width) {
+		source_scroll_column = (pointer_x - track_x - thumb_width / 2) * maximum_scroll / (track_width - thumb_width)
+	}
+	if (source_scroll_column < 0) { source_scroll_column = 0 }
+	if (source_scroll_column > maximum_scroll) { source_scroll_column = maximum_scroll }
+	if (active_view >= 0 && active_view < view_count) { view_scroll_column[active_view] = source_scroll_column }
 }
 
 proc draw_ide_terminal_command_tail(x: int, y: int, draw_width: int, text: string, color: int, font_size: int) {
@@ -3607,6 +3826,7 @@ selected_all = false
 clipboard_text = ""
 source_scratch = ""
 source_insert = ""
+source_draw_segment = ""
 ide_clipped_text_scratch = ""
 cursor_index = xestring::strlen(source)
 selection_start = cursor_index
@@ -3685,6 +3905,22 @@ source_scroll_column = 0
 source_follow_cursor = true
 source_cursor_line = 0
 source_cursor_column = 0
+source_revision = 1
+source_metrics_revision = -1
+source_metrics_font = -1
+source_cached_length = 0
+source_cached_line_count = 1
+source_cached_maximum_width = 0
+source_cursor_revision = -1
+source_cursor_index_cache = -1
+source_cursor_font = -1
+source_render_cache_revision = -1
+source_render_cache_font = -1
+source_render_count = 0
+source_render_overflow = false
+source_render_overflow_text = ""
+source_render_overflow_line = 0
+source_render_overflow_column = 0
 ide_terminal_scroll_rows = 0
 compile_ok = compiler::check(source)
 visual_atom_count = compiler::load_visual(source)
@@ -3828,6 +4064,8 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		var splitter_hover: bool
 		var editor_x: int
 		var editor_height: int
+		var source_draw_height: int
+		var source_scrollbar_visible: bool
 		var tab_index: int
 		var tab_slot: int
 		var tab_x: int
@@ -3885,6 +4123,12 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		editor_x = explorer_width + 4
 		editor_height = height - 31
 		if (terminal_open && height >= 120) { editor_height = (height - 35) * 2 / 3 }
+		source_draw_height = editor_height - 4
+		source_scrollbar_visible = false
+		if (!visual_mode && active_view >= 0 && active_view < view_count && view_is_folder[active_view] == 0 && source_draw_height >= 14 && ide_source_maximum_width() > width - editor_x - 24) {
+			source_scrollbar_visible = true
+			source_draw_height -= 7
+		}
 		show_modes = 0
 		mode_x = width
 		if (width - editor_x >= 138) {
@@ -3985,13 +4229,13 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 		}
 		terminal_top = 23 + editor_height
 		if (!ui_input_blocked && !explorer_popup_active && ide_scroll_delta != 0) {
-			if (!visual_mode && view_is_folder[active_view] == 0 && main_pointer_x >= editor_x && main_pointer_x < width - 2 && main_pointer_y >= 23 && main_pointer_y < 23 + editor_height - 4) {
+			if (!visual_mode && view_is_folder[active_view] == 0 && main_pointer_x >= editor_x && main_pointer_x < width - 2 && main_pointer_y >= 23 && main_pointer_y < 23 + source_draw_height) {
 				if ((graphics::modifiers() & graphics::MOD_SHIFT) != 0) {
 					source_scroll_column -= ide_scroll_delta * 8
 				}
 				else { source_scroll_line -= ide_scroll_delta * 3 }
 				source_follow_cursor = false
-				call ide_clamp_source_view(width - editor_x - 2, editor_height - 4)
+				call ide_clamp_source_view(width - editor_x - 2, source_draw_height)
 			}
 			elseif (terminal_open && height >= 120 && main_pointer_x >= editor_x && main_pointer_x < width - 2 && main_pointer_y >= terminal_top && main_pointer_y < height - 20) {
 				ide_terminal_scroll_rows += ide_scroll_delta * 3
@@ -4003,10 +4247,10 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 				editor_focus = 1
 				selection_dragging = false
 			}
-			elseif (main_pointer_x >= editor_x && main_pointer_y >= 21 && main_pointer_y < 21 + editor_height) {
+			elseif (main_pointer_x >= editor_x && main_pointer_y >= 23 && main_pointer_y < 23 + source_draw_height) {
 				if (!visual_mode && view_is_folder[active_view] == 0) {
 					editor_focus = 0
-					cursor_index = ide_source_index_at(main_pointer_x, main_pointer_y, editor_x, 23, width - editor_x - 2, editor_height - 4)
+					cursor_index = ide_source_index_at(main_pointer_x, main_pointer_y, editor_x, 23, width - editor_x - 2, source_draw_height)
 					selection_start = cursor_index
 					selection_end = cursor_index
 					selected_all = false
@@ -4017,7 +4261,7 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 			}
 		}
 		if (selection_dragging && graphics::mouse_down() && !visual_mode && view_is_folder[active_view] == 0 && !explorer_popup_active) {
-			selection_end = ide_source_index_at(main_pointer_x, main_pointer_y, editor_x, 23, width - editor_x - 2, editor_height - 4)
+			selection_end = ide_source_index_at(main_pointer_x, main_pointer_y, editor_x, 23, width - editor_x - 2, source_draw_height)
 			cursor_index = selection_end
 			selected_all = selection_start == 0 && selection_end == xestring::strlen(source)
 		}
@@ -4039,11 +4283,12 @@ while (ide_window.state != graphics::WINDOW_CLOSED) {
 				call graphics::draw_text_small(ide_window, editor_x + 8, 40, "Open a file to edit or visualize", graphics::COLOR_10)
 			}
 			else {
-				if (source_follow_cursor) { call ide_keep_source_cursor_visible(width - editor_x - 2, editor_height - 4) }
-				else { call ide_clamp_source_view(width - editor_x - 2, editor_height - 4) }
+				if (source_follow_cursor) { call ide_keep_source_cursor_visible(width - editor_x - 2, source_draw_height) }
+				else { call ide_clamp_source_view(width - editor_x - 2, source_draw_height) }
 				view_scroll_line[active_view] = source_scroll_line
 				view_scroll_column[active_view] = source_scroll_column
-				call draw_ide_source(editor_x, 23, width - editor_x - 2, editor_height - 4, editor_focus == 0)
+				call draw_ide_source(editor_x, 23, width - editor_x - 2, source_draw_height, editor_focus == 0)
+				if (source_scrollbar_visible) { call draw_ide_source_scrollbar(editor_x, 24 + source_draw_height, width - editor_x - 2, !ui_input_blocked && !explorer_popup_active) }
 			}
 		}
 		if (terminal_open && height >= 120) {

@@ -5,6 +5,11 @@ from enum import IntEnum
 import time
 from typing import Callable
 
+from xe_lang.design_tokens import (
+	WINDOW_COMPONENT_TOKENS,
+	WINDOW_CORNER_ROUNDED,
+	normalize_window_corner_style,
+)
 from .graphics import GraphicsDevice
 from .input import InputDevice, InputFrame
 
@@ -41,26 +46,26 @@ class Rect:
 
 @dataclass(frozen=True)
 class WindowTheme:
-	title_height: int = 18
-	border_width: int = 2
-	border_color: int = 13
-	title_color: int = 13
-	content_color: int = 0
-	text_color: int = 15
-	outline_color: int = 15
-	button_color: int = 5
-	button_hover_color: int = 13
-	button_pressed_color: int = 9
-	slider_track_color: int = 8
-	slider_fill_color: int = 11
-	title_text_offset: int = 4
-	control_size: int = 12
-	control_gap: int = 2
-	minimum_width: int = 72
-	minimum_height: int = 54
-	resize_grab: int = 5
-	resize_outer_grab: int = 5
-	maximize_snap_margin: int = 6
+	title_height: int = WINDOW_COMPONENT_TOKENS.title_height
+	border_width: int = WINDOW_COMPONENT_TOKENS.border_width
+	border_color: int = WINDOW_COMPONENT_TOKENS.border_color
+	title_color: int = WINDOW_COMPONENT_TOKENS.title_color
+	content_color: int = WINDOW_COMPONENT_TOKENS.content_color
+	text_color: int = WINDOW_COMPONENT_TOKENS.text_color
+	outline_color: int = WINDOW_COMPONENT_TOKENS.outline_color
+	button_color: int = WINDOW_COMPONENT_TOKENS.button_color
+	button_hover_color: int = WINDOW_COMPONENT_TOKENS.button_hover_color
+	button_pressed_color: int = WINDOW_COMPONENT_TOKENS.button_pressed_color
+	slider_track_color: int = WINDOW_COMPONENT_TOKENS.slider_track_color
+	slider_fill_color: int = WINDOW_COMPONENT_TOKENS.slider_fill_color
+	title_text_offset: int = WINDOW_COMPONENT_TOKENS.title_text_offset
+	control_size: int = WINDOW_COMPONENT_TOKENS.control_size
+	control_gap: int = WINDOW_COMPONENT_TOKENS.control_gap
+	minimum_width: int = WINDOW_COMPONENT_TOKENS.minimum_width
+	minimum_height: int = WINDOW_COMPONENT_TOKENS.minimum_height
+	resize_grab: int = WINDOW_COMPONENT_TOKENS.resize_grab
+	resize_outer_grab: int = WINDOW_COMPONENT_TOKENS.resize_outer_grab
+	maximize_snap_margin: int = WINDOW_COMPONENT_TOKENS.maximize_snap_margin
 
 
 @dataclass
@@ -224,7 +229,7 @@ class WindowManager:
 		bounds = record.bounds
 		size = self.theme.control_size
 		step = size + self.theme.control_gap
-		right_inset = self._appearance_value("window_corner_style", 0) * 2
+		right_inset = self._corner_inset()
 		return {
 			"close": Rect(bounds.x + bounds.width - size - right_inset - 1, bounds.y + 1, size, size),
 			"maximize": Rect(bounds.x + bounds.width - size - step - right_inset - 1, bounds.y + 1, size, size),
@@ -647,22 +652,18 @@ class WindowManager:
 		except (AttributeError, TypeError, ValueError):
 			return default
 
+	def _corner_inset(self) -> int:
+		style = normalize_window_corner_style(self._appearance_value("window_corner_style", 0))
+		if style == WINDOW_CORNER_ROUNDED:
+			return WINDOW_COMPONENT_TOKENS.rounded_corner_inset
+		return 0
+
 	def _fill_window_rect(self, rect: Rect, color: int, transparency: int) -> None:
-		transparency = max(0, min(100, transparency))
-		if transparency == 0:
-			self.graphics.fill_rect(rect.x, rect.y, rect.width, rect.height, color)
-			return
-		if transparency == 100:
-			return
-		opaque_slots = max(0, min(4, int(round((100 - transparency) * 4 / 100))))
-		self.graphics.fill_dithered_rect(
-			rect.x,
-			rect.y,
-			rect.width,
-			rect.height,
-			color,
-			opaque_slots,
-		)
+		# The legacy ABI still passes this argument, but window transparency was
+		# removed. Keeping the parameter avoids breaking old bytecode while every
+		# surface follows the same opaque component token.
+		del transparency
+		self.graphics.fill_rect(rect.x, rect.y, rect.width, rect.height, color)
 
 	def clear_content(self, handle: int, color: int) -> None:
 		"""Clear an app surface while preserving the configured window translucency."""
@@ -691,8 +692,7 @@ class WindowManager:
 			return
 		b = record.bounds
 		transparency = self._appearance_value("window_transparency", 0)
-		corner_style = self._appearance_value("window_corner_style", 0)
-		corner_inset = 0 if corner_style == 0 else corner_style * 2
+		corner_inset = self._corner_inset()
 		if corner_inset:
 			self._fill_window_rect(
 				Rect(b.x + corner_inset, b.y, b.width - corner_inset * 2, b.height),

@@ -1,12 +1,24 @@
-const APP_TITLE = "Xenon DAW"
-const APP_WIDTH = 300
-const APP_HEIGHT = 230
+# Xenon DAW: a compact three-channel piano-roll editor.
 
-const KEY_WIDTH = 20
+# App metadata and default geometry.
+const APP_TITLE = "Xenon DAW"
+const APP_DEFAULT_WIDTH = 300
+const APP_DEFAULT_HEIGHT = 230
+
+const DAW_CHANNEL_COUNT = 3
+const DAW_STEP_COUNT = 256
+const DAW_NOTE_COUNT = 96
+
+const KEY_WIDTH = 24
 const KEY_HEIGHT = 7
-const KEY_NAMES       = "CCDDEFFGGAAB"
+const STEP_WIDTH = 8
+const SCROLLBAR_SIZE = 9
+const HEADER_HEIGHT = 13
+const STATUS_HEIGHT = 9
+const KEY_NAMES = "CCDDEFFGGAAB"
 const KEY_ACCIDENTALS = " # #  # # # "
 
+# Model and state.
 var daw_window: graphics::Window
 array channel_1_grid: int[256]
 array channel_2_grid: int[256]
@@ -14,143 +26,473 @@ array channel_3_grid: int[256]
 
 var scroll_x: int
 var scroll_y: int
-var menu_left_x: float
-var menu_top_y: float
-
-var grid_view_width: int
-var grid_view_height: int
-
 var current_channel: int
+var daw_hover_step: int
+var daw_hover_note: int
+var daw_note_empty: int
 
-# Helper for setting note
-proc toggle_note(note_x: int, note_y: int, channel: int) {
-	var note: int
-	if (channel == 0) { note = channel_1_grid[note_x] }
-	if (channel == 1) { note = channel_2_grid[note_x] }
-	if (channel == 2) { note = channel_3_grid[note_x] }
-	if (note == note_y) { note = 0 }
-	else { note = note_y }
-	if (channel == 0) { channel_1_grid[note_x] = note }
-	if (channel == 1) { channel_2_grid[note_x] = note }
-	if (channel == 2) { channel_3_grid[note_x] = note }
+proc initialize_note_grids() {
+	var step: int
+	step = 0
+	while (step < DAW_STEP_COUNT) {
+		channel_1_grid[step] = daw_note_empty
+		channel_2_grid[step] = daw_note_empty
+		channel_3_grid[step] = daw_note_empty
+		step += 1
+	}
 }
 
-# Keyboard drawing.
-proc draw_keys(vx: int, vy: int, vw: int, vh: int) {
-	var key_y: int
-	var key_idx: int
-	var key_col: int
-	var name_col: int
-	var grid_col: int
-	
-	var mouse_x: int
-	var mouse_y: int
-	var mouse_grid_x: int
-	var mouse_grid_y: int
-	var sel_box_x: int
-	var sel_box_y: int
-	
-	var grid_x: int
-	var grid_y: int
-	var octave_offset: int
-	
-	key_y = vh - KEY_HEIGHT
-	key_idx = scroll_y
-	mouse_x = graphics::mouse_x() - daw_window.x - 2
-	mouse_y = graphics::mouse_y() - daw_window.y - 17
-	
-	while (key_y >= 0) {
-		if (KEY_ACCIDENTALS[key_idx % 12] == ' ') {
-			key_col = graphics::WHITE
-			name_col = graphics::BLACK
-			grid_col = graphics::COLOR_8
-			octave_offset = 0
-		} else {
-			key_col = graphics::BLACK
-			name_col = graphics::WHITE
-			grid_col = graphics::COLOR_1
-			octave_offset = 4
+fn note_at(step: int, channel: int) int {
+	if (step < 0 || step >= DAW_STEP_COUNT) { return daw_note_empty }
+	if (channel == 0) { return channel_1_grid[step] }
+	if (channel == 1) { return channel_2_grid[step] }
+	if (channel == 2) { return channel_3_grid[step] }
+	return daw_note_empty
+}
+
+proc toggle_note(note_x: int, note_y: int, channel: int) {
+	var note: int
+	if (note_x < 0 || note_x >= DAW_STEP_COUNT) { return }
+	if (note_y < 0 || note_y >= DAW_NOTE_COUNT) { return }
+	if (channel < 0 || channel >= DAW_CHANNEL_COUNT) { return }
+	note = note_at(note_x, channel)
+	if (note == note_y) { note = daw_note_empty }
+	else { note = note_y }
+	if (channel == 0) { channel_1_grid[note_x] = note }
+	elseif (channel == 1) { channel_2_grid[note_x] = note }
+	else { channel_3_grid[note_x] = note }
+}
+
+fn daw_channel_color(channel: int) int {
+	if (channel == 0) { return graphics::COLOR_12 }
+	if (channel == 1) { return graphics::COLOR_10 }
+	return graphics::COLOR_14
+}
+
+# Layout helpers.
+var daw_width: int
+var daw_height: int
+var daw_pointer_x: int
+var daw_pointer_y: int
+
+var daw_grid_x: int
+var daw_grid_y: int
+var daw_keyboard_width: int
+var grid_view_width: int
+var grid_view_height: int
+var daw_visible_steps: int
+var daw_visible_notes: int
+
+var daw_vscroll_x: int
+var daw_vscroll_y: int
+var daw_vscroll_height: int
+var daw_hscroll_x: int
+var daw_hscroll_y: int
+var daw_hscroll_width: int
+var daw_status_y: int
+var daw_status_height: int
+var daw_channel_button_width: int
+
+var daw_vtrack_y: int
+var daw_vtrack_height: int
+var daw_vthumb_y: int
+var daw_vthumb_height: int
+var daw_htrack_x: int
+var daw_htrack_width: int
+var daw_hthumb_x: int
+var daw_hthumb_width: int
+
+fn daw_max_scroll_x() int {
+	var maximum: int
+	if (daw_visible_steps < 1) { return 0 }
+	maximum = DAW_STEP_COUNT - daw_visible_steps
+	if (maximum < 0) { maximum = 0 }
+	return maximum
+}
+
+fn daw_max_scroll_y() int {
+	var maximum: int
+	if (daw_visible_notes < 1) { return 0 }
+	maximum = DAW_NOTE_COUNT - daw_visible_notes
+	if (maximum < 0) { maximum = 0 }
+	return maximum
+}
+
+proc clamp_scroll() {
+	var maximum_x: int
+	var maximum_y: int
+	maximum_x = daw_max_scroll_x()
+	maximum_y = daw_max_scroll_y()
+	if (scroll_x < 0) { scroll_x = 0 }
+	if (scroll_y < 0) { scroll_y = 0 }
+	if (scroll_x > maximum_x) { scroll_x = maximum_x }
+	if (scroll_y > maximum_y) { scroll_y = maximum_y }
+}
+
+proc compute_scrollbar_layout() {
+	var maximum_x: int
+	var maximum_y: int
+	var travel: int
+
+	daw_vtrack_y = daw_vscroll_y + SCROLLBAR_SIZE
+	daw_vtrack_height = daw_vscroll_height - SCROLLBAR_SIZE * 2
+	if (daw_vtrack_height < 0) { daw_vtrack_height = 0 }
+	daw_vthumb_height = 0
+	daw_vthumb_y = daw_vtrack_y
+	maximum_y = daw_max_scroll_y()
+	if (daw_vtrack_height > 0) {
+		daw_vthumb_height = daw_vtrack_height
+		if (maximum_y > 0) {
+			daw_vthumb_height = daw_vtrack_height * daw_visible_notes / DAW_NOTE_COUNT
+			if (daw_vthumb_height < 5) { daw_vthumb_height = 5 }
+			if (daw_vthumb_height > daw_vtrack_height) { daw_vthumb_height = daw_vtrack_height }
+			travel = daw_vtrack_height - daw_vthumb_height
+			daw_vthumb_y = daw_vtrack_y + (maximum_y - scroll_y) * travel / maximum_y
 		}
-		
-		call graphics::fill_rect(daw_window, vx, vy + key_y, KEY_WIDTH, KEY_HEIGHT, key_col)
-		call graphics::draw_char_small(daw_window, vx + 8, vy + key_y + 1, KEY_NAMES[key_idx % 12], name_col)
-		call graphics::fill_rect(daw_window, vx + KEY_WIDTH, vy + key_y, vw - KEY_WIDTH, KEY_HEIGHT, grid_col)
-		call graphics::draw_char_small(daw_window, vx + 12, vy + key_y + 1, KEY_ACCIDENTALS[key_idx % 12], name_col)
-		call graphics::draw_char_small(daw_window, vx + 12 + octave_offset, vy + key_y + 1, (char)(50 + key_idx/12), name_col)
-		
-		key_y -= KEY_HEIGHT
-		key_idx += 1
 	}
-	
-	if (mouse_x >= vx + KEY_WIDTH && mouse_x < vx + vw && mouse_y >= vy && mouse_y < vy + vh) {
-		mouse_grid_x = (mouse_x - (vx + KEY_WIDTH)) / 8
-		mouse_grid_y = (mouse_y - vy) / KEY_HEIGHT
-		sel_box_x = 8*mouse_grid_x + vx + KEY_WIDTH
-		sel_box_y = KEY_HEIGHT*mouse_grid_y + vy
-		
-		if (graphics::button_tone(daw_window, sel_box_x - 1, sel_box_y - 1, 10, KEY_HEIGHT + 2, " ", graphics::COLOR_1)) {
-			call toggle_note(mouse_grid_x + scroll_x, 27 - mouse_grid_y + scroll_y, current_channel)
+
+	daw_htrack_x = daw_hscroll_x + SCROLLBAR_SIZE
+	daw_htrack_width = daw_hscroll_width - SCROLLBAR_SIZE * 2
+	if (daw_htrack_width < 0) { daw_htrack_width = 0 }
+	daw_hthumb_width = 0
+	daw_hthumb_x = daw_htrack_x
+	maximum_x = daw_max_scroll_x()
+	if (daw_htrack_width > 0) {
+		daw_hthumb_width = daw_htrack_width
+		if (maximum_x > 0) {
+			daw_hthumb_width = daw_htrack_width * daw_visible_steps / DAW_STEP_COUNT
+			if (daw_hthumb_width < 5) { daw_hthumb_width = 5 }
+			if (daw_hthumb_width > daw_htrack_width) { daw_hthumb_width = daw_htrack_width }
+			travel = daw_htrack_width - daw_hthumb_width
+			daw_hthumb_x = daw_htrack_x + scroll_x * travel / maximum_x
 		}
+	}
+}
+
+proc compute_layout(width: int, height: int) {
+	var available_width: int
+	var available_height: int
+
+	daw_width = width
+	daw_height = height
+	if (daw_width < 0) { daw_width = 0 }
+	if (daw_height < 0) { daw_height = 0 }
+
+	daw_grid_x = 2
+	daw_grid_y = HEADER_HEIGHT
+	daw_status_height = STATUS_HEIGHT
+	if (daw_height < 48) {
+		daw_grid_y = 10
+		daw_status_height = 0
+	}
+	available_width = daw_width - daw_grid_x - 2 - SCROLLBAR_SIZE
+	if (available_width < 0) { available_width = 0 }
+	daw_keyboard_width = KEY_WIDTH
+	if (available_width < KEY_WIDTH + STEP_WIDTH) {
+		if (available_width >= STEP_WIDTH + 6) { daw_keyboard_width = available_width - STEP_WIDTH }
+		else { daw_keyboard_width = available_width }
+	}
+	if (daw_keyboard_width < 0) { daw_keyboard_width = 0 }
+	grid_view_width = available_width - daw_keyboard_width
+	if (grid_view_width < 0) { grid_view_width = 0 }
+	daw_visible_steps = grid_view_width / STEP_WIDTH
+	if (daw_visible_steps > DAW_STEP_COUNT) { daw_visible_steps = DAW_STEP_COUNT }
+
+	available_height = daw_height - daw_grid_y - SCROLLBAR_SIZE - daw_status_height - 1
+	if (available_height < 0) { available_height = 0 }
+	daw_visible_notes = available_height / KEY_HEIGHT
+	if (daw_visible_notes > DAW_NOTE_COUNT) { daw_visible_notes = DAW_NOTE_COUNT }
+	grid_view_height = daw_visible_notes * KEY_HEIGHT
+
+	daw_vscroll_x = daw_grid_x + daw_keyboard_width + grid_view_width
+	daw_vscroll_y = daw_grid_y
+	daw_vscroll_height = grid_view_height
+	daw_hscroll_x = daw_grid_x + daw_keyboard_width
+	daw_hscroll_y = daw_grid_y + grid_view_height
+	daw_hscroll_width = grid_view_width
+	daw_status_y = daw_hscroll_y + SCROLLBAR_SIZE
+	if (daw_status_height == 0) { daw_status_y = daw_height }
+
+	daw_channel_button_width = (daw_width - 8) / DAW_CHANNEL_COUNT
+	if (daw_channel_button_width < 0) { daw_channel_button_width = 0 }
+	if (daw_channel_button_width > 48) { daw_channel_button_width = 48 }
+	call clamp_scroll()
+	call compute_scrollbar_layout()
+}
+
+# Input and interaction.
+fn point_inside(px: int, py: int, x: int, y: int, width: int, height: int) bool {
+	return width > 0 && height > 0 && px >= x && px < x + width && py >= y && py < y + height
+}
+
+proc handle_channel_input() {
+	var channel: int
+	var button_x: int
+	if (!graphics::mouse_pressed() || daw_channel_button_width < 1) { return }
+	channel = 0
+	while (channel < DAW_CHANNEL_COUNT) {
+		button_x = 2 + channel * (daw_channel_button_width + 2)
+		if (point_inside(daw_pointer_x, daw_pointer_y, button_x, 2, daw_channel_button_width, 8)) {
+			current_channel = channel
+		}
+		channel += 1
+	}
+}
+
+proc handle_scroll_input() {
+	var delta: int
+
+	delta = graphics::scroll_delta()
+	if (delta != 0 && point_inside(daw_pointer_x, daw_pointer_y, daw_grid_x, daw_grid_y, daw_keyboard_width + grid_view_width, grid_view_height)) {
+		if ((graphics::modifiers() & graphics::MOD_SHIFT) != 0) { scroll_x -= delta * 4 }
+		else { scroll_y += delta * 3 }
+	}
+
+	if (graphics::mouse_pressed()) {
+		if (daw_vscroll_height >= SCROLLBAR_SIZE * 2) {
+			if (point_inside(daw_pointer_x, daw_pointer_y, daw_vscroll_x, daw_vscroll_y, SCROLLBAR_SIZE, SCROLLBAR_SIZE)) { scroll_y += 1 }
+			elseif (point_inside(daw_pointer_x, daw_pointer_y, daw_vscroll_x, daw_vscroll_y + daw_vscroll_height - SCROLLBAR_SIZE, SCROLLBAR_SIZE, SCROLLBAR_SIZE)) { scroll_y -= 1 }
+			elseif (point_inside(daw_pointer_x, daw_pointer_y, daw_vscroll_x, daw_vtrack_y, SCROLLBAR_SIZE, daw_vtrack_height)) {
+				if (daw_pointer_y < daw_vthumb_y) { scroll_y += daw_visible_notes }
+				elseif (daw_pointer_y >= daw_vthumb_y + daw_vthumb_height) { scroll_y -= daw_visible_notes }
+			}
+		}
+		if (daw_hscroll_width >= SCROLLBAR_SIZE * 2) {
+			if (point_inside(daw_pointer_x, daw_pointer_y, daw_hscroll_x, daw_hscroll_y, SCROLLBAR_SIZE, SCROLLBAR_SIZE)) { scroll_x -= 1 }
+			elseif (point_inside(daw_pointer_x, daw_pointer_y, daw_hscroll_x + daw_hscroll_width - SCROLLBAR_SIZE, daw_hscroll_y, SCROLLBAR_SIZE, SCROLLBAR_SIZE)) { scroll_x += 1 }
+			elseif (point_inside(daw_pointer_x, daw_pointer_y, daw_htrack_x, daw_hscroll_y, daw_htrack_width, SCROLLBAR_SIZE)) {
+				if (daw_pointer_x < daw_hthumb_x) { scroll_x -= daw_visible_steps }
+				elseif (daw_pointer_x >= daw_hthumb_x + daw_hthumb_width) { scroll_x += daw_visible_steps }
+			}
+		}
+	}
+	call clamp_scroll()
+	call compute_scrollbar_layout()
+}
+
+proc update_hovered_cell() {
+	var row: int
+	daw_hover_step = -1
+	daw_hover_note = -1
+	if (daw_visible_steps < 1 || daw_visible_notes < 1) { return }
+	if (point_inside(daw_pointer_x, daw_pointer_y, daw_hscroll_x, daw_grid_y, daw_visible_steps * STEP_WIDTH, grid_view_height)) {
+		daw_hover_step = scroll_x + (daw_pointer_x - daw_hscroll_x) / STEP_WIDTH
+		row = (daw_pointer_y - daw_grid_y) / KEY_HEIGHT
+		daw_hover_note = scroll_y + daw_visible_notes - row - 1
+		if (daw_hover_step < 0 || daw_hover_step >= DAW_STEP_COUNT || daw_hover_note < 0 || daw_hover_note >= DAW_NOTE_COUNT) {
+			daw_hover_step = -1
+			daw_hover_note = -1
+		}
+	}
+}
+
+proc handle_grid_input() {
+	call update_hovered_cell()
+	if (graphics::mouse_pressed() && daw_hover_step >= 0 && daw_hover_note >= 0) {
+		call toggle_note(daw_hover_step, daw_hover_note, current_channel)
+	}
+}
+
+proc handle_keyboard_input() {
+	var key: int
+	key = graphics::read_key()
+	while (key != 0) {
+		if (key >= 49 && key <= 51) { current_channel = key - 49 }
+		elseif (key == graphics::KEY_LEFT) { scroll_x -= 1 }
+		elseif (key == graphics::KEY_RIGHT) { scroll_x += 1 }
+		elseif (key == graphics::KEY_UP) { scroll_y += 1 }
+		elseif (key == graphics::KEY_DOWN) { scroll_y -= 1 }
+		key = graphics::read_key()
+	}
+	call clamp_scroll()
+	call compute_scrollbar_layout()
+}
+
+proc handle_input() {
+	call handle_channel_input()
+	call handle_scroll_input()
+	call handle_keyboard_input()
+	call handle_grid_input()
+}
+
+# Paint and replaceable asset hooks.
+proc draw_keys(vx: int, vy: int, vw: int, vh: int) {
+	var row: int
+	var key_y: int
+	var key_index: int
+	var key_color: int
+	var label_color: int
+	var octave_offset: int
+	var visible_notes: int
+	visible_notes = vh / KEY_HEIGHT
+	if (visible_notes > daw_visible_notes) { visible_notes = daw_visible_notes }
+	row = 0
+	while (row < visible_notes) {
+		key_y = vy + row * KEY_HEIGHT
+		key_index = scroll_y + visible_notes - row - 1
+		key_color = graphics::WHITE
+		label_color = graphics::BLACK
+		if (KEY_ACCIDENTALS[key_index % 12] != ' ') {
+			key_color = graphics::BLACK
+			label_color = graphics::WHITE
+		}
+		call graphics::fill_rect(daw_window, vx, key_y, vw, KEY_HEIGHT, key_color)
+		if (vw >= 7) { call graphics::draw_char_small(daw_window, vx + 2, key_y + 1, KEY_NAMES[key_index % 12], label_color) }
+		if (vw >= 13 && KEY_ACCIDENTALS[key_index % 12] != ' ') { call graphics::draw_char_small(daw_window, vx + 7, key_y + 1, '#', label_color) }
+		octave_offset = 0
+		if (KEY_ACCIDENTALS[key_index % 12] != ' ') { octave_offset = 3 }
+		if (vw >= 19) { call graphics::draw_char_small(daw_window, vx + 14 + octave_offset, key_y + 1, (char)(50 + key_index / 12), label_color) }
+		call graphics::draw_line(daw_window, vx, key_y + KEY_HEIGHT - 1, vx + vw - 1, key_y + KEY_HEIGHT - 1, graphics::COLOR_5)
+		row += 1
 	}
 }
 
 proc draw_note_grid(vx: int, vy: int, vw: int, vh: int, scrollx: int, scrolly: int, channel: int) {
-	var draw_x: int
+	var row: int
+	var step: int
 	var note: int
-	
-	var last_x: int
-	var last_y: int
-	
-	last_x = scrollx + vw/8
-	last_y = vh / KEY_HEIGHT + 1
-	
-	for (draw_x = scrollx; draw_x < last_x; draw_x += 1) {
-		switch (channel) {
-			case 0 { note = channel_1_grid[draw_x] }
-			case 1 { note = channel_2_grid[draw_x] }
-			case 2 { note = channel_3_grid[draw_x] }
+	var row_note: int
+	var row_color: int
+	var line_color: int
+	var cell_x: int
+	var cell_y: int
+
+	row = 0
+	while (row < daw_visible_notes) {
+		row_note = scrolly + daw_visible_notes - row - 1
+		row_color = graphics::COLOR_8
+		if (KEY_ACCIDENTALS[row_note % 12] != ' ') { row_color = graphics::COLOR_1 }
+		call graphics::fill_rect(daw_window, vx, vy + row * KEY_HEIGHT, vw, KEY_HEIGHT, row_color)
+		call graphics::draw_line(daw_window, vx, vy + (row + 1) * KEY_HEIGHT - 1, vx + vw - 1, vy + (row + 1) * KEY_HEIGHT - 1, graphics::COLOR_5)
+		row += 1
+	}
+
+	step = 0
+	while (step <= daw_visible_steps) {
+		line_color = graphics::COLOR_5
+		if ((scrollx + step) % 4 == 0) { line_color = graphics::COLOR_7 }
+		if (step * STEP_WIDTH < vw) { call graphics::draw_line(daw_window, vx + step * STEP_WIDTH, vy, vx + step * STEP_WIDTH, vy + vh - 1, line_color) }
+		step += 1
+	}
+
+	step = 0
+	while (step < daw_visible_steps && scrollx + step < DAW_STEP_COUNT) {
+		note = note_at(scrollx + step, channel)
+		if (note >= scrolly && note < scrolly + daw_visible_notes) {
+			cell_x = vx + step * STEP_WIDTH
+			cell_y = vy + (daw_visible_notes - (note - scrolly) - 1) * KEY_HEIGHT
+			call graphics::fill_rect(daw_window, cell_x + 1, cell_y + 1, STEP_WIDTH - 1, KEY_HEIGHT - 1, daw_channel_color(channel))
 		}
-		if (note > 0 && (note - scrolly) < last_y) {
-			call graphics::fill_rect(daw_window, vx + 8*(draw_x-scrollx), vy+vh - KEY_HEIGHT*(note-scrolly), 8, KEY_HEIGHT, graphics::COLOR_12)
+		step += 1
+	}
+
+	if (daw_hover_step >= scrollx && daw_hover_step < scrollx + daw_visible_steps && daw_hover_note >= scrolly && daw_hover_note < scrolly + daw_visible_notes) {
+		cell_x = vx + (daw_hover_step - scrollx) * STEP_WIDTH
+		cell_y = vy + (daw_visible_notes - (daw_hover_note - scrolly) - 1) * KEY_HEIGHT
+		call graphics::draw_rect(daw_window, cell_x, cell_y, STEP_WIDTH, KEY_HEIGHT, graphics::WHITE)
+	}
+}
+
+proc draw_vscroll(x: int, y: int, h: int) {
+	if (h < 1) { return }
+	call graphics::fill_rect(daw_window, x, y, SCROLLBAR_SIZE, h, graphics::COLOR_1)
+	call graphics::draw_rect(daw_window, x, y, SCROLLBAR_SIZE, h, graphics::COLOR_8)
+	if (h >= SCROLLBAR_SIZE * 2) {
+		call graphics::draw_text_small(daw_window, x + 2, y + 1, "^", graphics::COLOR_7)
+		call graphics::draw_text_small(daw_window, x + 2, y + h - 7, "v", graphics::COLOR_7)
+		if (daw_vthumb_height > 0) {
+			call graphics::fill_rect(daw_window, x + 2, daw_vthumb_y, SCROLLBAR_SIZE - 4, daw_vthumb_height, graphics::COLOR_7)
 		}
 	}
 }
 
-# GUI drawing.
-proc draw_vscroll(x: int, y: int, h: int, scrolly: int) {
-	call graphics::fill_rect(daw_window, x, y, 9, h, graphics::COLOR_1)
-	call graphics::draw_rect(daw_window, x, y, 9, h, graphics::COLOR_8)
+proc draw_hscroll(x: int, y: int, w: int) {
+	if (w < 1) { return }
+	call graphics::fill_rect(daw_window, x, y, w, SCROLLBAR_SIZE, graphics::COLOR_1)
+	call graphics::draw_rect(daw_window, x, y, w, SCROLLBAR_SIZE, graphics::COLOR_8)
+	if (w >= SCROLLBAR_SIZE * 2) {
+		call graphics::draw_text_small(daw_window, x + 2, y + 1, "<", graphics::COLOR_7)
+		call graphics::draw_text_small(daw_window, x + w - 6, y + 1, ">", graphics::COLOR_7)
+		if (daw_hthumb_width > 0) {
+			call graphics::fill_rect(daw_window, daw_hthumb_x, y + 2, daw_hthumb_width, SCROLLBAR_SIZE - 4, graphics::COLOR_7)
+		}
+	}
 }
 
-proc draw_hscroll(x: int, y: int, w: int, scrollx: int) {}
+proc draw_channel_header() {
+	var channel: int
+	var button_x: int
+	var button_color: int
+	if (daw_channel_button_width < 1) { return }
+	channel = 0
+	while (channel < DAW_CHANNEL_COUNT) {
+		button_x = 2 + channel * (daw_channel_button_width + 2)
+		button_color = graphics::COLOR_1
+		if (channel == current_channel) { button_color = daw_channel_color(channel) }
+		elseif (point_inside(daw_pointer_x, daw_pointer_y, button_x, 2, daw_channel_button_width, 8)) { button_color = graphics::COLOR_5 }
+		call graphics::fill_rect(daw_window, button_x, 2, daw_channel_button_width, 8, button_color)
+		call graphics::draw_rect(daw_window, button_x, 2, daw_channel_button_width, 8, graphics::COLOR_8)
+		if (daw_channel_button_width >= 24) {
+			call graphics::draw_text_small(daw_window, button_x + (daw_channel_button_width - 17) / 2, 3, "CH", graphics::WHITE)
+			call graphics::draw_char_small(daw_window, button_x + (daw_channel_button_width - 17) / 2 + 11, 3, (char)(49 + channel), graphics::WHITE)
+		}
+		elseif (daw_channel_button_width >= 5) { call graphics::draw_char_small(daw_window, button_x + (daw_channel_button_width - 4) / 2, 3, (char)(49 + channel), graphics::WHITE) }
+		channel += 1
+	}
+}
+
+proc draw_status() {
+	if (daw_status_y >= daw_height || daw_height - daw_status_y < 6) { return }
+	call graphics::draw_text_small(daw_window, 3, daw_status_y + 1, "CH", graphics::COLOR_7)
+	call graphics::draw_int_small(daw_window, 14, daw_status_y + 1, current_channel + 1, daw_channel_color(current_channel))
+	if (daw_width >= 88) {
+		call graphics::draw_text_small(daw_window, 26, daw_status_y + 1, "STEP", graphics::COLOR_7)
+		call graphics::draw_int_small(daw_window, 48, daw_status_y + 1, scroll_x + 1, graphics::COLOR_10)
+	}
+	if (daw_width >= 150) {
+		call graphics::draw_text_small(daw_window, daw_width - 67, daw_status_y + 1, "WHEEL PITCH", graphics::COLOR_7)
+	}
+}
+
+proc paint_daw() {
+	call graphics::clear(daw_window, graphics::COLOR_0)
+	call draw_channel_header()
+	if (daw_visible_notes > 0 && daw_keyboard_width > 0) {
+		call draw_keys(daw_grid_x, daw_grid_y, daw_keyboard_width, grid_view_height)
+	}
+	if (daw_visible_notes > 0 && grid_view_width > 0) {
+		call draw_note_grid(daw_hscroll_x, daw_grid_y, grid_view_width, grid_view_height, scroll_x, scroll_y, current_channel)
+	}
+	call draw_vscroll(daw_vscroll_x, daw_vscroll_y, daw_vscroll_height)
+	call draw_hscroll(daw_hscroll_x, daw_hscroll_y, daw_hscroll_width)
+	call draw_status()
+}
 
 # Application driver.
+daw_note_empty = -1
+call initialize_note_grids()
+scroll_x = 0
+scroll_y = 0
+current_channel = 0
+daw_hover_step = -1
+daw_hover_note = -1
+
 daw_window.x = 50
 daw_window.y = 50
-daw_window.width = APP_WIDTH
-daw_window.height = APP_HEIGHT
+daw_window.width = APP_DEFAULT_WIDTH
+daw_window.height = APP_DEFAULT_HEIGHT
 daw_window.title = APP_TITLE
 daw_window.ui_scale = 1
 daw_window.state = graphics::WINDOW_NORMAL
 
-scroll_x = 0
-scroll_y = 0
-menu_left_x = 11.0
-menu_top_y = 11.0
-current_channel = 0
-
 while (daw_window.state != graphics::WINDOW_CLOSED) {
-	# update viewport dimensions
-	grid_view_width = daw_window.width - (int)menu_left_x - 17
-	grid_view_height = daw_window.height - (int)menu_top_y - 30
-	
 	call graphics::begin_draw(daw_window)
-	
 	if (!daw_window.is_minimized()) {
-		call draw_keys((int)menu_left_x, (int)menu_top_y, daw_window.width - (int)menu_left_x - 17, daw_window.height - (int)menu_top_y - 30)
-		call draw_note_grid((int)menu_left_x + KEY_WIDTH, (int)menu_top_y, grid_view_width, grid_view_height, scroll_x, scroll_y, current_channel)
-		call draw_vscroll(daw_window.width - 15, (int)menu_top_y, daw_window.height - (int)menu_top_y - 30, scroll_y)
+		call compute_layout(graphics::content_width(daw_window), graphics::content_height(daw_window))
+		daw_pointer_x = graphics::pointer_x(daw_window)
+		daw_pointer_y = graphics::pointer_y(daw_window)
+		call handle_input()
+		call paint_daw()
 	}
-
 	call graphics::update(daw_window)
 }

@@ -84,10 +84,10 @@ def _dispatcher_syscalls(project: dict[str, object]) -> tuple[int, ...]:
 		for block_id, block in blocks.items():
 			if not isinstance(block, dict) or block.get("opcode") != "procedures_prototype":
 				continue
-			if block.get("mutation", {}).get("proccode") == "sys_dispatch %n":
+			if block.get("mutation", {}).get("proccode") in {"sys_dispatch %n", "sys_dispatch %s"}:
 				matches.append((target, blocks, block_id))
 	if len(matches) != 1:
-		raise ValueError(f"Template must contain exactly one sys_dispatch %n prototype; found {len(matches)}")
+		raise ValueError(f"Template must contain exactly one sys_dispatch %n or %s prototype; found {len(matches)}")
 	_, blocks, prototype_id = matches[0]
 	definitions = [
 		block

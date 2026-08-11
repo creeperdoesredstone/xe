@@ -33,6 +33,164 @@ def test_virtual_ide_compiles() -> None:
     assert artifact.success, artifact.diagnostics
 
 
+def test_pasted_window_source_remains_responsive(tmp_path: Path) -> None:
+    pasted_source = "# " + "cached-wide-source " * 24 + "\n" + '''var win: graphics::Window
+
+win.x = 40
+win.y = 32
+win.width = 160
+win.height = 100
+win.title = "Small Window"
+win.ui_scale = 1
+win.state = graphics::WINDOW_NORMAL
+
+while (win.state != graphics::WINDOW_CLOSED) {
+    call graphics::begin_draw(win)
+    call graphics::clear(win, graphics::BLACK)
+    call graphics::draw_text(win, 16, 20, "Drag the title bar", graphics::WHITE)
+    call graphics::fill_rect(win, 16, 38, 80, 14, graphics::COLOR_5)
+    call graphics::update(win)
+}'''
+    modified = SOURCE.replace(
+        "while (ide_window.state != graphics::WINDOW_CLOSED) {",
+        "var paste_probe_frame: int\npaste_probe_frame = 0\nwhile (paste_probe_frame < 12) {",
+        1,
+    )
+    modified = modified.replace(
+        "call graphics::update(ide_window)",
+        "call graphics::update(ide_window)\n\tpaste_probe_frame += 1",
+        1,
+    )
+    artifact = compile_source(modified, "xenon-ide-paste-performance.xe")
+    assert artifact.success, artifact.diagnostics
+
+    timestamps: list[float] = []
+    context: RuntimeContext
+
+    def on_frame(_frame) -> None:
+        timestamps.append(perf_counter())
+        if len(timestamps) == 1:
+            context.vm.devices.input.set_key(ord("V"), True, modifiers=2)
+        elif len(timestamps) == 2:
+            context.vm.devices.input.set_key(ord("V"), False, modifiers=0)
+
+    context = RuntimeContext(
+        frame_handler=on_frame,
+        filesystem_root=tmp_path,
+        clipboard_read_handler=lambda: pasted_source,
+    )
+    context.create_vm(list(artifact.program))
+    context.vm.devices._pace_frame = lambda _vm: None
+    result = context.vm.run()
+
+    assert result.error is None
+    assert len(timestamps) == 12
+    paste_seconds = timestamps[1] - timestamps[0]
+    frame_seconds = (timestamps[-1] - timestamps[3]) / (len(timestamps) - 4)
+    assert paste_seconds < 0.080
+    assert frame_seconds < 0.030
+
+
+def test_long_line_scrollbar_and_shift_wheel_use_real_input(tmp_path: Path) -> None:
+    pasted_source = 'out << "' + "wide-source-" * 80 + '"'
+    modified = SOURCE.replace(
+        "while (ide_window.state != graphics::WINDOW_CLOSED) {",
+        "var horizontal_probe_frame: int\n"
+        "var horizontal_before_wheel: int\n"
+        "var horizontal_after_wheel: int\n"
+        "horizontal_probe_frame = 0\n"
+        "horizontal_before_wheel = 0\n"
+        "horizontal_after_wheel = 0\n"
+        "while (horizontal_probe_frame < 9) {",
+        1,
+    )
+    modified = modified.replace(
+        "call graphics::update(ide_window)",
+        "call graphics::update(ide_window)\n"
+        "\thorizontal_probe_frame += 1\n"
+        "\tif (horizontal_probe_frame == 3) { horizontal_before_wheel = source_scroll_column }\n"
+        "\tif (horizontal_probe_frame == 5) { horizontal_after_wheel = source_scroll_column }",
+        1,
+    )
+    modified += (
+        '\nout << horizontal_before_wheel\nout << ":"\n'
+        'out << horizontal_after_wheel\nout << ":"\n'
+        'out << source_scroll_column\nout << ":"\n'
+        'out << view_scroll_column[active_view]\nout << ":"\n'
+        'out << source_cached_maximum_width\n'
+    )
+    artifact = compile_source(modified, "xenon-ide-horizontal-scroll.xe")
+    assert artifact.success, artifact.diagnostics
+
+    frames = []
+    geometry: dict[str, int] = {}
+    context: RuntimeContext
+
+    def on_frame(frame) -> None:
+        frames.append(frame)
+        windows = context.vm.devices.windows
+        handle = next(iter(windows._windows))
+        geometry.update(
+            x=windows.content_x(handle),
+            y=windows.content_y(handle),
+            width=windows.content_width(handle),
+            height=windows.content_height(handle),
+        )
+        input_device = context.vm.devices.input
+        if len(frames) == 1:
+            input_device.set_key(ord("V"), True, modifiers=2)
+        elif len(frames) == 2:
+            input_device.set_key(ord("V"), False, modifiers=0)
+        elif len(frames) == 3:
+            input_device.move_pointer(geometry["x"] + 180, geometry["y"] + 80)
+            input_device.set_key(16, True, modifiers=1)
+            input_device.add_scroll_delta(3)
+        elif len(frames) == 4:
+            input_device.set_key(16, False, modifiers=0)
+        elif len(frames) == 5:
+            area_width = geometry["width"] - 86 - 2
+            track_width = area_width - 38
+            input_device.move_pointer(
+                geometry["x"] + 86 + 30 + track_width // 4,
+                geometry["y"] + geometry["height"] - 15,
+            )
+            input_device.set_button(LEFT_BUTTON, True)
+        elif len(frames) == 6:
+            input_device.set_button(LEFT_BUTTON, False)
+
+    output: list[str] = []
+    context = RuntimeContext(
+        frame_handler=on_frame,
+        filesystem_root=tmp_path,
+        clipboard_read_handler=lambda: pasted_source,
+    )
+    context.output_handler = output.append
+    context.create_vm(list(artifact.program))
+    context.vm.devices._pace_frame = lambda _vm: None
+    result = context.vm.run()
+
+    assert result.error is None
+    before_wheel, after_wheel, after_drag, saved_scroll, maximum_width = map(
+        int, "".join(output).split(":")
+    )
+    assert before_wheel - after_wheel == 24
+    assert after_drag == saved_scroll
+    visible_width = geometry["width"] - 86 - 2 - 22
+    maximum_scroll = maximum_width - visible_width
+    assert 0 < after_drag < maximum_scroll // 2
+    assert after_drag != after_wheel
+    assert len(frames) == 9
+    editor_x = 86
+    scrollbar_y = geometry["y"] + geometry["height"] - 18
+    accent_pixels = 0
+    for screen_y in range(scrollbar_y + 1, scrollbar_y + 5):
+        row = screen_y * frames[-1].width
+        for screen_x in range(geometry["x"] + editor_x + 22, geometry["x"] + geometry["width"] - 2):
+            if frames[-1].indices[row + screen_x] == 13:
+                accent_pixels += 1
+    assert accent_pixels >= 5
+
+
 def test_each_tab_preserves_its_unsaved_buffer(tmp_path: Path) -> None:
     drive = tmp_path / "drive"
     drive.mkdir()

@@ -8,7 +8,7 @@ import pytest
 
 from scratch_vm.audit import MANIFEST_PATH, ROOT, audit_template, generate_manifest, manifest_text
 from xe_lang.compiler_service import MAX_ADDRESS_COUNT, capability_for_syscall, compile_source
-from xe_lang.scratch_profile import bundled_template_path, load_bundled_profile
+from xe_lang.scratch_profile import legacy_template_path, load_legacy_profile
 from xe_lang.sb3_exporter import (
 	FIXED_ZIP_TIME,
 	SB3ExportError,
@@ -25,10 +25,10 @@ def _enum_ids(prefix: str) -> set[int]:
 
 
 def test_pinned_template_profile_is_truthful_and_legacy_bounded() -> None:
-	profile = load_bundled_profile()
-	audit = audit_template(bundled_template_path(), profile)
+	profile = load_legacy_profile()
+	audit = audit_template(legacy_template_path(), profile)
 
-	assert profile.verify_template(bundled_template_path())
+	assert profile.verify_template(legacy_template_path())
 	assert audit["sha256"] == profile.template_sha256
 	assert audit["archive_members_unique"] is True
 	assert audit["archive_paths_safe"] is True
@@ -45,7 +45,7 @@ def test_pinned_template_profile_is_truthful_and_legacy_bounded() -> None:
 
 
 def test_current_abi_gaps_are_explicit_and_named() -> None:
-	profile = load_bundled_profile()
+	profile = load_legacy_profile()
 	missing = {int(value) for value in SyscallID} - set(profile.supported_syscalls)
 	app_calls = _enum_ids("APP_")
 	image_calls = {int(value) for value in SyscallID if "GRAPHICS_" in value.name and 270 <= int(value) <= 276}
@@ -85,7 +85,7 @@ def test_checked_manifest_covers_every_app_without_silent_degradation() -> None:
 			if item["code"] == "unsupported-syscall"
 		}
 		required = {item["id"] for item in record["required_syscalls"]}
-		expected = required - set(load_bundled_profile().supported_syscalls)
+		expected = required - set(load_legacy_profile().supported_syscalls)
 		assert set(unsupported) == expected
 		assert all(name and not name.startswith("SYS_") for name in unsupported.values())
 
@@ -106,18 +106,18 @@ def test_checked_manifest_covers_every_app_without_silent_degradation() -> None:
 	}
 
 
-def test_bundled_export_is_blocked_and_packaging_primitive_is_deterministic(tmp_path: Path) -> None:
-	profile = load_bundled_profile()
+def test_legacy_export_is_blocked_and_packaging_primitive_is_deterministic(tmp_path: Path) -> None:
+	profile = load_legacy_profile()
 	artifact = compile_source('out << "scratch"', "workspace.xe")
 	blocked = analyze_compatibility(artifact, profile)
 	assert blocked.exact is False
 	assert {item.code for item in blocked.issues} == {"memory-model-mismatch"}
 	blocked_output = tmp_path / "blocked.sb3"
 	with pytest.raises(SB3ExportError, match="not exact"):
-		export_sb3(artifact, blocked_output, bundled_template_path(), profile)
+		export_sb3(artifact, blocked_output, legacy_template_path(), profile)
 	assert not blocked_output.exists()
 
-	project, assets = _load_template(bundled_template_path(), profile, False)
+	project, assets = _load_template(legacy_template_path(), profile, False)
 	first = tmp_path / "first.sb3"
 	second = tmp_path / "second.sb3"
 	_write_zip(first, project, assets)

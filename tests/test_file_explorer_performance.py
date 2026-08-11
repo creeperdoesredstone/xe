@@ -148,7 +148,7 @@ def _representative_program(*, native: bool) -> tuple[int, ...]:
 	)
 	if not native:
 		modified = modified.replace(
-			"native_candidate = transition_progress == 0 && !slot_animation_active && deletion_ghost_count == 0 && drag_entry < 0 && drag_template == 0 && camera_zoom == camera_zoom_target && visual_fade >= 100",
+			"native_candidate = transition_progress == 0 && !slot_animation_active && !shell_layout_animating && deletion_ghost_count == 0 && drag_entry < 0 && drag_template == 0 && camera_zoom == camera_zoom_target && visual_fade >= 100",
 			"native_candidate = false",
 			1,
 		)

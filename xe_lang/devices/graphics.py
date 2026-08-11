@@ -155,6 +155,16 @@ class FrameSnapshot:
 	sequence: int
 
 
+@dataclass(frozen=True)
+class GraphicsBufferSnapshot:
+	"""Immutable front/back surfaces used while a nested app owns the renderer."""
+
+	width: int
+	height: int
+	back: bytes
+	front: bytes
+
+
 FONT_5X7 = {
 	" ": (0, 0, 0, 0, 0, 0, 0),
 	"!": (4, 4, 4, 4, 4, 0, 4),
@@ -362,6 +372,40 @@ class GraphicsDevice:
 		self, handler: Callable[[FrameSnapshot], None] | None
 	) -> None:
 		self.frame_handler = handler
+
+	def capture_buffers(self) -> GraphicsBufferSnapshot:
+		with self._lock:
+			return GraphicsBufferSnapshot(
+				self.width,
+				self.height,
+				b"".join(self.back_buffer),
+				b"".join(self.front_buffer),
+			)
+
+	def _restore_surface(self, buffer: list[bytearray], surface: bytes) -> None:
+		expected = self.width * self.height
+		if len(surface) != expected:
+			raise ValueError(f"Expected {expected} pixels, got {len(surface)}")
+		for y in range(self.height):
+			start = y * self.width
+			buffer[y][:] = surface[start:start + self.width]
+
+	def restore_backdrop(self, snapshot: GraphicsBufferSnapshot) -> None:
+		"""Start a new composition from the captured front surface."""
+
+		if snapshot.width != self.width or snapshot.height != self.height:
+			raise ValueError("Graphics backdrop dimensions do not match the renderer")
+		with self._lock:
+			self._restore_surface(self.back_buffer, snapshot.front)
+
+	def restore_buffers(self, snapshot: GraphicsBufferSnapshot) -> None:
+		"""Restore both surfaces without publishing a partially restored frame."""
+
+		if snapshot.width != self.width or snapshot.height != self.height:
+			raise ValueError("Graphics snapshot dimensions do not match the renderer")
+		with self._lock:
+			self._restore_surface(self.back_buffer, snapshot.back)
+			self._restore_surface(self.front_buffer, snapshot.front)
 
 	def set_clip(self, x: int, y: int, width: int, height: int) -> None:
 		x0 = max(0, int(x))

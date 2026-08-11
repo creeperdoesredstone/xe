@@ -52,6 +52,14 @@ def integer_power_overflows_u32(base: int, exponent: int) -> bool:
 	return value < -0x80000000 or value > TRUE
 
 
+MATH_VALID_ARGS = (
+	frozenset((0, 1, 2, 3, 4, 5, 6, 7, 8, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17)),
+	frozenset((0, 1, 2, 3, 4, 5, 6, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16)),
+	frozenset((0, 1, 2, 3, 10)),
+	frozenset((0, 1, 2, 4, 5, 6, 7, 8, 9, 10)),
+)
+
+
 class VM:
 	def __init__(
 		self,
@@ -118,6 +126,7 @@ class VM:
 		self.call_stack: list = []
 		self.ip: int = 0
 		self.data_memory = BankedMemory(memory_words)
+		self.memory_words = memory_words
 		self.working_set_limit = min(WORKING_SET_WORDS, memory_words)
 		self.standby_start = self.working_set_limit
 		self.standby_active = False
@@ -335,7 +344,10 @@ class VM:
 		else:
 			steps = normalize_tk_scroll_steps(delta, platform=sys.platform)
 		if steps:
-			self.devices.input.add_scroll_delta(steps)
+			self.devices.input.add_scroll_delta(
+				steps,
+				self._get_mod_state(int(getattr(event, "state", 0))),
+			)
 
 	def _on_key_press(self, event):
 		mod = self._get_mod_state(event.state)
@@ -555,43 +567,64 @@ class VM:
 		instruction_count = 0
 
 		try:
-			while 0 <= self.ip < len(self.instructions):
-				if instruction_limit is not None and instruction_count >= instruction_limit:
-					return res.fail(self._error("Instruction limit exceeded"))
-				if self.execution_deadline is not None and time.monotonic() >= self.execution_deadline:
-					return res.fail(self._error("Execution time limit exceeded"))
-				if instruction_count & 0xFF == 0:
-					if self.cancel_event.is_set():
+			if instruction_limit is None and self.execution_deadline is None and not self.root:
+				instructions = self.instructions
+				instruction_length = len(instructions)
+				execute = self._execute_validated
+				cancel_is_set = self.cancel_event.is_set
+				while 0 <= self.ip < instruction_length:
+					if instruction_count & 0xFF == 0 and cancel_is_set():
 						break
-				try:
-					exec_res = self.execute(self.instructions[self.ip], execution_result)
-				except RuntimeError as error:
-					return res.fail(self._error(str(error)))
-				instruction_count += 1
+					try:
+						exec_res = execute(instructions[self.ip], execution_result)
+					except RuntimeError as error:
+						return res.fail(self._error(str(error)))
+					instruction_count += 1
+					if exec_res.error:
+						return exec_res
+					if self.halt_requested or not exec_res.value:
+						break
+					self.ip += 1
+					if self.sp > self.max_sp:
+						self.max_sp = self.sp
+			else:
+				while 0 <= self.ip < len(self.instructions):
+					if instruction_limit is not None and instruction_count >= instruction_limit:
+						return res.fail(self._error("Instruction limit exceeded"))
+					if self.execution_deadline is not None and time.monotonic() >= self.execution_deadline:
+						return res.fail(self._error("Execution time limit exceeded"))
+					if instruction_count & 0xFF == 0:
+						if self.cancel_event.is_set():
+							break
+					try:
+						exec_res = self._execute_validated(self.instructions[self.ip], execution_result)
+					except RuntimeError as error:
+						return res.fail(self._error(str(error)))
+					instruction_count += 1
 				# print(self.stack[: self.sp][:32])
 				# print(self.data_memory[8192 : 8192 + 16])
 				# print("SP:", self.sp)
 				# print("FP:", self.fp)
 
-				if exec_res.error:
-					return exec_res
-				if self.halt_requested:
-					break
+					if exec_res.error:
+						return exec_res
+					if self.halt_requested:
+						break
 
-				should_continue: bool = exec_res.value
-				if not should_continue:
-					break
+					should_continue: bool = exec_res.value
+					if not should_continue:
+						break
 
-				self.ip += 1
-				if self.sp > self.max_sp:
-					self.max_sp = self.sp
+					self.ip += 1
+					if self.sp > self.max_sp:
+						self.max_sp = self.sp
 
 				# process window events if the window is alive
-				if self.root and self.ip % 200 == 0:
-					try:
-						self.root.update()
-					except Exception:
-						pass
+					if self.root and self.ip % 200 == 0:
+						try:
+							self.root.update()
+						except Exception:
+							pass
 
 			if self.ip < 0:
 				return res.fail(self._error("Instruction pointer out of bounds"))
@@ -766,12 +799,16 @@ class VM:
 
 	def execute(self, instruction: int, result: Result | None = None) -> Result:
 		res = result or Result()
+		if not isinstance(instruction, int) or not 0 <= instruction <= 0xFFFFFFFFF:
+			res.value = None
+			res.error = None
+			return res.fail(self._error("Invalid 36-bit instruction word"))
+		return self._execute_validated(instruction, res)
+
+	def _execute_validated(self, instruction: int, res: Result) -> Result:
 		res.value = None
 		res.error = None
 		pos = self._binary_position
-
-		if not isinstance(instruction, int) or not 0 <= instruction <= 0xFFFFFFFFF:
-			return res.fail(self._error("Invalid 36-bit instruction word"))
 
 		ins_type = instruction >> 32
 		ins_mod = (instruction >> 16) & 0xFFFF
@@ -779,71 +816,81 @@ class VM:
 		ins_arg32 = (ins_mod << 16) | ins_arg
 
 		if ins_type == 0:  # PUSH
-			self.push(ins_arg32)
+			if self.sp >= STACK_SIZE:
+				raise RuntimeError("VM stack overflow")
+			self.stack[self.sp] = ins_arg32
+			self.sp += 1
 
 		elif ins_type == 1:  # Other Stack Instructions
 			match ins_mod:
 				case 0:  # LOAD
-					self.push(self.data_memory[ins_arg])
+					if self.sp >= STACK_SIZE:
+						raise RuntimeError("VM stack overflow")
+					self.stack[self.sp] = self.data_memory[ins_arg]
+					self.sp += 1
 				case 1:  # STORE
-					value = self._pop_value(res)
-					if res.error:
-						return res
-
-					self.data_memory[ins_arg] = value
+					if self.sp <= 0:
+						return res.fail(self._error("Stack underflow"))
+					self.sp -= 1
+					self.data_memory[ins_arg] = self.stack[self.sp]
 				case 2:  # POP
-					for _ in range(ins_arg):
-						self._pop_value(res)
-						if res.error:
-							return res
+					if self.sp < ins_arg:
+						self.sp = 0
+						return res.fail(self._error("Stack underflow"))
+					self.sp -= ins_arg
 				case 3:  # DUP
-					if not self._require_stack(res, ins_arg + 1):
-						return res
-
-					self.push(self.stack[self.sp - ins_arg - 1])
+					if self.sp < ins_arg + 1:
+						return res.fail(self._error("Stack underflow"))
+					if self.sp >= STACK_SIZE:
+						raise RuntimeError("VM stack overflow")
+					self.stack[self.sp] = self.stack[self.sp - ins_arg - 1]
+					self.sp += 1
 				case 4:  # SWAP
-					if not self._require_stack(res, 2):
-						return res
-
-					b = self._pop_value(res)
-					a = self._pop_value(res)
-
-					self.push(b)
-					self.push(a)
+					if self.sp < 2:
+						return res.fail(self._error("Stack underflow"))
+					self.stack[self.sp - 2], self.stack[self.sp - 1] = (
+						self.stack[self.sp - 1],
+						self.stack[self.sp - 2],
+					)
 				case 5:  # OVER
-					if not self._require_stack(res, 2):
-						return res
-
-					self.push(self.stack[self.sp - 2])
+					if self.sp < 2:
+						return res.fail(self._error("Stack underflow"))
+					if self.sp >= STACK_SIZE:
+						raise RuntimeError("VM stack overflow")
+					self.stack[self.sp] = self.stack[self.sp - 2]
+					self.sp += 1
 				case 6:  # ROT
-					if not self._require_stack(res, 3):
-						return res
-
-					c = self._pop_value(res)
-					b = self._pop_value(res)
-					a = self._pop_value(res)
-
-					self.push(c)
-					self.push(a)
-					self.push(b)
+					if self.sp < 3:
+						return res.fail(self._error("Stack underflow"))
+					a = self.stack[self.sp - 3]
+					b = self.stack[self.sp - 2]
+					c = self.stack[self.sp - 1]
+					self.stack[self.sp - 3] = c
+					self.stack[self.sp - 2] = a
+					self.stack[self.sp - 1] = b
 				case 7:  # LOADIND
-					addr = self._pop_value(res)
-					if res.error:
-						return res
-					if not 0 <= addr < len(self.data_memory):
+					if self.sp <= 0:
+						return res.fail(self._error("Stack underflow"))
+					addr = self.stack[self.sp - 1]
+					if not 0 <= addr < self.memory_words:
+						self.sp -= 1
 						return res.fail(self._error("Data memory out of bounds"))
-					self.push(self.data_memory[addr])
+					self.stack[self.sp - 1] = self.data_memory[addr]
 				case 8:  # STOREIND
-					value = self._pop_value(res)
-					addr = self._pop_value(res)
-
-					if res.error:
-						return res
-					if not 0 <= addr < len(self.data_memory):
+					if self.sp < 2:
+						self.sp = 0
+						return res.fail(self._error("Stack underflow"))
+					value = self.stack[self.sp - 1]
+					addr = self.stack[self.sp - 2]
+					self.sp -= 2
+					if not 0 <= addr < self.memory_words:
 						return res.fail(self._error("Data memory out of bounds"))
 					self.data_memory[addr] = value
 				case 9:  # PUSHFP
-					self.push(self.fp)
+					if self.sp >= STACK_SIZE:
+						raise RuntimeError("VM stack overflow")
+					self.stack[self.sp] = self.fp
+					self.sp += 1
 				case 10:  # POPFP
 					if not 0 <= self.fp < len(self.stack):
 						return res.fail(self._error("Frame pointer out of bounds"))
@@ -867,14 +914,18 @@ class VM:
 					stack_index = self.fp - offset
 					if not 0 <= stack_index < self.sp:
 						return res.fail(self._error("Stack frame load out of bounds"))
-					self.push(self.stack[stack_index])
+					if self.sp >= STACK_SIZE:
+						raise RuntimeError("VM stack overflow")
+					self.stack[self.sp] = self.stack[stack_index]
+					self.sp += 1
 				case 15:  # STORESP
 					offset = ins_arg
 					if ins_arg > 0x7FFF:
 						offset -= 0x10000
-					value = self._pop_value(res)
-					if res.error:
-						return res
+					if self.sp <= 0:
+						return res.fail(self._error("Stack underflow"))
+					self.sp -= 1
+					value = self.stack[self.sp]
 					stack_index = self.fp - offset
 					if not 0 <= stack_index < len(self.stack):
 						return res.fail(self._error("Stack frame store out of bounds"))
@@ -913,13 +964,7 @@ class VM:
 				self.stack[self.sp - 1] = float_to_u32(float(value))
 
 		elif ins_type == 3:  # Math
-			valid_args = {
-				0: {0, 1, 2, 3, 4, 5, 6, 7, 8, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17},
-				1: {0, 1, 2, 3, 4, 5, 6, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16},
-				2: {0, 1, 2, 3, 10},
-				3: {0, 1, 2, 4, 5, 6, 7, 8, 9, 10},
-			}
-			if ins_mod not in valid_args or ins_arg not in valid_args[ins_mod]:
+			if ins_mod >= len(MATH_VALID_ARGS) or ins_arg not in MATH_VALID_ARGS[ins_mod]:
 				return res.fail(self._error(f"Unknown math instruction {ins_mod}:{ins_arg}"))
 			is_float_op = ins_mod % 2 == 1
 			val = 0

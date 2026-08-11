@@ -1,6 +1,6 @@
 {
   "abi": {
-    "known_syscall_count": 213,
+    "known_syscall_count": 215,
     "missing_by_capability": {
       "app.audio": [
         {
@@ -767,6 +767,16 @@
           "capability": "app.os",
           "id": 293,
           "name": "APP_OS_CLIPBOARD_WRITE"
+        },
+        {
+          "capability": "app.os",
+          "id": 294,
+          "name": "APP_OS_PREVIEW_PREFERENCES"
+        },
+        {
+          "capability": "app.os",
+          "id": 295,
+          "name": "APP_OS_CLEAR_PREVIEW"
         }
       ],
       "app.string": [
@@ -1673,6 +1683,16 @@
         "capability": "app.os",
         "id": 293,
         "name": "APP_OS_CLIPBOARD_WRITE"
+      },
+      {
+        "capability": "app.os",
+        "id": 294,
+        "name": "APP_OS_PREVIEW_PREFERENCES"
+      },
+      {
+        "capability": "app.os",
+        "id": 295,
+        "name": "APP_OS_CLEAR_PREVIEW"
       }
     ],
     "profile_supported_syscalls": [
@@ -2558,7 +2578,7 @@
       "status": "blocked"
     },
     "file_explorer.xe": {
-      "artifact_hash": "ee09b4ba13265ff1a4034f5866d22d7118a9ff2b43c7179e164c4750e738d3bd",
+      "artifact_hash": "67f5ab7279b54f3e2e002e768079c1b2248eaa139a613d9c9a7d39c77dfd1235",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -3277,11 +3297,11 @@
           "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
-      "source_hash": "f9ad6a15789ea081a0f9136a10b1514b7efcedd5e0f5ae8b35a6bcd5c4fdca90",
+      "source_hash": "35f78a8f18fa7c3037ff217996abb98392fe1eb19da539c4289fda249da577ab",
       "status": "blocked"
     },
     "minesweeper.xe": {
-      "artifact_hash": "3304200978831ad69600a1ede0973072822cae3528b9748680e9ec09fe21d742",
+      "artifact_hash": "2f56e34167acfee5100476b0f06b18e32816387f5fdd2404160d933b50efa9ec",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -3405,6 +3425,16 @@
         },
         {
           "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_SCROLL_DELTA (124) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 124,
+            "name": "APP_GRAPHICS_SCROLL_DELTA"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
           "message": "APP_GRAPHICS_BUTTON_TONE (126) is not implemented by this Scratch VM profile",
           "severity": "error",
           "syscall": {
@@ -3495,6 +3525,16 @@
         },
         {
           "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_MODIFIERS (246) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 246,
+            "name": "APP_GRAPHICS_MODIFIERS"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
           "message": "APP_GRAPHICS_RIGHT_MOUSE_PRESSED (248) is not implemented by this Scratch VM profile",
           "severity": "error",
           "syscall": {
@@ -3578,6 +3618,11 @@
         },
         {
           "capability": "app.graphics",
+          "id": 124,
+          "name": "APP_GRAPHICS_SCROLL_DELTA"
+        },
+        {
+          "capability": "app.graphics",
           "id": 126,
           "name": "APP_GRAPHICS_BUTTON_TONE"
         },
@@ -3623,15 +3668,20 @@
         },
         {
           "capability": "app.graphics",
+          "id": 246,
+          "name": "APP_GRAPHICS_MODIFIERS"
+        },
+        {
+          "capability": "app.graphics",
           "id": 248,
           "name": "APP_GRAPHICS_RIGHT_MOUSE_PRESSED"
         }
       ],
-      "source_hash": "1e5b3cbea6d7be173bf4817d6bae4bcad6aa4a70786d9518c44909a096c99152",
+      "source_hash": "f1fcef0bc2be7f3e7913d15606a616202653a5e864aa9f52d54154e493c05b87",
       "status": "blocked"
     },
     "settings.xe": {
-      "artifact_hash": "955d60d8532c4b386ddcf9ff4998988e225c255fb7997cbdff4d828da9879316",
+      "artifact_hash": "efed972218961822794b327983e222356bf7be48cfa3d489c23ba34e3103242c",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -4052,6 +4102,36 @@
             "id": 253,
             "name": "APP_GRAPHICS_DRAW_ICON"
           }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_DRAW_CHAR_STYLED (254) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 254,
+            "name": "APP_GRAPHICS_DRAW_CHAR_STYLED"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_OS_PREVIEW_PREFERENCES (294) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.os",
+            "id": 294,
+            "name": "APP_OS_PREVIEW_PREFERENCES"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_OS_CLEAR_PREVIEW (295) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.os",
+            "id": 295,
+            "name": "APP_OS_CLEAR_PREVIEW"
+          }
         }
       ],
       "required_capabilities": [
@@ -4275,13 +4355,28 @@
           "capability": "app.graphics",
           "id": 253,
           "name": "APP_GRAPHICS_DRAW_ICON"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 254,
+          "name": "APP_GRAPHICS_DRAW_CHAR_STYLED"
+        },
+        {
+          "capability": "app.os",
+          "id": 294,
+          "name": "APP_OS_PREVIEW_PREFERENCES"
+        },
+        {
+          "capability": "app.os",
+          "id": 295,
+          "name": "APP_OS_CLEAR_PREVIEW"
         }
       ],
-      "source_hash": "69e96fce99e2869839cfa57f4f0c632dd233abf223c478a8c36665992560ddf1",
+      "source_hash": "260c8fc700727898e0853ab112df577fe9dbaca6d3fce040799fe860f7d7ee03",
       "status": "blocked"
     },
     "terminal.xe": {
-      "artifact_hash": "0ffdb7e456d3153cc34638dca83700bcfafade98134367c4495cd521dc90b189",
+      "artifact_hash": "c496b6868d99bc196dd17b0d00107c224eb5c1bbf78f60d529f6f24c3d10d900",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -4729,7 +4824,7 @@
           "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
-      "source_hash": "a7af21beaa585c2a65b31e15def97b285ab2fea63a0e0e81905c812ae97dfbe9",
+      "source_hash": "2ea009fb709afdd2f0cf09dc3a139c7bd25f00e7e17f7d98fa861877e95fbbfc",
       "status": "blocked"
     },
     "text_editor.xe": {
@@ -5386,8 +5481,307 @@
       "source_hash": "83b9ce2607d2d7822ba54376e31135bc9a6a43c8a9546d5337d8832190d1d6db",
       "status": "blocked"
     },
+    "xenon_daw.xe": {
+      "artifact_hash": "af9c142acc2a505a58dcb5168b9cadc2f439ffdd64eafa534f867a044bce9097",
+      "assets": [],
+      "compile_success": true,
+      "diagnostics": [],
+      "dynamic_assets": [],
+      "exact": false,
+      "issues": [
+        {
+          "code": "memory-model-mismatch",
+          "message": "Scratch profile exposes 65536 addresses, but the XVM contract requires 2000000",
+          "severity": "error"
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_BEGIN_DRAW (102) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 102,
+            "name": "APP_GRAPHICS_BEGIN_DRAW"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_UPDATE (103) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 103,
+            "name": "APP_GRAPHICS_UPDATE"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_CLEAR (104) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 104,
+            "name": "APP_GRAPHICS_CLEAR"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_DRAW_LINE (107) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 107,
+            "name": "APP_GRAPHICS_DRAW_LINE"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_DRAW_RECT (108) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 108,
+            "name": "APP_GRAPHICS_DRAW_RECT"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_FILL_RECT (109) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 109,
+            "name": "APP_GRAPHICS_FILL_RECT"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_MOUSE_PRESSED (118) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 118,
+            "name": "APP_GRAPHICS_MOUSE_PRESSED"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_READ_KEY (121) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 121,
+            "name": "APP_GRAPHICS_READ_KEY"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_CONTENT_WIDTH (122) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 122,
+            "name": "APP_GRAPHICS_CONTENT_WIDTH"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_CONTENT_HEIGHT (123) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 123,
+            "name": "APP_GRAPHICS_CONTENT_HEIGHT"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_SCROLL_DELTA (124) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 124,
+            "name": "APP_GRAPHICS_SCROLL_DELTA"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_POINTER_X (127) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 127,
+            "name": "APP_GRAPHICS_POINTER_X"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_POINTER_Y (128) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 128,
+            "name": "APP_GRAPHICS_POINTER_Y"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_DRAW_TEXT_SMALL (129) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 129,
+            "name": "APP_GRAPHICS_DRAW_TEXT_SMALL"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_DRAW_CHAR_SMALL (142) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 142,
+            "name": "APP_GRAPHICS_DRAW_CHAR_SMALL"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_DRAW_INT_SMALL (143) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 143,
+            "name": "APP_GRAPHICS_DRAW_INT_SMALL"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_WINDOW_IS_MINIMIZED (152) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.window",
+            "id": 152,
+            "name": "APP_WINDOW_IS_MINIMIZED"
+          }
+        },
+        {
+          "code": "unsupported-syscall",
+          "message": "APP_GRAPHICS_MODIFIERS (246) is not implemented by this Scratch VM profile",
+          "severity": "error",
+          "syscall": {
+            "capability": "app.graphics",
+            "id": 246,
+            "name": "APP_GRAPHICS_MODIFIERS"
+          }
+        }
+      ],
+      "required_capabilities": [
+        "app.graphics",
+        "app.window",
+        "core.os"
+      ],
+      "required_syscalls": [
+        {
+          "capability": "core.os",
+          "id": 21,
+          "name": "OS_MALLOC"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 102,
+          "name": "APP_GRAPHICS_BEGIN_DRAW"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 103,
+          "name": "APP_GRAPHICS_UPDATE"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 104,
+          "name": "APP_GRAPHICS_CLEAR"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 107,
+          "name": "APP_GRAPHICS_DRAW_LINE"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 108,
+          "name": "APP_GRAPHICS_DRAW_RECT"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 109,
+          "name": "APP_GRAPHICS_FILL_RECT"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 118,
+          "name": "APP_GRAPHICS_MOUSE_PRESSED"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 121,
+          "name": "APP_GRAPHICS_READ_KEY"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 122,
+          "name": "APP_GRAPHICS_CONTENT_WIDTH"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 123,
+          "name": "APP_GRAPHICS_CONTENT_HEIGHT"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 124,
+          "name": "APP_GRAPHICS_SCROLL_DELTA"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 127,
+          "name": "APP_GRAPHICS_POINTER_X"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 128,
+          "name": "APP_GRAPHICS_POINTER_Y"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 129,
+          "name": "APP_GRAPHICS_DRAW_TEXT_SMALL"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 142,
+          "name": "APP_GRAPHICS_DRAW_CHAR_SMALL"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 143,
+          "name": "APP_GRAPHICS_DRAW_INT_SMALL"
+        },
+        {
+          "capability": "app.window",
+          "id": 152,
+          "name": "APP_WINDOW_IS_MINIMIZED"
+        },
+        {
+          "capability": "app.graphics",
+          "id": 246,
+          "name": "APP_GRAPHICS_MODIFIERS"
+        }
+      ],
+      "source_hash": "3f7a0c8c8fa7b237e448aa9ca1e3bf3de041885c898be6e60ba0c221894da3b1",
+      "status": "blocked"
+    },
     "xenon_ide.xe": {
-      "artifact_hash": "ce9d74ec928ca7c2cbf11110e4391bba474e7a901d05e47c0d528701e996d8fd",
+      "artifact_hash": "66e38a3a7786608d1d49f1762c5e5cd79dd9283a8d0941f5e27b047a75f0e72e",
       "assets": [],
       "compile_success": true,
       "diagnostics": [],
@@ -6322,7 +6716,7 @@
           "name": "APP_OS_CLIPBOARD_WRITE"
         }
       ],
-      "source_hash": "346aabc2c89c999b691fbc7d7edcb136bb3180c52d7cc36c1b28ed8c6fe1adc3",
+      "source_hash": "dd03adf52defa6a65157a7dce09ec6148c04e722326173205b49702c28a1e66d",
       "status": "blocked"
     },
     "xenon_music.xe": {
@@ -7788,6 +8182,7 @@
       "settings.xe",
       "terminal.xe",
       "text_editor.xe",
+      "xenon_daw.xe",
       "xenon_ide.xe",
       "xenon_music.xe",
       "xenon_terminal.xe"

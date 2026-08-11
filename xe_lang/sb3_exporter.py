@@ -84,8 +84,9 @@ def analyze_compatibility(artifact: CompileArtifact, profile: ScratchVMProfile) 
 			"asset-rom-unavailable",
 			f"Program references {len(artifact.assets)} asset(s), but this Scratch profile has no deterministic asset ROM",
 		))
+	supported_syscalls = profile.supported_for_artifact(artifact.artifact_hash)
 	for syscall in artifact.required_syscalls:
-		if syscall not in profile.supported_syscalls:
+		if syscall not in supported_syscalls:
 			issues.append(CompatibilityIssue(
 				"error",
 				"unsupported-syscall",

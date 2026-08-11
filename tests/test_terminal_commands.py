@@ -142,6 +142,19 @@ out << terminal_command'''
 		self.assertIn("os::clipboard_read()", legacy_source)
 		self.assertIn("os::clipboard_write(terminal_clipboard)", legacy_source)
 
+	def test_legacy_terminal_shift_wheel_scrolls_long_rows_sideways(self) -> None:
+		legacy_source = (ROOT / "apps" / "terminal.xe").read_text(encoding="utf-8")
+		artifact = compile_source(legacy_source, str(ROOT / "apps" / "terminal.xe"))
+		self.assertTrue(artifact.success, "\n".join(map(str, artifact.diagnostics)))
+		for marker in (
+			"array tab_horizontal_scroll: int[3]",
+			"(graphics::modifiers() & graphics::MOD_SHIFT) != 0",
+			"tab_horizontal_scroll[active_tab] -= wheel_delta * 4",
+			"word_scroll = tab_horizontal_scroll[active_tab]",
+			"column + word_index - word_scroll",
+		):
+			self.assertIn(marker, legacy_source)
+
 	def test_scrolled_tab_tracks_new_output_until_following_latest(self) -> None:
 		output = self.run_probe(
 			'''call terminal_scroll_output(5)

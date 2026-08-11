@@ -1,6 +1,8 @@
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
-from runtime import RuntimeContext
+from runtime import RuntimeContext, run
 from xe_lang.compiler_service import compile_source
 from xe_lang.devices.input import LEFT_BUTTON
 
@@ -74,6 +76,53 @@ def test_view_rotation_and_direct_hover_are_delta_time_eased() -> None:
     assert "shell_speed[animation_shell] = 0" not in hover
     assert "if (!rotating && sidebar_open && sidebar_progress < 100)" in SOURCE
     assert "if (zoom_difference != 0 && !rotating)" in SOURCE
+
+
+def test_shell_radii_scale_for_every_supported_shell_count() -> None:
+    assert "array shell_layout_radius_x100: int[8]" in SOURCE
+    assert "radius_step = radius_difference * delta_ms / 140" in SOURCE
+    assert "!shell_layout_animating" in SOURCE
+    probes = []
+    for shell_count in range(1, 9):
+        probes.append(f'out << adaptive_shell_gap(80, {shell_count})\nout << ","')
+    modified = SOURCE.replace(
+        "while (explorer_window.state != graphics::WINDOW_CLOSED) {",
+        "\n".join(probes) + "\nif (false) {",
+        1,
+    )
+    parts: list[str] = []
+    context = RuntimeContext()
+    context.output_handler = parts.append
+    with redirect_stdout(StringIO()):
+        _, error, _ = run("file-explorer-shell-spacing.xe", modified, context)
+    assert error is None, error
+    gaps = [int(value) for value in "".join(parts).strip(",").split(",")]
+    assert gaps == [0, 22, 22, 16, 12, 10, 8, 7]
+
+    outer_radii = [30 + (count - 1) * gap for count, gap in enumerate(gaps, start=1)]
+    assert outer_radii[0] == 30
+    assert outer_radii[1] == 52  # Two shells no longer consume the full 80px radius.
+    assert 80 - outer_radii[1] >= 28
+    assert all(radius <= 80 for radius in outer_radii)
+    assert all(gap >= 2 * 2 for gap in gaps[1:])
+
+
+def test_context_long_press_and_shift_wheel_are_portable_and_guarded() -> None:
+    hold = SOURCE.split("Scratch exposes wheel/key hats portably", 1)[1].split(
+        "if (interaction_allowed && graphics::right_mouse_pressed()", 1
+    )[0]
+    assert "current_ticks - context_hold_started >= 500" in hold
+    assert "dx * dx + dy * dy > 9 || drag_moved" in hold
+    assert "context_hold_triggered = true" in hold
+    assert "drag_entry = -1" in hold
+    assert "if (graphics::mouse_released())" in SOURCE
+
+    scroll = SOURCE.split("scroll_steps = graphics::scroll_delta()", 1)[1].split(
+        "call graphics::fill_rect(explorer_window, 0, 0", 1
+    )[0]
+    assert "input_modifiers & graphics::MOD_SHIFT" in scroll
+    assert "rotation_target = (rotation_target + scroll_steps * 8) % 360" in scroll
+    assert "else { call adjust_explorer_zoom(scroll_steps * 10) }" in scroll
 
 
 def _bounded_explorer_program(

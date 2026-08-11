@@ -92,7 +92,63 @@ win.close()
 	)
 	assert error is None
 	assert frames
-	assert any(color != 0 for color in frames[-1].indices)
+	assert any(any(color != 0 for color in frame.indices) for frame in frames)
+	assert not any(frames[-1].indices)
+
+
+def test_graphical_child_composes_over_and_restores_parent_window(tmp_path: Path) -> None:
+	drive = tmp_path / "drive"
+	drive.mkdir()
+	(drive / "workspace.xe").write_text(
+		'''var child: graphics::Window
+child.x = 24
+child.y = 20
+child.width = 120
+child.height = 80
+child.title = "Child"
+child.ui_scale = 1
+child.state = graphics::WINDOW_NORMAL
+call graphics::begin_draw(child)
+call graphics::clear(child, graphics::BLACK)
+call graphics::fill_rect(child, 8, 8, 40, 18, graphics::COLOR_5)
+call graphics::update(child)
+child.close()
+''',
+		encoding="utf-8",
+	)
+	frames = []
+	context = RuntimeContext(filesystem_root=drive, frame_handler=frames.append)
+	output: list[str] = []
+	context.output_handler = output.append
+	_, error, _ = run(
+		"graphical_parent_test.xe",
+		'''var parent: graphics::Window
+var output: string
+parent.x = 230
+parent.y = 170
+parent.width = 200
+parent.height = 140
+parent.title = "Virtual IDE"
+parent.ui_scale = 1
+parent.state = graphics::WINDOW_NORMAL
+call graphics::begin_draw(parent)
+call graphics::clear(parent, graphics::COLOR_1)
+call graphics::fill_rect(parent, 20, 20, 36, 16, graphics::COLOR_12)
+call graphics::update(parent)
+output = compiler::run_workspace("workspace.xe")
+out << parent.state
+''',
+		context,
+	)
+	assert error is None
+	assert len(frames) >= 3
+	parent_frame = frames[0]
+	child_frame = frames[-2]
+	restored_frame = frames[-1]
+	assert child_frame.indices != parent_frame.indices
+	assert child_frame.indices[210 * parent_frame.width + 252] == 12
+	assert restored_frame.indices == parent_frame.indices
+	assert "".join(output) == "0"
 
 
 def test_in_vm_workspace_run_routes_audio_only_child_to_host(tmp_path: Path) -> None:

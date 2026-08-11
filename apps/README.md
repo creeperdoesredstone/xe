@@ -35,3 +35,22 @@ The manifest validator accounts for every top-level `.xe` app, confines portable
 paths, rejects collisions, and verifies the supported asset extension for every
 declaration. This keeps metadata and generated programs editable without coupling
 app logic to Python host paths.
+
+## Portable interaction rules
+
+Scrollable regions use the same input contract across apps. A plain wheel scrolls
+vertically; Shift+wheel scrolls horizontally where horizontal content exists. Apps
+read the wheel step and its event-time modifier mask from
+`graphics::scroll_delta()` and `graphics::modifiers()`, and retain visible arrows,
+tracks, or draggable thumbs so every direction remains discoverable without a
+wheel.
+
+Vanilla Scratch projects receive wheel motion through the Up/Down key hats rather
+than Scratch's held-key list. Because Scratch does not expose the physical Shift
+modifier to projects, exported projects provide an explicit horizontal-axis latch
+and Left/Right fallback; that portable pulse is presented to Xe as a horizontal
+scroll step with `MOD_SHIFT`. Native hosts preserve physical Shift+wheel directly.
+
+Context actions use a stationary 500 ms primary-button hold with a small movement
+tolerance. Native right-click may invoke the same action sooner, but no app may
+require a secondary mouse button for an operation that must survive Scratch export.

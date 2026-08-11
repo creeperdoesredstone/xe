@@ -74,7 +74,7 @@ move/resize outline last and publishes one immutable frame.
 `graphics::update` is the host's 60 Hz frame boundary. Application loops should use
 `os::ticks()` deltas for motion and should not add a second fixed `sleep(16)` after
 each update; this avoids double throttling while keeping the same deterministic
-state progression for the eventual Scratch host.
+state progression for the Scratch host.
 
 `Window.ui_scale` selects an integer pixel density. New Xenon apps use `1`; legacy
 programs that leave it unset retain the crisp `2x2` default. Resizing reveals more or
@@ -162,8 +162,17 @@ away from the user, and negative values mean down or toward the user. Multiple
 events accumulate, so the magnitude may exceed one. The value is stable across
 all reads in one `begin_draw`/`update` frame and is consumed by `update`; the next
 frame reads zero unless more wheel input arrived. Standalone and IDE hosts normalize
-their native wheel units. Scratch and other embedders can inject signed steps, or
-leave the value at its deterministic zero default.
+their native wheel units. A native Shift+wheel event latches `MOD_SHIFT` with that
+wheel step even if the physical key state changes before the next Xe frame, allowing
+horizontal viewports to use `scroll_delta()` and `modifiers()` without a race.
+
+Vanilla Scratch reports wheel motion by starting Up/Down key hats and does not add
+that motion to its held-key list. It also hides physical modifier keys from projects.
+The full Scratch VM therefore consumes Up/Down hats as vertical wheel pulses and
+offers a visible horizontal-axis latch plus Left/Right fallback; those horizontal
+pulses are exposed to Xe with `MOD_SHIFT`. Native hosts retain physical Shift+wheel.
+Other embedders may inject the same signed steps or leave the value at its
+deterministic zero default.
 
 Lifecycle, size/pointer, shape, text, atom, and icon functions accept either a
 `graphics::Screen` or `graphics::Window` as their first argument. Controls remain
@@ -312,7 +321,7 @@ os::sound_effect_volume = 70
 os::background_id = 0
 os::palette = 0
 os::theme_mode = os::THEME_DARK
-os::window_transparency = 20
+os::window_transparency = 0
 os::window_corner_style = os::CORNER_ROUNDED
 os::icon_size = os::ICON_MEDIUM
 os::clock_format = os::CLOCK_24_HOUR
@@ -320,17 +329,28 @@ os::settings_enabled = true
 ```
 
 Reading the same names returns the current OS-owned value. All three volume values
-and transparency are clamped to `0-100`; enum-like values and background/palette
+are clamped to `0-100`; enum-like values and background/palette
 IDs are validated. `background_count()` and `palette_count()` expose the valid ID
 ranges. `apply_settings` remains available for the original atomic three-value
 commit. `apply_preferences(master, music, effects, background, palette, theme,
 transparency, corners, icons, clock, enabled)` validates first and atomically
 commits the complete Settings model.
 
-Window transparency is direct: `0` is an opaque content/title surface and `100` is
-fully transparent. Intermediate values use deterministic four-slot ordered dithering so the
-selected OS background remains visible without introducing colors outside the active
-palette. Borders, title text, and window controls remain opaque for legibility.
+Only `CORNER_SQUARE` and `CORNER_ROUNDED` are supported. Legacy persisted value
+`2` is migrated to Rounded, so older settings remain readable without retaining a
+separate soft-corner renderer.
+
+Settings-style live previews use
+`preview_preferences(background, palette, theme, corners)`. It validates and
+normalizes the four values, then changes the effective framebuffer palette,
+backdrop, theme, and window chrome without modifying persisted settings.
+`clear_preview()` restores the committed appearance. A successful
+`apply_preferences` also clears the transient preview; an invalid preview or apply
+fails closed to the committed appearance.
+
+Window transparency has been removed. The legacy property and syscall pair remain
+for bytecode compatibility, but reads return `0`, writes normalize to `0`, and all
+window content, title, border, text, and controls render opaque.
 
 Palettes `0-2` are the dark Xenon variants and `3-5` are coordinated light
 variants. Changing `theme_mode` preserves the palette variant while moving it to
@@ -349,6 +369,15 @@ The current built-in backdrop IDs are Black,
 Navy, and Slate, and applications should use IDs returned by the OS rather than
 assuming that list will never grow.
 
+The window chrome measurements and palette roles are exposed as `graphics`
+constants (`WINDOW_TITLE_HEIGHT`, `WINDOW_BORDER_WIDTH`, `WINDOW_BORDER_COLOR`,
+`WINDOW_TITLE_COLOR`, `WINDOW_CONTENT_COLOR`, `WINDOW_TEXT_COLOR`,
+`WINDOW_CONTROL_COLOR`, `WINDOW_CONTROL_SIZE`, `WINDOW_CONTROL_GAP`,
+`WINDOW_TITLE_TEXT_OFFSET`, and `WINDOW_ROUNDED_INSET`). They are generated from
+the VM's primitive → semantic → component token source, allowing applications and
+portable renderers to reproduce the runtime window design without copying magic
+numbers.
+
 Runtime utilities are `sleep(milliseconds)`, `exit(status)`, and `ticks()`.
 `exit` ends the current VM cooperatively and records its status code.
 Local calendar components are available as integer functions `year()`, `month()`,
@@ -360,9 +389,9 @@ The opt-in host bridge `clipboard_read() -> string` and
 visible **System clipboard** toggle in the desktop IDE is enabled. The toggle is
 disabled by default and must be enabled explicitly on the Code toolbar. When disabled
 or unavailable, reads return an empty string and writes return `false`; payloads are
-bounded to 32,768 characters. These
-syscalls are deliberately unsupported by the Scratch profile, so compatibility
-analysis blocks exact export rather than leaking host clipboard data into a project.
+bounded to 32,768 characters. Scratch implements the unavailable case locally:
+reads are empty and writes return `false`, so an exported project cannot access or
+leak the computer clipboard.
 
 Text files use the opaque `os::File` resource:
 
@@ -500,9 +529,10 @@ XMusic timeline ticks; only `update(track, delta)` takes milliseconds. `update`
 clamps delta to `0-50 ms` so native and Scratch hosts advance identically after a
 delayed frame. When Qt exposes a compatible Int16 stereo output, the Python IDE
 renders active notes through a lazy native synthesizer honoring the combined master
-and music volumes; otherwise sequencing remains deterministic and silent. Scratch can map the same portable events to its
-sound blocks without changing Xe application state; the bundled legacy profile does
-not claim that backend until it is implemented and differentially tested.
+and music volumes; otherwise sequencing remains deterministic and silent. Scratch
+can map the same portable events to its sound blocks without changing Xe application
+state. The full profile blocks dynamic XMusic paths until a deterministic project
+asset ROM supplies the requested track.
 
 ## Host Image Studio and Scratch export
 
@@ -530,13 +560,24 @@ restore the complete previous pair if either replacement fails, preserving any
 backup that cannot be restored automatically. It is clearly labeled
 `.xbn + .compatibility.json` and is never presented as an SB3.
 
-The bundled Template 7.0.1 profile remains a pinned legacy-core profile with 65,536
-addresses and no high-level app or asset-ROM syscalls. Consequently it intentionally
-blocks exact export for all current Xe builds against the XVM's banked
-2,000,000-address contract. This is a safeguard, not a degraded translation. The
-profile must gain the verified ten-bank memory router, heap/static parity, the
-required app syscalls, and an asset ROM before the converter
-can claim those programs are exact in vanilla Scratch.
+The converter's default full-ABI profile is pinned to the generated two-target
+Scratch VM. It provides ten physical 200,000-word memory lists, checked bank routing,
+and a conservative allowlist of portable core and application services verified by
+the compiled File Explorer. Dispatcher presence alone never marks a syscall exact.
+The command-stream accelerator and native right-click remain unavailable in vanilla
+Scratch; a hash-bound File Explorer allowance is safe because that exact source has
+tested primitive-drawing and 500 ms left-hold fallbacks. The compatibility gate still
+blocks host compilation and portable image/audio assets until a deterministic project
+ROM is implemented.
+`scratch_vm/profile.json` and `xenon131-vm.sb3` retain
+the original 65,536-word legacy template solely for regression auditing; they are
+not the converter default.
+
+The generated full-ABI projects run in the standard Scratch VM when loaded from a
+computer. Their two million materialized memory cells produce an uncompressed
+`project.json` above the Scratch website's current save/share limit, so the checked
+artifacts are local-load projects. This distribution boundary does not change the
+compatibility result or use nonstandard blocks.
 
 The complete authoring, XIMG runtime, wallpaper, icon, animation, compression, and
 Scratch workflow is in [docs/IMAGE_STUDIO.md](docs/IMAGE_STUDIO.md).
@@ -573,8 +614,8 @@ assembly programs and compiled `graphics::`/`os::` calls cannot collide.
 Compiled Screen resource references set bit 31 and retain the static address in bits
 `0-30`. The runtime strips that tag before bounds checks. Static resources remain in
 the 16-bit XAssembly address range, so existing Window references and bytecode are
-unchanged. The representation is designed for the eventual Scratch VM update; the
-bundled legacy template still lacks the Screen/high-level handlers.
+unchanged. The full-ABI Scratch template implements the portable Screen and window
+handlers; the separately pinned legacy audit template does not.
 
 IDs absent from those ranges are reserved, including `13-19` and `59`;
 invoking one reports `Unknown system call` rather than silently doing the wrong
@@ -586,9 +627,10 @@ The default XVM data space is exactly `2,000,000` unsigned 32-bit registers,
 numbered `0..1,999,999`. Addresses `0..999,999` form the working set; allocator
 pressure activates the standby tier at `1,000,000..1,999,999` only after collection
 cannot satisfy a request. The complete logical space is ten banks of 200,000 words.
-For the future Scratch port, address `a` maps to list `floor(a / 200000)` and Scratch
-item `(a mod 200000) + 1`, with exactly one list item per register. The bundled
-legacy template currently remains at one 65,536-address list.
+In the full-ABI Scratch VM, address `a` maps to list `floor(a / 200000)` and Scratch
+item `(a mod 200000) + 1`, with exactly one list item per register. Banks `0-4` are
+the working tier and banks `5-9` are the standby tier. The separate legacy audit
+template remains at one 65,536-address list.
 
 The direct `LOAD`/`STORE` XAssembly encoding and text/static sections remain 16-bit
 for binary compatibility; the expanded heap is reached through 32-bit pointers and

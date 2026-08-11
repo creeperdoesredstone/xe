@@ -83,6 +83,30 @@ proc reload_os_settings(master: int*, music: int*, effects: int*, background: in
 	*enabled = os::settings_enabled
 }
 
+proc refresh_appearance_preview() {
+	if (preview_background != staged_background || preview_palette != staged_palette || preview_theme != staged_theme || preview_corners != staged_corners) {
+		preview_ok = os::preview_preferences(staged_background, staged_palette, staged_theme, staged_corners)
+		if (preview_ok) {
+			preview_background = staged_background
+			preview_palette = staged_palette
+			preview_theme = staged_theme
+			preview_corners = staged_corners
+		}
+	}
+}
+
+proc finish_preferences_apply() {
+	# Apply is a transaction boundary even when validation fails. Returning to
+	# the committed model keeps the effective appearance and staged controls in
+	# sync, while the cache remains edge-triggered for the next edit.
+	call os::clear_preview()
+	call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
+	preview_background = staged_background
+	preview_palette = staged_palette
+	preview_theme = staged_theme
+	preview_corners = staged_corners
+}
+
 proc draw_value_line(label: string, y: int, value: int, content_x: int, content_width: int) {
 	call graphics::draw_text(settings_window, content_x, y, label, graphics::COLOR_7)
 	call graphics::draw_int(settings_window, content_x + content_width - 20, y, value, graphics::COLOR_14)
@@ -161,33 +185,31 @@ fn settings_flat_button_aligned(x: int, y: int, width: int, height: int, label: 
 
 proc draw_preview_box(x: int, y: int, width: int, height: int, corner_style: int, surface: int, outline: int) {
 	var cut: int
+	var border: int
 	cut = 0
-	if (corner_style == os::CORNER_ROUNDED) { cut = 1 }
-	elseif (corner_style == os::CORNER_SOFT) { cut = 2 }
+	border = graphics::WINDOW_BORDER_WIDTH
+	if (corner_style == os::CORNER_ROUNDED) { cut = graphics::WINDOW_ROUNDED_INSET }
 	if (cut == 0) {
 		call graphics::fill_rect(settings_window, x, y, width, height, surface)
 	}
-	elseif (cut == 1) {
-		call graphics::fill_rect(settings_window, x + 1, y, width - 2, height, surface)
-		call graphics::fill_rect(settings_window, x, y + 1, width, height - 2, surface)
-	}
 	else {
-		call graphics::fill_rect(settings_window, x + 2, y, width - 4, height, surface)
-		call graphics::fill_rect(settings_window, x + 1, y + 1, width - 2, height - 2, surface)
-		call graphics::fill_rect(settings_window, x, y + 2, width, height - 4, surface)
+		call graphics::fill_rect(settings_window, x + cut, y, width - cut * 2, height, surface)
+		call graphics::fill_rect(settings_window, x, y + cut, width, height - cut * 2, surface)
 	}
-	call graphics::draw_line(settings_window, x + cut, y, x + width - cut - 1, y, outline)
-	call graphics::draw_line(settings_window, x + cut, y + height - 1, x + width - cut - 1, y + height - 1, outline)
-	call graphics::draw_line(settings_window, x, y + cut, x, y + height - cut - 1, outline)
-	call graphics::draw_line(settings_window, x + width - 1, y + cut, x + width - 1, y + height - cut - 1, outline)
+	call graphics::fill_rect(settings_window, x + cut, y, width - cut * 2, border, outline)
+	call graphics::fill_rect(settings_window, x + cut, y + height - border, width - cut * 2, border, outline)
+	call graphics::fill_rect(settings_window, x, y + cut, border, height - cut * 2, outline)
+	call graphics::fill_rect(settings_window, x + width - border, y + cut, border, height - cut * 2, outline)
+	if (cut > 0) {
+		call graphics::draw_line(settings_window, x, y + cut, x + cut, y, outline)
+		call graphics::draw_line(settings_window, x + width - cut - 1, y, x + width - 1, y + cut, outline)
+		call graphics::draw_line(settings_window, x, y + height - cut - 1, x + cut, y + height - 1, outline)
+		call graphics::draw_line(settings_window, x + width - cut - 1, y + height - 1, x + width - 1, y + height - cut - 1, outline)
+	}
 }
 
 fn settings_preview_accent() int {
-	var variant: int
-	variant = staged_palette % palette_group_count
-	if (variant == 1) { return graphics::COLOR_11 }
-	if (variant == 2) { return graphics::COLOR_10 }
-	return graphics::COLOR_13
+	return graphics::WINDOW_TITLE_COLOR
 }
 
 fn settings_preview_background() int {
@@ -196,13 +218,54 @@ fn settings_preview_background() int {
 	return graphics::COLOR_0
 }
 
+proc draw_preview_window_title(x: int, y: int, text: string, maximum_width: int) {
+	var index: int
+	var advance: int
+	var cursor: int
+	index = 0
+	cursor = 0
+	while (index < xestring::strlen(text)) {
+		advance = graphics::char_advance(text[index], graphics::FONT_LARGE)
+		if (cursor + advance > maximum_width) { return }
+		call graphics::draw_char_styled(settings_window, x + cursor, y, text[index], graphics::WINDOW_TEXT_COLOR, graphics::FONT_LARGE, 0)
+		cursor += advance
+		index += 1
+	}
+}
+
+proc draw_preview_window_chrome(preview_x: int, preview_y: int, preview_width: int, preview_height: int) {
+	var title_height: int
+	var corner_inset: int
+	var control_size: int
+	var control_gap: int
+	var close_x: int
+	var maximize_x: int
+	corner_inset = 0
+	if (staged_corners == os::CORNER_ROUNDED) { corner_inset = graphics::WINDOW_ROUNDED_INSET }
+	call draw_preview_box(preview_x, preview_y, preview_width, preview_height, staged_corners, graphics::WINDOW_CONTENT_COLOR, graphics::WINDOW_BORDER_COLOR)
+	title_height = graphics::WINDOW_TITLE_HEIGHT
+	call graphics::fill_rect(settings_window, preview_x + corner_inset, preview_y + graphics::WINDOW_BORDER_WIDTH, preview_width - corner_inset * 2, title_height - graphics::WINDOW_BORDER_WIDTH, graphics::WINDOW_TITLE_COLOR)
+	call graphics::fill_rect(settings_window, preview_x + graphics::WINDOW_BORDER_WIDTH, preview_y + title_height, preview_width - graphics::WINDOW_BORDER_WIDTH * 2, preview_height - title_height - graphics::WINDOW_BORDER_WIDTH, graphics::WINDOW_CONTENT_COLOR)
+	control_size = graphics::WINDOW_CONTROL_SIZE
+	control_gap = graphics::WINDOW_CONTROL_GAP
+	close_x = preview_x + preview_width - control_size - corner_inset - 1
+	maximize_x = close_x - control_size - control_gap
+	call draw_preview_window_title(preview_x + graphics::WINDOW_TITLE_TEXT_OFFSET, preview_y + 2, "Window", maximize_x - preview_x - graphics::WINDOW_TITLE_TEXT_OFFSET)
+	call graphics::fill_rect(settings_window, maximize_x + 2, preview_y + 3, 8, 2, graphics::WINDOW_CONTROL_COLOR)
+	call graphics::fill_rect(settings_window, maximize_x + 2, preview_y + 9, 8, 2, graphics::WINDOW_CONTROL_COLOR)
+	call graphics::fill_rect(settings_window, maximize_x + 2, preview_y + 3, 2, 8, graphics::WINDOW_CONTROL_COLOR)
+	call graphics::fill_rect(settings_window, maximize_x + 8, preview_y + 3, 2, 8, graphics::WINDOW_CONTROL_COLOR)
+	call graphics::draw_line(settings_window, close_x + 2, preview_y + 3, close_x + 9, preview_y + 10, graphics::WINDOW_CONTROL_COLOR)
+	call graphics::draw_line(settings_window, close_x + 3, preview_y + 3, close_x + 10, preview_y + 10, graphics::WINDOW_CONTROL_COLOR)
+	call graphics::draw_line(settings_window, close_x + 9, preview_y + 3, close_x + 2, preview_y + 10, graphics::WINDOW_CONTROL_COLOR)
+	call graphics::draw_line(settings_window, close_x + 10, preview_y + 3, close_x + 3, preview_y + 10, graphics::WINDOW_CONTROL_COLOR)
+}
+
 proc draw_window_preview(x: int, y: int, width: int, height: int) {
 	var preview_x: int
 	var preview_y: int
 	var preview_width: int
 	var preview_height: int
-	var title_height: int
-	var accent: int
 	var background: int
 	if (width < 34 || height < 24) { return }
 	if (width > 260) {
@@ -213,35 +276,22 @@ proc draw_window_preview(x: int, y: int, width: int, height: int) {
 		y += (height - 120) / 2
 		height = 120
 	}
-	accent = settings_preview_accent()
 	background = settings_preview_background()
 	call graphics::fill_rect(settings_window, x, y, width, height, background)
-	call graphics::draw_line(settings_window, x + 2, y + height - 4, x + width - 3, y + 3, graphics::COLOR_8)
-	call graphics::draw_line(settings_window, x + 2, y + 3, x + width - 3, y + height - 4, graphics::COLOR_1)
 	preview_width = width * 3 / 4
 	if (preview_width > 150) { preview_width = 150 }
-	if (preview_width < 32) { preview_width = 32 }
+	if (preview_width < 72) { preview_width = 72 }
+	if (preview_width > width) { preview_width = width }
 	preview_height = height * 3 / 4
 	if (preview_height > 82) { preview_height = 82 }
-	if (preview_height < 22) { preview_height = 22 }
+	if (preview_height < 54) { preview_height = 54 }
+	if (preview_height > height) { preview_height = height }
 	preview_x = x + (width - preview_width) / 2
 	preview_y = y + (height - preview_height) / 2
-	call draw_preview_box(preview_x, preview_y, preview_width, preview_height, staged_corners, graphics::COLOR_1, accent)
-	title_height = 7
-	if (preview_height >= 36) { title_height = 9 }
-	call graphics::fill_rect(settings_window, preview_x + 1, preview_y + 1, preview_width - 2, title_height - 1, accent)
-	call graphics::fill_rect(settings_window, preview_x + 1, preview_y + title_height, preview_width - 2, preview_height - title_height - 1, graphics::COLOR_1)
-	if (preview_width >= 54) {
-		call graphics::draw_text_small(settings_window, preview_x + 4, preview_y + 2, "Window", graphics::WHITE)
-	}
-	call graphics::draw_line(settings_window, preview_x + preview_width - 18, preview_y + 4, preview_x + preview_width - 14, preview_y + 4, graphics::WHITE)
-	call graphics::draw_rect(settings_window, preview_x + preview_width - 12, preview_y + 2, 5, 5, graphics::WHITE)
-	call graphics::draw_line(settings_window, preview_x + preview_width - 6, preview_y + 2, preview_x + preview_width - 2, preview_y + 6, graphics::WHITE)
-	call graphics::draw_line(settings_window, preview_x + preview_width - 2, preview_y + 2, preview_x + preview_width - 6, preview_y + 6, graphics::WHITE)
+	call draw_preview_window_chrome(preview_x, preview_y, preview_width, preview_height)
 }
 
 proc draw_palette_background_preview(x: int, y: int, width: int, height: int) {
-	var accent: int
 	var background: int
 	var sample_x: int
 	var sample_y: int
@@ -262,7 +312,6 @@ proc draw_palette_background_preview(x: int, y: int, width: int, height: int) {
 		y += (height - 96) / 2
 		height = 96
 	}
-	accent = settings_preview_accent()
 	background = settings_preview_background()
 	call graphics::fill_rect(settings_window, x, y, width, height, background)
 	call graphics::draw_rect(settings_window, x, y, width, height, graphics::COLOR_8)
@@ -278,15 +327,16 @@ proc draw_palette_background_preview(x: int, y: int, width: int, height: int) {
 		index += 1
 	}
 	sample_width = width * 2 / 5
-	if (sample_width < 28) { sample_width = 28 }
-	if (sample_width > 90) { sample_width = 90 }
-	sample_height = height - 18
-	if (sample_height > 48) { sample_height = 48 }
+	if (sample_width < 72) { sample_width = 72 }
+	if (sample_width > 100) { sample_width = 100 }
+	if (sample_width > width - 4) { sample_width = width - 4 }
+	sample_height = swatch_top - y - 6
+	if (sample_height > 54) { sample_height = 54 }
 	if (sample_height < 10) { sample_height = 10 }
 	sample_x = x + (width - sample_width) / 2
 	sample_y = y + (swatch_top - y - sample_height) / 2
-	call draw_preview_box(sample_x, sample_y, sample_width, sample_height, os::CORNER_ROUNDED, graphics::COLOR_1, accent)
-	call graphics::fill_rect(settings_window, sample_x + 1, sample_y + 1, sample_width - 2, 5, accent)
+	if (sample_width >= 72 && sample_height >= 54) { call draw_preview_window_chrome(sample_x, sample_y, sample_width, sample_height) }
+	else { call draw_preview_box(sample_x, sample_y, sample_width, sample_height, staged_corners, graphics::WINDOW_CONTENT_COLOR, graphics::WINDOW_BORDER_COLOR) }
 	if (width >= 92 && height >= 40) {
 		call graphics::draw_text_small(settings_window, x + 4, y + 3, "BG", graphics::COLOR_7)
 		call graphics::draw_int_small(settings_window, x + 14, y + 3, staged_background, graphics::COLOR_14)
@@ -473,6 +523,11 @@ var staged_corners: int
 var staged_icons: int
 var staged_clock: int
 var staged_enabled: bool
+var preview_background: int
+var preview_palette: int
+var preview_theme: int
+var preview_corners: int
+var preview_ok: bool
 var background_count: int
 var palette_count: int
 var palette_group_count: int
@@ -608,8 +663,7 @@ proc draw_scrollable_compact_page() {
 		page_y = 15 - page_scroll
 		if (settings_compact_row_visible(page_y, 7, viewport_top, viewport_bottom)) {
 			if (staged_corners == os::CORNER_SQUARE) { if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Square corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_ROUNDED } }
-			elseif (staged_corners == os::CORNER_ROUNDED) { if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Rounded corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_SOFT } }
-			else { if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Soft corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_SQUARE } }
+			else { if (settings_flat_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Rounded corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_SQUARE } }
 		}
 		page_y = 24 - page_scroll
 	}
@@ -638,10 +692,11 @@ proc draw_scrollable_compact_page() {
 
 	if (settings_compact_row_visible(page_y, 7, viewport_top, viewport_bottom) && settings_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Apply", graphics::COLOR_2)) {
 		applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, 0, staged_corners, staged_icons, staged_clock, staged_enabled)
-		if (applied) { call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled) }
+		call finish_preferences_apply()
 	}
 	page_y += 8
 	if (settings_compact_row_visible(page_y, 7, viewport_top, viewport_bottom) && settings_button_aligned(panel_x + 3, page_y, page_control_width, 7, "Cancel", graphics::COLOR_5)) {
+		call os::clear_preview()
 		call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 		settings_window.close()
 	}
@@ -674,6 +729,10 @@ drawer_scroll = 0
 page_scroll = 0
 page_scroll_maximum = 0
 page_scroll_tab = -1
+preview_background = -1
+preview_palette = -1
+preview_theme = -1
+preview_corners = -1
 
 # Application driver.
 settings_window.x = 48
@@ -698,6 +757,7 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 		drawer_flash -= delta_ms
 		if (drawer_flash < 0) { drawer_flash = 0 }
 	}
+	call refresh_appearance_preview()
 	call graphics::begin_draw(settings_window)
 
 	if (!settings_window.is_minimized()) {
@@ -805,11 +865,8 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				if (staged_corners == os::CORNER_SQUARE) {
 					if (settings_button_aligned(control_x, 33, control_width, 11, "Square", graphics::COLOR_5)) { staged_corners = os::CORNER_ROUNDED }
 				}
-				elseif (staged_corners == os::CORNER_ROUNDED) {
-					if (settings_button_aligned(control_x, 33, control_width, 11, "Rounded", graphics::COLOR_5)) { staged_corners = os::CORNER_SOFT }
-				}
 				else {
-					if (settings_button_aligned(control_x, 33, control_width, 11, "Soft", graphics::COLOR_5)) { staged_corners = os::CORNER_SQUARE }
+					if (settings_button_aligned(control_x, 33, control_width, 11, "Rounded", graphics::COLOR_5)) { staged_corners = os::CORNER_SQUARE }
 				}
 				call draw_window_preview(panel_x + 8, 50, panel_width - 16, action_y - 54)
 			}
@@ -848,11 +905,10 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 
 			if (settings_button_aligned(panel_x + 4, action_y, action_width, 11, "Apply", graphics::COLOR_2)) {
 				applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, 0, staged_corners, staged_icons, staged_clock, staged_enabled)
-				if (applied) {
-					call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
-				}
+				call finish_preferences_apply()
 			}
 			if (settings_button_aligned(panel_x + 6 + action_width, action_y, action_width, 11, "Cancel", graphics::COLOR_5)) {
+				call os::clear_preview()
 				call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 				settings_window.close()
 			}
@@ -908,11 +964,8 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 				if (staged_corners == os::CORNER_SQUARE) {
 					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Square corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_ROUNDED }
 				}
-				elseif (staged_corners == os::CORNER_ROUNDED) {
-					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Rounded corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_SOFT }
-				}
 				else {
-					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Soft corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_SQUARE }
+					if (settings_flat_button_aligned(control_x, 15, control_width, 7, "Rounded corners", graphics::COLOR_8, graphics::WHITE)) { staged_corners = os::CORNER_SQUARE }
 				}
 				if (action_y >= 45) { call draw_window_preview(panel_x + 5, 25, panel_width - 10, action_y - 29) }
 			}
@@ -947,11 +1000,10 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 
 			if (settings_button_aligned(panel_x + 3, action_y, action_width, 6, "Apply", graphics::COLOR_2)) {
 				applied = os::apply_preferences(staged_master, staged_music, staged_effects, staged_background, staged_palette, staged_theme, 0, staged_corners, staged_icons, staged_clock, staged_enabled)
-				if (applied) {
-					call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
-				}
+				call finish_preferences_apply()
 			}
 			if (settings_button_aligned(panel_x + 4 + action_width, action_y, action_width, 6, "Cancel", graphics::COLOR_5)) {
+				call os::clear_preview()
 				call reload_os_settings(&staged_master, &staged_music, &staged_effects, &staged_background, &staged_palette, &staged_theme, &staged_corners, &staged_icons, &staged_clock, &staged_enabled)
 				settings_window.close()
 			}
@@ -1046,5 +1098,7 @@ while (settings_window.state != graphics::WINDOW_CLOSED) {
 		}
 	}
 
+	call refresh_appearance_preview()
 	call graphics::update(settings_window)
 }
+call os::clear_preview()

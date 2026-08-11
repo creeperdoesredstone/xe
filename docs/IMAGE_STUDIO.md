@@ -199,9 +199,9 @@ of `.sprite3`; keep the `.xip` master for later edits.
 For an entire Xe program, use the **Xe → SB3** tab. Choose Active file, Workspace,
 or **Choose .xe file**, run compatibility analysis, and export only when the result
 is **Exact**. A compatible VM profile must implement every used graphics syscall and
-asset-ROM feature and must package each declared XIMG. The bundled legacy profile
-currently lacks those capabilities, so it correctly blocks graphical Xe exports
-instead of producing a misleading Scratch project. The `.sprite3` route remains
+asset-ROM feature and must package each declared XIMG. The default full-ABI profile
+supports portable primitive graphics but still blocks image assets until a
+deterministic project ROM is implemented. The `.sprite3` route remains
 available for artwork and animation independently of the Xe VM profile.
 
 ## Compression and portability

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from xe_lang.design_tokens import WINDOW_COMPONENT_TOKENS
 from xe_lang.devices.graphics import GraphicsDevice
 from xe_lang.devices.input import InputDevice, LEFT_BUTTON
 from xe_lang.devices.os_state import OSDevice
@@ -71,9 +72,10 @@ def test_top_snap_maximizes_with_one_eased_transition_and_restores_under_pointer
 	assert event
 
 
-def test_window_content_clear_applies_transparency_without_affecting_screen_clear() -> None:
+def test_legacy_window_transparency_is_normalized_and_content_stays_opaque() -> None:
 	appearance = OSDevice()
 	appearance.set_window_transparency(50)
+	assert appearance.window_transparency == 0
 	graphics = GraphicsDevice(120, 90)
 	graphics.clear(2)
 	input_device = InputDevice(120, 90)
@@ -88,9 +90,23 @@ def test_window_content_clear_applies_transparency_without_affecting_screen_clea
 		for y in range(manager.content_y(handle), bounds.y + bounds.height - manager.theme.border_width)
 		for x in range(manager.content_x(handle), bounds.x + bounds.width - manager.theme.border_width)
 	]
-	assert 2 in content
-	assert 5 in content
-	assert set(content) <= {2, 5}
+	assert set(content) == {5}
+
+
+def test_default_window_theme_is_derived_from_component_tokens() -> None:
+	manager = WindowManager(GraphicsDevice(120, 90), InputDevice(120, 90))
+	for name in (
+		"title_height",
+		"border_width",
+		"border_color",
+		"title_color",
+		"content_color",
+		"text_color",
+		"button_color",
+		"control_size",
+		"control_gap",
+	):
+		assert getattr(manager.theme, name) == getattr(WINDOW_COMPONENT_TOKENS, name)
 
 
 def test_button_labels_stay_on_the_logical_pixel_grid_through_hover() -> None:

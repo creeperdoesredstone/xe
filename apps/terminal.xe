@@ -27,6 +27,7 @@ array tab_theme: int[3]
 array tab_split: int[3]
 array tab_monitor: int[3]
 array tab_scroll_rows: int[3]
+array tab_horizontal_scroll: int[3]
 var active_tab: int
 var tab_count: int
 var saved_list_open: bool
@@ -201,6 +202,8 @@ proc initialize_terminal_tab(index: int) {
 	tab_theme[index] = 0
 	tab_split[index] = 0
 	tab_monitor[index] = 0
+	tab_scroll_rows[index] = 0
+	tab_horizontal_scroll[index] = 0
 }
 
 proc remove_terminal_tab(index: int) {
@@ -232,6 +235,8 @@ proc remove_terminal_tab(index: int) {
 		tab_theme[shift_index] = tab_theme[shift_index + 1]
 		tab_split[shift_index] = tab_split[shift_index + 1]
 		tab_monitor[shift_index] = tab_monitor[shift_index + 1]
+		tab_scroll_rows[shift_index] = tab_scroll_rows[shift_index + 1]
+		tab_horizontal_scroll[shift_index] = tab_horizontal_scroll[shift_index + 1]
 		shift_index += 1
 	}
 	if (active_tab > index) { active_tab -= 1 }
@@ -498,6 +503,7 @@ proc draw_terminal_wrapped(x: int, y: int, width: int, height: int, text: string
 	var word_end: int
 	var word_length: int
 	var word_index: int
+	var word_scroll: int
 	var column: int
 	var row: int
 	columns = (width - 4) / 4
@@ -530,10 +536,16 @@ proc draw_terminal_wrapped(x: int, y: int, width: int, height: int, text: string
 			while (word_end < xestring::strlen(text) && (int)(text[word_end]) != 10 && (int)(text[word_end]) != 32) { word_end += 1 }
 			word_length = word_end - index
 			if (column > 0 && column + word_length > columns) { row += 1; column = 0 }
-			word_index = 0
-			while (word_index < word_length && column + word_index < columns) {
+			word_scroll = 0
+			if (word_length > columns) {
+				word_scroll = tab_horizontal_scroll[active_tab]
+				if (word_scroll > word_length - columns) { word_scroll = word_length - columns }
+				if (word_scroll < 0) { word_scroll = 0 }
+			}
+			word_index = word_scroll
+			while (word_index < word_length && column + word_index - word_scroll < columns) {
 				if (row >= first_row && row < first_row + rows) {
-					call graphics::draw_char_small(terminal_window, x + 2 + (column + word_index) * 4, y + (row - first_row) * 6, text[index + word_index], color)
+					call graphics::draw_char_small(terminal_window, x + 2 + (column + word_index - word_scroll) * 4, y + (row - first_row) * 6, text[index + word_index], color)
 				}
 				word_index += 1
 			}
@@ -777,6 +789,9 @@ tab_monitor[2] = 0
 tab_scroll_rows[0] = 0
 tab_scroll_rows[1] = 0
 tab_scroll_rows[2] = 0
+tab_horizontal_scroll[0] = 0
+tab_horizontal_scroll[1] = 0
+tab_horizontal_scroll[2] = 0
 saved_list_open = false
 history_position = 0
 plus_x = 44
@@ -951,8 +966,14 @@ while (terminal_window.state != graphics::WINDOW_CLOSED) {
 			output_body_height = body_height - monitor_height
 			wheel_delta = graphics::scroll_delta()
 			if (wheel_delta != 0 && terminal_pointer_inside(4, body_y, main_width, output_body_height)) {
-				tab_scroll_rows[active_tab] += wheel_delta * 3
-				if (tab_scroll_rows[active_tab] < 0) { tab_scroll_rows[active_tab] = 0 }
+				if ((graphics::modifiers() & graphics::MOD_SHIFT) != 0) {
+					tab_horizontal_scroll[active_tab] -= wheel_delta * 4
+					if (tab_horizontal_scroll[active_tab] < 0) { tab_horizontal_scroll[active_tab] = 0 }
+				}
+				else {
+					tab_scroll_rows[active_tab] += wheel_delta * 3
+					if (tab_scroll_rows[active_tab] < 0) { tab_scroll_rows[active_tab] = 0 }
+				}
 			}
 			if (active_terminal_split() && output_body_height >= 30) {
 				split_height = output_body_height / 2
