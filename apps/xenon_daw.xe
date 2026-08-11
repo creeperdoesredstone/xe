@@ -17,6 +17,9 @@ var scroll_y: int
 var menu_left_x: float
 var menu_top_y: float
 
+var grid_view_width: int
+var grid_view_height: int
+
 var current_channel: int
 
 # Helper for setting note
@@ -27,9 +30,9 @@ proc toggle_note(note_x: int, note_y: int, channel: int) {
 	if (channel == 2) { note = channel_3_grid[note_x] }
 	if (note == note_y) { note = 0 }
 	else { note = note_y }
-	if (channel == 0) { channel_1_grid[note_x] = note_y }
-	if (channel == 1) { channel_2_grid[note_x] = note_y }
-	if (channel == 2) { channel_3_grid[note_x] = note_y }
+	if (channel == 0) { channel_1_grid[note_x] = note }
+	if (channel == 1) { channel_2_grid[note_x] = note }
+	if (channel == 2) { channel_3_grid[note_x] = note }
 }
 
 # Keyboard drawing.
@@ -49,30 +52,34 @@ proc draw_keys(vx: int, vy: int, vw: int, vh: int) {
 	
 	var grid_x: int
 	var grid_y: int
+	var octave_offset: int
 	
 	key_y = vh - KEY_HEIGHT
-	key_idx = scroll_y % 12
+	key_idx = scroll_y
 	mouse_x = graphics::mouse_x() - daw_window.x - 2
 	mouse_y = graphics::mouse_y() - daw_window.y - 17
 	
 	while (key_y >= 0) {
-		if (KEY_ACCIDENTALS[key_idx] == ' ') {
+		if (KEY_ACCIDENTALS[key_idx % 12] == ' ') {
 			key_col = graphics::WHITE
 			name_col = graphics::BLACK
 			grid_col = graphics::COLOR_8
+			octave_offset = 0
 		} else {
 			key_col = graphics::BLACK
 			name_col = graphics::WHITE
 			grid_col = graphics::COLOR_1
+			octave_offset = 4
 		}
 		
 		call graphics::fill_rect(daw_window, vx, vy + key_y, KEY_WIDTH, KEY_HEIGHT, key_col)
-		call graphics::draw_char_small(daw_window, vx + 10, vy + key_y + 1, KEY_NAMES[key_idx], name_col)
-		call graphics::draw_char_small(daw_window, vx + 14, vy + key_y + 1, KEY_ACCIDENTALS[key_idx], name_col)
+		call graphics::draw_char_small(daw_window, vx + 8, vy + key_y + 1, KEY_NAMES[key_idx % 12], name_col)
 		call graphics::fill_rect(daw_window, vx + KEY_WIDTH, vy + key_y, vw - KEY_WIDTH, KEY_HEIGHT, grid_col)
+		call graphics::draw_char_small(daw_window, vx + 12, vy + key_y + 1, KEY_ACCIDENTALS[key_idx % 12], name_col)
+		call graphics::draw_char_small(daw_window, vx + 12 + octave_offset, vy + key_y + 1, (char)(50 + key_idx/12), name_col)
 		
 		key_y -= KEY_HEIGHT
-		key_idx = (key_idx + 1) % 12
+		key_idx += 1
 	}
 	
 	if (mouse_x >= vx + KEY_WIDTH && mouse_x < vx + vw && mouse_y >= vy && mouse_y < vy + vh) {
@@ -81,15 +88,32 @@ proc draw_keys(vx: int, vy: int, vw: int, vh: int) {
 		sel_box_x = 8*mouse_grid_x + vx + KEY_WIDTH
 		sel_box_y = KEY_HEIGHT*mouse_grid_y + vy
 		
-		if (graphics::button_tone(daw_window, sel_box_x, sel_box_y, 8, KEY_HEIGHT, " ", graphics::COLOR_1)) {
-			call toggle_note(mouse_grid_x + scroll_x, mouse_grid_y + scroll_y, current_channel)
+		if (graphics::button_tone(daw_window, sel_box_x - 1, sel_box_y - 1, 10, KEY_HEIGHT + 2, " ", graphics::COLOR_1)) {
+			call toggle_note(mouse_grid_x + scroll_x, 27 - mouse_grid_y + scroll_y, current_channel)
 		}
 	}
 }
 
 proc draw_note_grid(vx: int, vy: int, vw: int, vh: int, scrollx: int, scrolly: int, channel: int) {
 	var draw_x: int
-	var draw_y: int
+	var note: int
+	
+	var last_x: int
+	var last_y: int
+	
+	last_x = scrollx + vw/8
+	last_y = vh / KEY_HEIGHT + 1
+	
+	for (draw_x = scrollx; draw_x < last_x; draw_x += 1) {
+		switch (channel) {
+			case 0 { note = channel_1_grid[draw_x] }
+			case 1 { note = channel_2_grid[draw_x] }
+			case 2 { note = channel_3_grid[draw_x] }
+		}
+		if (note > 0 && (note - scrolly) < last_y) {
+			call graphics::fill_rect(daw_window, vx + 8*(draw_x-scrollx), vy+vh - KEY_HEIGHT*(note-scrolly), 8, KEY_HEIGHT, graphics::COLOR_12)
+		}
+	}
 }
 
 # GUI drawing.
@@ -116,11 +140,15 @@ menu_top_y = 11.0
 current_channel = 0
 
 while (daw_window.state != graphics::WINDOW_CLOSED) {
+	# update viewport dimensions
+	grid_view_width = daw_window.width - (int)menu_left_x - 17
+	grid_view_height = daw_window.height - (int)menu_top_y - 30
+	
 	call graphics::begin_draw(daw_window)
 	
 	if (!daw_window.is_minimized()) {
 		call draw_keys((int)menu_left_x, (int)menu_top_y, daw_window.width - (int)menu_left_x - 17, daw_window.height - (int)menu_top_y - 30)
-		call draw_note_grid((int)menu_left_x, (int)menu_top_y, daw_window.width - (int)menu_left_x - 17, daw_window.height - (int)menu_top_y - 30, scroll_x, scroll_y, current_channel)
+		call draw_note_grid((int)menu_left_x + KEY_WIDTH, (int)menu_top_y, grid_view_width, grid_view_height, scroll_x, scroll_y, current_channel)
 		call draw_vscroll(daw_window.width - 15, (int)menu_top_y, daw_window.height - (int)menu_top_y - 30, scroll_y)
 	}
 
