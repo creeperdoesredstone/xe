@@ -142,32 +142,8 @@ def emit_string_literal_init(node: StringLiteral) -> Result:
 	global nodes_to_lookup, string_labels
 
 	instructions = [
-		# allocate descriptor
-		(node.start_pos, node.end_pos, "PUSH", 3),
-		(node.start_pos, node.end_pos, "SYS", SyscallID.OS_MALLOC),
-		(node.start_pos, node.end_pos, "DUP", 0),
-		(node.start_pos, node.end_pos, "DUP", 0),
-		# allocate character buffer
-		(node.start_pos, node.end_pos, "PUSH", len(node.value) + 1),
-		(node.start_pos, node.end_pos, "SYS", SyscallID.OS_MALLOC),
-		# store pointer to buffer[0] at descriptor[0]
-		(node.start_pos, node.end_pos, "STREIND"),
-		(node.start_pos, node.end_pos, "INCI"),
-		(node.start_pos, node.end_pos, "DUP", 0),
-		# store length including '\0' at descriptor[1]
-		(node.start_pos, node.end_pos, "PUSH", len(node.value) + 1),
-		(node.start_pos, node.end_pos, "STREIND"),
-		(node.start_pos, node.end_pos, "INCI"),
-		(node.start_pos, node.end_pos, "DUP", 0),
-		# store capacity at descriptor[2]
-		(node.start_pos, node.end_pos, "PUSH", len(node.value) + 1),
-		(node.start_pos, node.end_pos, "STREIND"),
-		# roll back to descriptor[0]
-		(node.start_pos, node.end_pos, "DECI"),
-		(node.start_pos, node.end_pos, "DECI"),
-		(node.start_pos, node.end_pos, "LOADIND"),  # buffer[0]
 		(node.start_pos, node.end_pos, "PUSH", f"STR_LIT_{string_labels}"),
-		(node.start_pos, node.end_pos, "LOOKUP", len(node.value) + 1),
+		(node.start_pos, node.end_pos, "SYS", SyscallID.ALLOC_STRING),
 		# store the finished pointer into this literal's dedicated slot
 		(node.start_pos, node.end_pos, "STORE", node.address),
 	]

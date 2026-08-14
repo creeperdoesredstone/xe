@@ -445,15 +445,15 @@ class VM:
 		else:
 			print(text, end="")
 
-	def read_mem_string(self, address: int, maximum_words: int | None = None) -> str:
-		if not 0 <= address < len(self.data_memory):
+	def read_mem_string(self, address: int, maximum_words: int | None = None, from_prgm: bool = False) -> str:
+		if not 0 <= address < len(self.program_memory if from_prgm else self.data_memory):
 			raise ValueError("Invalid string address")
 		chars = []
-		limit = len(self.data_memory) - address
+		limit = len(self.program_memory if from_prgm else self.data_memory) - address
 		if maximum_words is not None:
 			limit = min(limit, max(0, int(maximum_words)))
 		for offset in range(limit):
-			val = self.data_memory[address + offset]
+			val = self.program_memory[address + offset] if from_prgm else self.data_memory[address + offset]
 			if val == 0:
 				return "".join(chars)
 			chars.append(chr(val & 0xFF))
@@ -1374,6 +1374,28 @@ class VM:
 							if not self.write_string_descriptor(destination, str(value), res):
 								return res
 							self.push(destination)
+						case SyscallID.ALLOC_STRING:
+							addr = self._pop_value(res)
+							if res.error: return res
+							string = self.read_mem_string(addr - self.text_size, from_prgm=True)
+							length = len(string) + 1
+
+							res.register(self.malloc(3))
+							res.register(self.malloc(length))
+							if res.error: return res
+
+							descriptor_addr = self.stack[self.sp - 2]
+							buffer_addr = self.stack[self.sp - 1]
+							self.pop()
+							self.pop()
+
+							self.data_memory[descriptor_addr] = buffer_addr
+							self.data_memory[descriptor_addr + 1] = length
+							self.data_memory[descriptor_addr + 2] = length
+
+							for i, char in enumerate(string):
+								self.data_memory[buffer_addr + i] = ord(char)
+							self.push(descriptor_addr)
 						case _:
 							if not self.devices.dispatch(ins_arg, self, res):
 								return res.fail(

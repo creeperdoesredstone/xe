@@ -189,8 +189,8 @@ if __name__ == "__main__":
 				else:
 					if result is not None:
 						print(f"Stack: {result}")
-					if asm:
-						print(f"{ANSI.PURPLE}{asm}{ANSI.END}")
+				if asm:
+					print(f"{ANSI.PURPLE}{asm}{ANSI.END}")
 
 			except KeyboardInterrupt:
 				print("\nExiting REPL.")
