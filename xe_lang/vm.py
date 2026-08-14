@@ -930,10 +930,6 @@ class VM:
 					if not 0 <= stack_index < len(self.stack):
 						return res.fail(self._error("Stack frame store out of bounds"))
 					self.stack[stack_index] = value
-				case 16:  # LEAVE
-					if not 0 <= self.fp <= len(self.stack) - 2:
-						return res.fail(self._error("Frame pointer out of bounds"))
-					self.sp = self.fp + 2
 				case _:
 					return res.fail(self._error(f"Unknown stack instruction modifier {ins_mod}"))
 
@@ -945,23 +941,17 @@ class VM:
 			value = self.stack[self.sp - 1]
 			if ins_mod != 1 and value > 0x7fffffff:
 				value -= 0x100000000
-			if ins_mod == 0 and ins_arg == 1:  # I2F
+			if ins_mod == 0 and ins_arg == 1:  # IB2F
 				self.stack[self.sp - 1] = float_to_u32(float(value))
-			elif ins_mod == 0 and ins_arg == 2:  # I2B
+			elif ins_mod == 0 and ins_arg == 2:  # IF2B
 				self.stack[self.sp - 1] = (
 					FALSE if value == 0 else TRUE
 				)
-			elif ins_mod == 1 and ins_arg == 0:  # F2I
+			elif ins_mod == 1:  # F2I
 				float_value = u32_to_float(value)
 				if not math.isfinite(float_value) or not -0x80000000 <= float_value <= 0x7FFFFFFF:
 					return res.fail(self._error("Float cannot be represented as an int"))
 				self.stack[self.sp - 1] = int(float_value) & TRUE
-			elif ins_mod == 1 and ins_arg == 2:  # F2B
-				self.stack[self.sp - 1] = FALSE if u32_to_float(value) == 0 else TRUE
-			elif ins_mod == 2 and ins_arg == 0:  # B2I
-				pass
-			elif ins_mod == 2 and ins_arg == 1:  # B2F
-				self.stack[self.sp - 1] = float_to_u32(float(value))
 
 		elif ins_type == 3:  # Math
 			if ins_mod >= len(MATH_VALID_ARGS) or ins_arg not in MATH_VALID_ARGS[ins_mod]:
