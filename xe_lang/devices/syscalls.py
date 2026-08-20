@@ -11,6 +11,7 @@ from typing import Any, Callable
 from xe_lang import graphics_commands as gc
 from xe_lang.helper import Position, VMError
 from xe_lang.syscall_abi import (
+	APP_GRAPHICS_DRAW_TEXT_SCALED,
 	GRAPHICS_REFERENCE_ADDRESS_MASK,
 	GRAPHICS_SCREEN_REFERENCE_TAG,
 	ImageFormat,
@@ -149,6 +150,7 @@ class DeviceRuntime:
 			SyscallID.APP_GRAPHICS_DRAW_RECT: self._graphics_draw_rect,
 			SyscallID.APP_GRAPHICS_FILL_RECT: self._graphics_fill_rect,
 			SyscallID.APP_GRAPHICS_DRAW_TEXT: self._graphics_draw_text,
+			APP_GRAPHICS_DRAW_TEXT_SCALED: self._graphics_draw_text_scaled,
 			SyscallID.APP_GRAPHICS_DRAW_INT: self._graphics_draw_int,
 			SyscallID.APP_GRAPHICS_DRAW_FLOAT: self._graphics_draw_float,
 			SyscallID.APP_GRAPHICS_BUTTON: self._graphics_button,
@@ -971,6 +973,26 @@ class DeviceRuntime:
 
 	def _graphics_draw_text(self, vm: Any, result: Any) -> None:
 		self._graphics_text(vm, result, "text")
+
+	def _graphics_draw_text_scaled(self, vm: Any, result: Any) -> None:
+		entry = self._window_args(vm, result, 6)
+		if not entry or not entry[1]:
+			return
+		_, handle, values = entry
+		x, y, descriptor, color, requested_scale = values
+		requested_scale = _signed(requested_scale)
+		if requested_scale <= 0:
+			return
+		requested_scale = min(requested_scale, 16)
+		ox, oy = self._origin(handle)
+		target_scale = self._target_scale(handle)
+		self.graphics.draw_text(
+			ox + _signed(x) * target_scale,
+			oy + _signed(y) * target_scale,
+			self._read_string(vm, descriptor),
+			_signed(color),
+			pixel_scale=requested_scale * target_scale,
+		)
 
 	def _graphics_draw_int(self, vm: Any, result: Any) -> None:
 		self._graphics_text(vm, result, "int")

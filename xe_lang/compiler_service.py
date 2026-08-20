@@ -26,7 +26,7 @@ from xe_lang.nodes import (
 from xe_lang.optimizer import Optimizer
 from xe_lang.parser import parse
 from xe_lang.semantic import SemanticAnalyzer
-from xe_lang.syscall_abi import SyscallID
+from xe_lang.syscall_abi import APP_GRAPHICS_DRAW_TEXT_SCALED, SyscallID
 
 
 HEAP_START = 0x2000
@@ -235,6 +235,7 @@ def capability_for_syscall(syscall: int) -> str:
 		or 142 <= syscall <= 146
 		or syscall in {208, 209, 246, 247, 248, 249, 253, 254}
 		or 270 <= syscall <= 276
+		or syscall == APP_GRAPHICS_DRAW_TEXT_SCALED
 	):
 		return "app.graphics"
 	if 130 <= syscall <= 141 or 180 <= syscall <= 196 or 250 <= syscall <= 252 or 292 <= syscall <= 295:
@@ -397,6 +398,8 @@ def compile_workspace(
 
 
 def syscall_name(value: int) -> str:
+	if value == APP_GRAPHICS_DRAW_TEXT_SCALED:
+		return "APP_GRAPHICS_DRAW_TEXT_SCALED"
 	try:
 		return SyscallID(value).name
 	except ValueError:

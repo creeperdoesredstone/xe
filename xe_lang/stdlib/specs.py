@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from xe_lang import graphics_commands as gc
 from xe_lang.design_tokens import WINDOW_COMPONENT_TOKENS
 from xe_lang.stdlib.ids import BuiltInID
-from xe_lang.syscall_abi import SyscallID
+from xe_lang.syscall_abi import APP_GRAPHICS_DRAW_TEXT_SCALED, SyscallID
 
 
 @dataclass(frozen=True)
@@ -80,6 +80,7 @@ GRAPHICS_SPEC = LibrarySpec(
 		_builtin("draw_rect", BuiltInID.GRAPHICS_DRAW_RECT, ("Window", "int", "int", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_DRAW_RECT, WINDOW_REF),
 		_builtin("fill_rect", BuiltInID.GRAPHICS_FILL_RECT, ("Window", "int", "int", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_FILL_RECT, WINDOW_REF),
 		_builtin("draw_text", BuiltInID.GRAPHICS_DRAW_TEXT, ("Window", "int", "int", "string", "int"), None, SyscallID.APP_GRAPHICS_DRAW_TEXT, WINDOW_REF),
+		_builtin("draw_text_scaled", BuiltInID.GRAPHICS_DRAW_TEXT_SCALED, ("Window", "int", "int", "string", "int", "int"), None, APP_GRAPHICS_DRAW_TEXT_SCALED, WINDOW_REF),
 		_builtin("draw_int", BuiltInID.GRAPHICS_DRAW_INT, ("Window", "int", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_DRAW_INT, WINDOW_REF),
 		_builtin("draw_float", BuiltInID.GRAPHICS_DRAW_FLOAT, ("Window", "int", "int", "float", "int"), None, SyscallID.APP_GRAPHICS_DRAW_FLOAT, WINDOW_REF),
 		_builtin("button", BuiltInID.GRAPHICS_BUTTON, ("Window", "int", "int", "int", "int", "string"), "bool", SyscallID.APP_GRAPHICS_BUTTON, WINDOW_REF),
@@ -136,6 +137,8 @@ GRAPHICS_SPEC = LibrarySpec(
 		ConstantSpec("SCREEN_WIDTH", 480),
 		ConstantSpec("SCREEN_HEIGHT", 360),
 		*(ConstantSpec(f"COLOR_{index}", index) for index in range(16)),
+		*(ConstantSpec(f"COLOR_ICON_{index}", index) for index in range(10)),
+		*(ConstantSpec(f"COLOR_ICON_{chr(ord('A') + index)}", 10 + index) for index in range(6)),
 		ConstantSpec("COLOR_BLACK", 0),
 		ConstantSpec("COLOR_WHITE", 15),
 		ConstantSpec("BLACK", 0),

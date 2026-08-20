@@ -187,3 +187,4 @@ class BuiltInID(Enum):
 	OS_CLIPBOARD_WRITE = auto()
 	OS_PREVIEW_PREFERENCES = auto()
 	OS_CLEAR_PREVIEW = auto()
+	GRAPHICS_DRAW_TEXT_SCALED = auto()

@@ -253,6 +253,10 @@ class SyscallID(IntEnum):
 	APP_OS_CLEAR_PREVIEW = 295
 
 
+# Host extension IDs stay outside the portable syscall set until a portable backend exists.
+APP_GRAPHICS_DRAW_TEXT_SCALED = 298
+
+
 class MouseEvent(IntEnum):
 	NONE = 0
 	MOVE = 1

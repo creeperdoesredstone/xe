@@ -22,6 +22,7 @@ call graphics::begin_draw(bg)
 call graphics::clear(bg, graphics::COLOR_1)
 call graphics::fill_rect(bg, 8, 8, 96, 28, graphics::COLOR_5)
 call graphics::draw_text(bg, 14, 18, "Desktop", graphics::WHITE)
+call graphics::draw_text_scaled(bg, 14, 30, "Text", graphics::COLOR_ICON_A, 2)
 call graphics::draw_icon(bg, 116, 12, 5, 5, ".AAA.A...AAAAAAA...AA.A.A")
 call graphics::draw_icon_scaled(bg, 128, 12, 5, 5, ".AAA.A...AAAAAAA...AA.A.A", 2)
 call graphics::update(bg)
@@ -133,7 +134,7 @@ the same integer pixel density before, during, and after the commit.
   `content_height(target)`, `pointer_x(target)`, `pointer_y(target)`
 - Shapes: `clear`, `set_pixel`, `draw_circle`, `draw_line`, `draw_rect`, `fill_rect`,
   `draw_atom`, `draw_icon`, `draw_icon_scaled`, and checked `draw_commands`
-- Text: `draw_text`, `draw_char`, `draw_int`, `draw_float`, plus the compact
+- Text: `draw_text`, `draw_text_scaled`, `draw_char`, `draw_int`, `draw_float`, plus the compact
   `draw_text_small`, `draw_char_small`, `draw_int_small`, and `draw_float_small`;
   `char_advance` and `draw_char_styled` provide proportional layout with composable
   bold, italic, and underline flags
@@ -141,7 +142,9 @@ the same integer pixel density before, during, and after the commit.
 - Input: `mouse_x`, `mouse_y`, `mouse_down`, `mouse_pressed`, `mouse_released`,
   `right_mouse_down`, `right_mouse_pressed`, `right_mouse_released`, `key_down`,
   `read_key`, `modifiers`, and `scroll_delta`
-- Constants: screen dimensions, `COLOR_0` through `COLOR_15`, `BLACK`, `WHITE`,
+- Constants: screen dimensions, `COLOR_0` through `COLOR_15`, icon-symbol aliases
+  `COLOR_ICON_0` through `COLOR_ICON_9` and `COLOR_ICON_A` through `COLOR_ICON_F`,
+  `BLACK`, `WHITE`,
   window states, atom/ring states, `MOUSE_LEFT`, `MOUSE_RIGHT`, common key codes,
   `MOD_SHIFT`, `MOD_CTRL`, `MOD_ALT`, `FONT_SMALL`, `FONT_NORMAL`, `FONT_LARGE`,
   `TEXT_BOLD`, `TEXT_ITALIC`, `TEXT_UNDERLINE`, and the `COMMAND_*` stream-layout
@@ -194,6 +197,14 @@ draws nothing. Window UI scaling composes with the icon scale, while Screen rema
 at stage-pixel density. `os::icon_size` is an OS preference (`0`, `1`, or `2`), not
 an implicit rendering transform; pass `os::icon_size + 1` as the explicit scale when
 desktop icons should follow that preference.
+
+`draw_text_scaled(target, x, y, text, color, scale)` draws the normal proportional
+5x7 font with each font pixel expanded to a square of `scale` logical pixels. Its
+color is a palette index; the `COLOR_ICON_0` through `COLOR_ICON_F` aliases use the
+same numeric values as icon pixel symbols, so `COLOR_ICON_A` selects palette index
+10. Valid positive scales are capped at `16`, while zero or a negative scale draws
+nothing. Window UI scaling composes with the explicit scale, and Screen coordinates
+remain absolute stage pixels.
 
 Portable images use the first-class one-word `graphics::Image` resource:
 
@@ -608,8 +619,8 @@ assembly programs and compiled `graphics::`/`os::` calls cannot collide.
   `160-164` and `210-217`, mutable string append operations `170-171`, currency
   `200-207`, compiler services `220-245`, `255`, and `290-291`, calendar date
   components `250-252`, compact palette-icon drawing `253`, portable VFS helpers
-  `260-266`, portable images `270-275`, checked graphics command streams `276`, and
-  XMusic sequencing `280-289`.
+  `260-266`, portable images `270-275`, checked graphics command streams `276`,
+  XMusic sequencing `280-289`, and native scaled text `298`.
 
 Compiled Screen resource references set bit 31 and retain the static address in bits
 `0-30`. The runtime strips that tag before bounds checks. Static resources remain in
