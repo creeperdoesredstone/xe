@@ -1,0 +1,848 @@
+# XenonOS desktop
+var screen: graphics::Screen
+var running: bool
+running = true
+
+var SCREEN_W: int
+var SCREEN_H: int
+SCREEN_W = 480
+SCREEN_H = 360
+
+var bar_width: int
+bar_width = 34
+var current_side: int
+current_side = 0
+var is_dragging: bool
+is_dragging = false
+
+var was_mouse_pressed: bool
+was_mouse_pressed = false
+
+var is_atom_active: bool
+is_atom_active = false
+var current_size: float
+current_size = 0
+var target_size: float
+target_size = 0
+var pause_timer: int
+pause_timer = 0
+
+var rot_x: float
+rot_x = 0.0
+var rot_y: float
+rot_y = 0.0
+
+var vel_x: float
+vel_x = 0.0
+var vel_y: float
+vel_y = 0.0
+
+var SPHERE_RADIUS: float
+SPHERE_RADIUS = 50.0
+
+var NUM_APPS: int
+NUM_APPS = 9
+var CENTER_X: int
+CENTER_X = 240
+var CENTER_Y: int
+CENTER_Y = 180
+
+var prev_mouse_x: int
+prev_mouse_x = 0
+var prev_mouse_y: int
+prev_mouse_y = 0
+var is_orbit_dragging: bool
+is_orbit_dragging = false
+
+var hovered_app_index: int
+hovered_app_index = -1
+
+array open_apps: int[9]
+var open_apps_count: int
+open_apps_count = 0
+
+proc toggle_taskatom() {
+    if (!is_atom_active) {
+        is_atom_active = true
+        target_size = 50.0
+        pause_timer = 0
+    } else {
+        target_size = 0.0
+    }
+}
+
+proc open_app(app_index: int) {
+	var already_open: bool
+    already_open = false
+    var i: int
+    i = 0
+
+    while (i < open_apps_count) {
+        if (open_apps[i] == app_index) {
+            already_open = true
+        }
+        i = i + 1
+    }
+
+    if (!already_open) {
+        open_apps[open_apps_count] = app_index
+        open_apps_count = open_apps_count + 1
+    }
+    
+    if (app_index == 0) {
+    }
+    if (app_index == 1) {
+    }
+    if (app_index == 2) {
+    }
+    if (app_index == 3) {
+    }
+    if (app_index == 4) {
+    }
+    if (app_index == 5) {
+    }
+    if (app_index == 6) {
+    }
+    if (app_index == 7) {
+    }
+    if (app_index == 8) {
+    }
+    if (app_index == 9) {
+    }
+    call toggle_taskatom()
+}
+
+fn get_app_icon_id(app_index: int) int {
+    return app_index + 4
+}
+
+fn get_icon_width(icon_id: int) int {
+    if (icon_id == 6) { return 8 }
+    if (icon_id == 8) { return 7 }
+    return 7
+}
+
+fn get_icon_height(icon_id: int) int {
+    if (icon_id == 5) { return 6 }
+    if (icon_id == 6) { return 10 }
+    if (icon_id == 8) { return 5 }
+    if (icon_id == 9 || icon_id == 12) { return 9 }
+    return 7
+}
+
+fn mouse_inside(x: int, y: int, x2: int, y2: int) bool {
+    var mouse_x: int
+    var mouse_y: int
+    mouse_x = graphics::mouse_x()
+    mouse_y = graphics::mouse_y()
+    if (mouse_x >= x && mouse_x <= x2 && mouse_y >= y && mouse_y <= y2) {
+        return true
+    }
+    return false
+}
+
+proc draw_icons(icon: int, modifier: int, x: int, y: int, scale: int) {
+    if (modifier == 1) {
+        if (icon == 1) {
+            call graphics::draw_icon_scaled(screen, x, y, 7, 7, "...F....F.F.F..F.F.F..F...F...FFF..", scale)
+        }
+        if (icon == 2) {
+            call graphics::draw_icon_scaled(screen, x, y, 7, 7, ".B.B.B.........B.B.B.........B.B.B.", scale)
+        }
+        if (icon == 3) {
+            call graphics::draw_icon_scaled(screen, x, y, 7, 7, ".BBBBB.........BBBBB.........BBBBB.", scale)
+        }
+        # Calculator App
+        if (icon == 4) {
+            call graphics::draw_icon_scaled(screen, x, y, 7, 7, "....000.0000A000AAA000AA0A0.00A0A0..0A0A0..00000.", scale)
+        }
+        # File explorer App
+        if (icon == 5) {
+            call graphics::draw_icon_scaled(screen, x, y, 7, 6, "00000..06660000666660066666006666600000000", scale)
+        }
+        # Minesweeper App
+        if (icon == 6) {
+            call graphics::draw_icon_scaled(screen, x, y, 8, 10, "...000...00040..004440..044440..004440...00040.....000......00.....0000...000000", scale)
+        }
+        # Settings App
+        if (icon == 7) {
+            call graphics::draw_icon_scaled(screen, x, y, 7, 7, "00000000D0D0D000DDD000DD0DD000DDD000D0D0D00000000", scale)
+        }
+        # Terminal App
+        if (icon == 8) {
+            call graphics::draw_icon_scaled(screen, x, y, 7, 5, "000....0F0000000F0FF00F00000000....", scale)
+        }
+        # Text Editor App
+        if (icon == 9) {
+            call graphics::draw_icon_scaled(screen, x, y, 7, 9, "000000.0BBBB000B00BB00B000B00B0.0B00B0.0B00B000B00BBBBB00000000", scale)
+        }
+        # DAW App
+        if (icon == 10) {
+            call graphics::draw_icon_scaled(screen, x, y, 7, 7, "00000000F0F0F00F0F0F00F0F0F00FFFFF00FFFFF00000000", scale)
+        }
+        # IDE App
+        if (icon == 11) {
+            call graphics::draw_icon_scaled(screen, x, y, 7, 7, ".00000.00101000111110001010001111100010100.00000.", scale)
+        }
+        # Music App
+        if (icon == 12) {
+            call graphics::draw_icon_scaled(screen, x, y, 7, 9, "..000....0E00...0EE00..0EEE0..0E000000E0..0EEE0..0EEE0..00000..", scale)
+        }
+    }
+    if (modifier == 2) {
+        if (icon == 1) {
+            call graphics::draw_icon_scaled(screen, x, y, 7, 7, "...D....D.D.D..D.D.D..D...D...DDD..", scale)
+        }
+        if (icon == 2) {
+            call graphics::draw_icon_scaled(screen, x, y, 7, 7, ".A.A.A.........A.A.A.........A.A.A.", scale)
+        }
+        if (icon == 3) {
+            call graphics::draw_icon_scaled(screen, x, y, 7, 7, ".AAAAA.........AAAAA.........AAAAA.", scale)
+        }
+    }
+}
+
+proc draw_drop_zones() {
+    var zone_width: int
+    zone_width = 30
+    var zone_lenght: int
+    zone_lenght = 300
+    call graphics::draw_rect(screen, SCREEN_W - zone_width, (SCREEN_H - zone_lenght) / 2, zone_width, zone_lenght, graphics::WHITE)
+    call graphics::draw_rect(screen, 0, (SCREEN_H - zone_lenght) / 2, zone_width, zone_lenght, graphics::WHITE)
+    call graphics::draw_rect(screen, (SCREEN_W - zone_lenght) / 2, 0, zone_lenght, zone_width, graphics::WHITE)
+    call graphics::draw_rect(screen, (SCREEN_W - zone_lenght) / 2, SCREEN_H - zone_width, zone_lenght, zone_width, graphics::WHITE)
+}
+
+proc fill_circle(x: int, y: int, radius: int, color: int) {
+    var cx: int
+    var cy: int
+    var r: int
+    cx = (x / 2) * 2
+    cy = (y / 2) * 2
+    r = (radius / 2) * 2
+
+    var px: int
+    px = 0
+    var py: int
+    py = r
+    var d: int
+    d = 3 - (2 * r)
+
+    while (py >= px) {
+        call graphics::draw_line(screen, cx - px, cy + py, cx + px, cy + py, color)
+        call graphics::draw_line(screen, cx - px, cy + py + 1, cx + px, cy + py + 1, color)
+
+        call graphics::draw_line(screen, cx - px, cy - py, cx + px, cy - py, color)
+        call graphics::draw_line(screen, cx - px, cy - py + 1, cx + px, cy - py + 1, color)
+
+        call graphics::draw_line(screen, cx - py, cy + px, cx + py, cy + px, color)
+        call graphics::draw_line(screen, cx - py, cy + px + 1, cx + py, cy + px + 1, color)
+
+        call graphics::draw_line(screen, cx - py, cy - px, cx + py, cy - px, color)
+        call graphics::draw_line(screen, cx - py, cy - px + 1, cx + py, cy - px + 1, color)
+
+        if (d < 0) {
+            d = d + (4 * px) + 6
+        } else {
+            d = d + (4 * (px - py)) + 10
+            py = py - 2
+        }
+        px = px + 2
+    }
+}
+
+proc handle_sidebar() {
+    if (is_dragging) {
+        call draw_drop_zones()
+    }
+    var mouse_x: int
+    mouse_x = graphics::mouse_x()
+    var mouse_y: int
+    mouse_y = graphics::mouse_y()
+    var is_mouse_down: bool
+    is_mouse_down = graphics::mouse_down()
+    var just_clicked: bool
+    just_clicked = graphics::mouse_pressed()
+    var bar_x: int
+    var bar_y: int
+    var bar_w: int
+    var bar_h: int
+    var line_x: int
+    line_x = 0
+    var line_y: int
+    line_y = 0
+    var line_w: int
+    line_w = 0
+    var line_h: int
+    line_h = 0
+
+    var ic1_x: int
+    ic1_x = -100
+    var ic1_y: int
+    ic1_y = -100
+    var ic2_x: int
+    ic2_x = -100
+    var ic2_y: int
+    ic2_y = -100
+    var ic3_x: int
+    ic3_x = -100
+    var ic3_y: int
+    ic3_y = -100
+
+    var center_x: int
+    var center_y: int
+
+    if (is_dragging) {
+        if (!is_mouse_down) {
+            is_dragging = false
+
+            var zone_width: int
+            zone_width = 30
+            var zone_lenght: int
+            zone_lenght = 300
+            var margin_x: int
+            margin_x = (SCREEN_W - zone_lenght) / 2
+            var margin_y: int
+            margin_y = (SCREEN_H - zone_lenght) / 2
+
+            if (mouse_x >= SCREEN_W - zone_width && mouse_y >= margin_y && mouse_y <= margin_y + zone_lenght) {
+                current_side = 0
+            } elseif (mouse_x <= zone_width && mouse_y >= margin_y && mouse_y <= margin_y + zone_lenght) {
+                current_side = 1
+            } elseif (mouse_y <= zone_width && mouse_x >= margin_x && mouse_x <= margin_x + zone_lenght) {
+                current_side = 2
+            } elseif (mouse_y >= SCREEN_H - zone_width && mouse_x >= margin_x && mouse_x <= margin_x + zone_lenght) {
+                current_side = 3
+            }
+        }
+    }
+
+    if (is_dragging) {
+        call fill_circle(mouse_x, mouse_y, 15, graphics::COLOR_1)
+        call fill_circle(mouse_x, mouse_y, 12, graphics::COLOR_8)
+        call fill_circle(mouse_x - 2, mouse_y - 2, 7, graphics::COLOR_WHITE)
+    } else {
+        if (current_side == 0) {
+            bar_x = SCREEN_W - bar_width
+            bar_y = 0
+            bar_w = bar_width
+            bar_h = SCREEN_H
+            line_x = bar_x
+            line_y = 0
+            line_w = 2
+            line_h = SCREEN_H
+        } elseif (current_side == 1) {
+            bar_x = 0
+            bar_y = 0
+            bar_w = bar_width
+            bar_h = SCREEN_H
+            line_x = bar_width - 2
+            line_y = 0
+            line_w = 2
+            line_h = SCREEN_H
+        } elseif (current_side == 2) {
+            bar_x = 0
+            bar_y = 0
+            bar_w = SCREEN_W
+            bar_h = bar_width
+            line_x = 0
+            line_y = bar_width - 2
+            line_w = SCREEN_W
+            line_h = 2
+        } elseif (current_side == 3) {
+            bar_x = 0
+            bar_y = SCREEN_H - bar_width
+            bar_w = SCREEN_W
+            bar_h = bar_width
+            line_x = 0
+            line_y = bar_y
+            line_w = SCREEN_W
+            line_h = 2
+        }
+
+        if (current_side == 0 || current_side == 1) {
+            if (current_side == 0) {
+                center_x = bar_x + (bar_width / 2) - 6
+            } else {
+                center_x = bar_x + (bar_width / 2) - 8
+            }
+            ic1_x = center_x
+            ic2_x = center_x
+            ic3_x = center_x
+            ic1_y = bar_y + 9
+            ic2_y = bar_y + 32
+            ic3_y = bar_y + bar_h - 23
+        } elseif (current_side == 2 || current_side == 3) {
+            if (current_side == 2) {
+                center_y = bar_y + (bar_width / 2) - 6
+            } else {
+                center_y = bar_y + (bar_width / 2) - 4
+            }
+            ic1_y = center_y
+            ic2_y = center_y
+            ic3_y = center_y
+            ic1_x = bar_x + 9
+            ic2_x = bar_x + 32
+            ic3_x = bar_x + bar_w - 23
+        }
+
+        var clicked_icon: bool
+        clicked_icon = false
+
+        if (mouse_inside(ic1_x, ic1_y, ic1_x + 14, ic1_y + 14)) {
+            clicked_icon = true
+            if (just_clicked) {
+                running = false
+            }
+        } elseif (mouse_inside(ic2_x, ic2_y, ic2_x + 14, ic2_y + 14)) {
+            clicked_icon = true
+            if (just_clicked) {
+                call toggle_taskatom()
+            }
+        } elseif (mouse_inside(ic3_x, ic3_y, ic3_x + 14, ic3_y + 14)) {
+            clicked_icon = true
+        }
+		
+		var check_idx: int
+        check_idx = 0
+        var check_box: int
+        check_box = 22
+
+        while (check_idx < open_apps_count) {
+            var chk_x: int
+            var chk_y: int
+
+            if (current_side == 0 || current_side == 1) {
+                chk_x = bar_x + (bar_width / 2) - (check_box / 2)
+                chk_y = bar_y + 60 + (check_idx * 26)
+            } else {
+                chk_x = bar_x + 60 + (check_idx * 26)
+                chk_y = bar_y + (bar_width / 2) - (check_box / 2)
+            }
+
+            if (mouse_inside(chk_x, chk_y, chk_x + check_box, chk_y + check_box)) {
+                clicked_icon = true
+            }
+            check_idx = check_idx + 1
+        }
+        
+        if (just_clicked && !clicked_icon) {
+            if (mouse_inside(bar_x, bar_y, bar_x + bar_w, bar_y + bar_h)) {
+                is_dragging = true
+                bar_w = bar_width
+                bar_h = 100
+                bar_x = mouse_x - (bar_w / 2)
+                bar_y = mouse_y - (bar_h / 2)
+            }
+        }
+    }
+    if (!is_dragging) {
+        call graphics::fill_rect(screen, bar_x, bar_y, bar_w, bar_h, graphics::COLOR_1)
+        call graphics::fill_rect(screen, line_x, line_y, line_w, line_h, graphics::COLOR_8)
+
+        if (mouse_inside(ic1_x, ic1_y, ic1_x + 14, ic1_y + 14)) {
+            call draw_icons(1, 2, ic1_x, ic1_y, 2)
+        } else {
+            call draw_icons(1, 1, ic1_x, ic1_y, 2)
+        }
+        if (mouse_inside(ic2_x, ic2_y, ic2_x + 14, ic2_y + 14)) {
+            call draw_icons(2, 2, ic2_x, ic2_y, 2)
+        } else {
+            call draw_icons(2, 1, ic2_x, ic2_y, 2)
+        }
+        if (mouse_inside(ic3_x, ic3_y, ic3_x + 14, ic3_y + 14)) {
+            call draw_icons(3, 2, ic3_x, ic3_y, 2)
+        } else {
+            call draw_icons(3, 1, ic3_x, ic3_y, 2)
+        }
+        
+        var idx: int
+	    idx = 0
+	    var box_size: int
+        box_size = 22
+
+        while (idx < open_apps_count) {
+            var app_ic_x: int
+            var app_ic_y: int
+            var current_app: int
+            current_app = open_apps[idx]
+            
+            if (current_side == 0 || current_side == 1) {
+                app_ic_x = bar_x + (bar_width / 2) - (box_size / 2)
+                app_ic_y = bar_y + 60 + (idx * 26)
+            } else {
+                app_ic_x = bar_x + 60 + (idx * 26)
+                app_ic_y = bar_y + (bar_width / 2) - (box_size / 2)
+            }
+
+            call graphics::fill_rect(screen, app_ic_x, app_ic_y, box_size, box_size, graphics::BLACK)
+
+            var icon_id: int
+            icon_id = get_app_icon_id(current_app)
+
+            var app_scale: int
+            app_scale = 2
+            if (icon_id == 6) {
+                app_scale = 1
+            }
+
+            var icon_w: int
+            var icon_h: int
+            icon_w = get_icon_width(icon_id) * app_scale
+            icon_h = get_icon_height(icon_id) * app_scale
+
+            var offset_x: int
+            var offset_y: int
+            offset_x = (box_size - icon_w) / 2
+            offset_y = (box_size - icon_h) / 2
+
+            call draw_icons(icon_id, 1, app_ic_x + offset_x, app_ic_y + offset_y, app_scale)
+
+            idx = idx + 1
+    		}
+    }
+}
+
+fn get_app_base_angle(app_index: int) float {
+    if (app_index < 2) { return 180.0 * app_index }
+	return 360.0 / 7.0 * (app_index - 2) + 22.5
+}
+
+fn get_app_radius(app_index: int) float {
+	if (app_index < 2) { return 60.0 }
+	return 110.0
+}
+
+fn get_app_z_3d(app_index: int) float {
+    var base_angle: float
+    base_angle = get_app_base_angle(app_index) + rot_y
+    var r: float
+    r = get_app_radius(app_index)
+    var z: float
+    z = r * math::sin(base_angle) * math::cos(rot_x)
+    return z
+}
+
+fn get_app_x_3d(app_index: int) int {
+    var base_angle: float
+    base_angle = get_app_base_angle(app_index) + rot_y
+    var r: float
+    r = get_app_radius(app_index)
+    var x_3d: float
+    x_3d = r * math::cos(base_angle)
+    return CENTER_X + (int) x_3d
+}
+
+fn get_app_y_3d(app_index: int) int {
+    var base_angle: float
+    base_angle = get_app_base_angle(app_index) + rot_y
+    var r: float
+    r = get_app_radius(app_index)
+    var y_3d: float
+    y_3d = r * math::sin(base_angle) * math::sin(rot_x)
+    return CENTER_Y + (int) y_3d
+}
+
+fn get_app_scale(app_index: int, z: float) int {
+    var r: float
+    r = get_app_radius(app_index)
+    var scale: int
+    scale = (int) ((2.0 + (z / r) * 4.0))
+    if (scale < 1) {
+        scale = 1
+    }
+    return scale
+}
+
+proc update_hover() {
+    hovered_app_index = -1
+
+    if (!is_atom_active) {
+        return
+    }
+
+    var mouse_x: int
+    mouse_x = graphics::mouse_x()
+    var mouse_y: int
+    mouse_y = graphics::mouse_y()
+
+    var i: int
+    var z: float
+    var x: int
+    var y: int
+    var scale: int
+    var icon_id: int
+    var w: int
+    var h: int
+
+    i = 0
+    while (i < NUM_APPS) {
+        z = get_app_z_3d(i)
+        x = get_app_x_3d(i)
+        y = get_app_y_3d(i)
+        scale = get_app_scale(i, z)
+
+        icon_id = get_app_icon_id(i)
+        w = get_icon_width(icon_id) * scale
+        h = get_icon_height(icon_id) * scale
+
+        var x_min: int
+        x_min = x - (w / 2)
+        var y_min: int
+        y_min = y - (h / 2)
+
+        if (mouse_x >= x_min && mouse_x <= x_min + w && mouse_y >= y_min && mouse_y <= y_min + h) {
+            hovered_app_index = i
+        }
+        i = i + 1
+    }
+
+    if (hovered_app_index != -1) {
+        var just_clicked: bool
+        just_clicked = graphics::mouse_pressed()
+        
+        if (hovered_app_index == 0) {
+            call graphics::draw_text_scaled(screen, 30, 320, "Calculator", graphics::COLOR_ICON_A, 2)
+        } elseif (hovered_app_index == 1) {
+            call graphics::draw_text_scaled(screen, 30, 320, "File Explorer", graphics::COLOR_ICON_6, 2)
+        } elseif (hovered_app_index == 2) {
+            call graphics::draw_text_scaled(screen, 30, 320, "Minesweeper", graphics::COLOR_ICON_4, 2)
+        } elseif (hovered_app_index == 3) {
+            call graphics::draw_text_scaled(screen, 30, 320, "Settings", graphics::COLOR_ICON_D, 2)
+        } elseif (hovered_app_index == 4) {
+            call graphics::draw_text_scaled(screen, 30, 320, "Terminal", graphics::COLOR_ICON_F, 2)
+        } elseif (hovered_app_index == 5) {
+            call graphics::draw_text_scaled(screen, 30, 320, "Text Editor", graphics::COLOR_ICON_B, 2)
+        } elseif (hovered_app_index == 6) {
+            call graphics::draw_text_scaled(screen, 30, 320, "DAW", graphics::COLOR_ICON_F, 2)
+        } elseif (hovered_app_index == 7) {
+            call graphics::draw_text_scaled(screen, 30, 320, "IDE", graphics::COLOR_ICON_1, 2)
+        } elseif (hovered_app_index == 8) {
+            call graphics::draw_text_scaled(screen, 30, 320, "Music", graphics::COLOR_ICON_E, 2)
+        }
+        if (just_clicked) { call open_app(hovered_app_index) }
+    }
+}
+
+proc draw_apps_behind() {
+    if (!is_atom_active) {
+        return
+    }
+    var i: int
+    var z: float
+    var x: int
+    var y: int
+    var scale: int
+    var final_scale: int
+    var icon_id: int
+    var w: int
+    var h: int
+
+    i = 0
+    while (i < NUM_APPS) {
+        z = get_app_z_3d(i)
+        if (z < 0.0) {
+            x = get_app_x_3d(i)
+            y = get_app_y_3d(i)
+            scale = get_app_scale(i, z)
+            final_scale = scale
+            if (i == hovered_app_index) {
+                final_scale = scale + 2
+            }
+
+            icon_id = get_app_icon_id(i)
+            w = get_icon_width(icon_id) * final_scale
+            h = get_icon_height(icon_id) * final_scale
+
+            x = x - (w / 2)
+            y = y - (h / 2)
+            call draw_icons(icon_id, 1, x, y, final_scale)
+        }
+        i = i + 1
+    }
+}
+
+proc draw_apps_front() {
+    if (!is_atom_active) {
+        return
+    }
+    var i: int
+    var z: float
+    var x: int
+    var y: int
+    var scale: int
+    var final_scale: int
+    var icon_id: int
+    var w: int
+    var h: int
+
+    i = 0
+    while (i < NUM_APPS) {
+        z = get_app_z_3d(i)
+        if (z >= 0.0) {
+            x = get_app_x_3d(i)
+            y = get_app_y_3d(i)
+            scale = get_app_scale(i, z)
+            final_scale = scale
+            if (i == hovered_app_index) {
+                final_scale = scale + 2
+            }
+
+            icon_id = get_app_icon_id(i)
+            w = get_icon_width(icon_id) * final_scale
+            h = get_icon_height(icon_id) * final_scale
+
+            x = x - (w / 2)
+            y = y - (h / 2)
+            call draw_icons(icon_id, 1, x, y, final_scale)
+        }
+        i = i + 1
+    }
+}
+
+proc update_orbit() {
+    var mouse_x: int
+    mouse_x = graphics::mouse_x()
+    var mouse_y: int
+    mouse_y = graphics::mouse_y()
+    var is_down: bool
+    is_down = graphics::mouse_down()
+
+    if (is_down && !is_dragging) {
+        if (is_orbit_dragging) {
+            var dx: int
+            dx = mouse_x - prev_mouse_x
+            var dy: int
+            dy = mouse_y - prev_mouse_y
+
+            vel_y = (float) (-dx * 0.5)
+            vel_x = (float) (dy * 0.5)
+        } else {
+            is_orbit_dragging = true
+            vel_x = 0.0
+            vel_y = 0.0
+        }
+        prev_mouse_x = mouse_x
+        prev_mouse_y = mouse_y
+    } else {
+        is_orbit_dragging = false
+        vel_x = vel_x * 0.92
+        vel_y = vel_y * 0.92
+    }
+    rot_y = rot_y + vel_y
+    rot_x = rot_x + vel_x
+
+    if (rot_x > 25.0) {
+        rot_x = 25.0
+        vel_x = 0.0
+    }
+    if (rot_x < -25.0) {
+        rot_x = -25.0
+        vel_x = 0.0
+    }
+}
+
+proc draw_taskatom(size: int) {
+    var x: int
+    x = 240
+    var y: int
+    y = 180
+
+    var s: int
+    s = (size / 2) * 2
+    var r2: int
+    r2 = (s * 92) / 100
+    r2 = (r2 / 2) * 2
+    var r3: int
+    r3 = (s * 59) / 100
+    r3 = (r3 / 2) * 2
+
+    var offset_x: int
+    var offset_y: int
+    offset_x = (s * 15) / 100
+    offset_y = (s * 25) / 100
+    offset_x = (offset_x / 2) * 2
+    offset_y = (offset_y / 2) * 2
+    call fill_circle(x, y, s, graphics::COLOR_2)
+    call fill_circle(x, y, r2, graphics::COLOR_3)
+    call fill_circle(x - offset_x, y - offset_y, r3, graphics::COLOR_11)
+}
+
+proc update_taskatom() {
+    if (!is_atom_active && current_size <= 0.0) {
+        return
+    }
+
+    if (target_size == 0.0) {
+        pause_timer = 0
+    }
+
+    if (pause_timer > 0) {
+        pause_timer = pause_timer - 1
+        return
+    }
+
+    var diff: float
+    diff = target_size - current_size
+    var speed: float
+
+    if (target_size == 0.0) {
+        speed = 4.0
+    } else {
+        if (current_size < 40.0 && target_size == 50.0) {
+            speed = 4.0
+        } else {
+            speed = 0.4
+        }
+    }
+
+    if (diff > -speed && diff < speed) {
+        current_size = target_size
+
+        if (target_size == 0.0) {
+            is_atom_active = false
+            return
+        }
+
+        if (is_atom_active) {
+            pause_timer = 30
+            if (target_size == 50.0) {
+                target_size = 40.0
+            } else {
+                target_size = 50.0
+            }
+        }
+        return
+    }
+
+    if (diff > 0.0) {
+        current_size = current_size + speed
+    } else {
+        current_size = current_size - speed
+    }
+}
+
+proc render_taskatom() {
+    var int_size: int
+    int_size = (int) current_size
+    if (int_size > 0) {
+        call draw_taskatom(int_size)
+    }
+}
+
+while (running) {
+    call graphics::clear(screen, graphics::COLOR_7)
+    call update_orbit()
+    call update_taskatom()
+    call update_hover()
+    call handle_sidebar()
+    call draw_apps_behind()
+    call render_taskatom()
+    call draw_apps_front()
+    
+    call graphics::update(screen)
+    call os::sleep(16)
+}
+
+call graphics::clear(screen, graphics::BLACK)
+call graphics::update(screen)
