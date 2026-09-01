@@ -24,6 +24,14 @@ from .graphics import GraphicsDevice
 BACKGROUND_COLORS = BACKGROUND_COLOR_INDICES
 SETTINGS_SCHEMA_VERSION = 1
 CLIPBOARD_TEXT_LIMIT = 32_768
+ANTI_ALIASING_OFF = 0
+ANTI_ALIASING_FAST = 1
+ANTI_ALIASING_QUALITY = 2
+ANTI_ALIASING_MODES = (
+	ANTI_ALIASING_OFF,
+	ANTI_ALIASING_FAST,
+	ANTI_ALIASING_QUALITY,
+)
 
 
 def default_settings_path() -> Path:
@@ -46,6 +54,8 @@ class OSSettings:
 	icon_size: int = 1
 	clock_format: int = 1
 	settings_enabled: bool = True
+	motion_blur_enabled: bool = True
+	anti_aliasing_mode: int = ANTI_ALIASING_QUALITY
 
 
 @dataclass(frozen=True)
@@ -113,6 +123,12 @@ class OSDevice:
 	def _normalize_settings(settings: OSSettings) -> OSSettings:
 		palette_id = normalize_theme_palette(settings.palette_id, settings.theme_mode)
 		corner_style = normalize_window_corner_style(settings.window_corner_style)
+		motion_blur = settings.motion_blur_enabled
+		if not isinstance(motion_blur, bool):
+			motion_blur = OSSettings().motion_blur_enabled
+		anti_aliasing = settings.anti_aliasing_mode
+		if type(anti_aliasing) is not int or anti_aliasing not in ANTI_ALIASING_MODES:
+			anti_aliasing = OSSettings().anti_aliasing_mode
 		return replace(
 			settings,
 			palette_id=settings.palette_id if palette_id is None else palette_id,
@@ -120,6 +136,8 @@ class OSDevice:
 			window_corner_style=(
 				OSSettings().window_corner_style if corner_style is None else corner_style
 			),
+			motion_blur_enabled=motion_blur,
+			anti_aliasing_mode=anti_aliasing,
 		)
 
 	@classmethod
@@ -139,6 +157,12 @@ class OSDevice:
 		enabled = payload.get("settings_enabled", defaults.settings_enabled)
 		if not isinstance(enabled, bool):
 			enabled = defaults.settings_enabled
+		motion_blur = payload.get("motion_blur_enabled", defaults.motion_blur_enabled)
+		if not isinstance(motion_blur, bool):
+			motion_blur = defaults.motion_blur_enabled
+		anti_aliasing = payload.get("anti_aliasing_mode", defaults.anti_aliasing_mode)
+		if type(anti_aliasing) is not int or anti_aliasing not in ANTI_ALIASING_MODES:
+			anti_aliasing = defaults.anti_aliasing_mode
 		return OSSettings(
 			cls._bounded(payload.get("volume"), defaults.volume, 0, 100),
 			background_id,
@@ -151,6 +175,8 @@ class OSDevice:
 			cls._bounded(payload.get("icon_size"), defaults.icon_size, 0, 2),
 			cls._bounded(payload.get("clock_format"), defaults.clock_format, 0, 1),
 			enabled,
+			motion_blur,
+			anti_aliasing,
 		)
 
 	def _load_settings(self) -> OSSettings | None:
@@ -179,6 +205,8 @@ class OSDevice:
 			"icon_size": settings.icon_size,
 			"clock_format": settings.clock_format,
 			"settings_enabled": settings.settings_enabled,
+			"motion_blur_enabled": settings.motion_blur_enabled,
+			"anti_aliasing_mode": settings.anti_aliasing_mode,
 		}
 		temporary: Path | None = None
 		fd: int | None = None
@@ -296,6 +324,14 @@ class OSDevice:
 		return self.settings.settings_enabled
 
 	@property
+	def motion_blur_enabled(self) -> bool:
+		return self.settings.motion_blur_enabled
+
+	@property
+	def anti_aliasing_mode(self) -> int:
+		return self.settings.anti_aliasing_mode
+
+	@property
 	def background_count(self) -> int:
 		return len(BACKGROUND_NAMES)
 
@@ -403,6 +439,17 @@ class OSDevice:
 		with self._lock:
 			return self._store_locked(replace(self._settings, settings_enabled=bool(value)))
 
+	def set_motion_blur_enabled(self, value: bool | int) -> bool:
+		with self._lock:
+			return self._store_locked(replace(self._settings, motion_blur_enabled=bool(value)))
+
+	def set_anti_aliasing_mode(self, value: int) -> bool:
+		value = int(value)
+		if value not in ANTI_ALIASING_MODES:
+			return False
+		with self._lock:
+			return self._store_locked(replace(self._settings, anti_aliasing_mode=value))
+
 	def apply(self, volume: int, background_id: int, palette_id: int) -> bool:
 		background_id = int(background_id)
 		palette_id = int(palette_id)
@@ -434,12 +481,46 @@ class OSDevice:
 		clock_format: int,
 		settings_enabled: bool | int,
 	) -> bool:
+		with self._lock:
+			return self.apply_preferences_v2(
+				volume,
+				music_volume,
+				sound_effect_volume,
+				background_id,
+				palette_id,
+				theme_mode,
+				window_transparency,
+				window_corner_style,
+				icon_size,
+				clock_format,
+				settings_enabled,
+				self._settings.motion_blur_enabled,
+				self._settings.anti_aliasing_mode,
+			)
+
+	def apply_preferences_v2(
+		self,
+		volume: int,
+		music_volume: int,
+		sound_effect_volume: int,
+		background_id: int,
+		palette_id: int,
+		theme_mode: int,
+		window_transparency: int,
+		window_corner_style: int,
+		icon_size: int,
+		clock_format: int,
+		settings_enabled: bool | int,
+		motion_blur_enabled: bool | int,
+		anti_aliasing_mode: int,
+	) -> bool:
 		background_id = int(background_id)
 		palette_id = int(palette_id)
 		theme_mode = int(theme_mode)
 		window_corner_style = normalize_window_corner_style(window_corner_style)
 		icon_size = int(icon_size)
 		clock_format = int(clock_format)
+		anti_aliasing_mode = int(anti_aliasing_mode)
 		palette_id = normalize_theme_palette(palette_id, theme_mode)
 		if (
 			not 0 <= background_id < self.background_count
@@ -447,6 +528,7 @@ class OSDevice:
 			or window_corner_style is None
 			or icon_size not in (0, 1, 2)
 			or clock_format not in (0, 1)
+			or anti_aliasing_mode not in ANTI_ALIASING_MODES
 		):
 			self.clear_preview()
 			return False
@@ -463,6 +545,8 @@ class OSDevice:
 				icon_size,
 				clock_format,
 				bool(settings_enabled),
+				bool(motion_blur_enabled),
+				anti_aliasing_mode,
 			))
 
 	def draw_background(self, graphics: GraphicsDevice) -> None:

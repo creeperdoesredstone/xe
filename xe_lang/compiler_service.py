@@ -26,7 +26,16 @@ from xe_lang.nodes import (
 from xe_lang.optimizer import Optimizer
 from xe_lang.parser import parse
 from xe_lang.semantic import SemanticAnalyzer
-from xe_lang.syscall_abi import APP_GRAPHICS_DRAW_TEXT_SCALED, SyscallID
+from xe_lang.syscall_abi import (
+	APP_GRAPHICS_DRAW_TEXT_SCALED,
+	APP_GRAPHICS_FILL_CIRCLE,
+	APP_OS_APPLY_PREFERENCES_V2,
+	APP_OS_GET_ANTI_ALIASING,
+	APP_OS_GET_MOTION_BLUR,
+	APP_OS_SET_ANTI_ALIASING,
+	APP_OS_SET_MOTION_BLUR,
+	SyscallID,
+)
 
 
 HEAP_START = 0x2000
@@ -228,6 +237,8 @@ def capability_for_syscall(syscall: int) -> str:
 		return "core.graphics"
 	if 60 <= syscall <= 64:
 		return "core.input"
+	if syscall == 70:
+		return "core.string"
 	if syscall == 80:
 		return "core.request"
 	if (
@@ -235,10 +246,17 @@ def capability_for_syscall(syscall: int) -> str:
 		or 142 <= syscall <= 146
 		or syscall in {208, 209, 246, 247, 248, 249, 253, 254}
 		or 270 <= syscall <= 276
+		or syscall == APP_GRAPHICS_FILL_CIRCLE
 		or syscall == APP_GRAPHICS_DRAW_TEXT_SCALED
 	):
 		return "app.graphics"
-	if 130 <= syscall <= 141 or 180 <= syscall <= 196 or 250 <= syscall <= 252 or 292 <= syscall <= 295:
+	if (
+		130 <= syscall <= 141
+		or 180 <= syscall <= 196
+		or 250 <= syscall <= 252
+		or 292 <= syscall <= 295
+		or 302 <= syscall <= 306
+	):
 		return "app.os"
 	if 150 <= syscall <= 152:
 		return "app.window"
@@ -398,8 +416,17 @@ def compile_workspace(
 
 
 def syscall_name(value: int) -> str:
-	if value == APP_GRAPHICS_DRAW_TEXT_SCALED:
-		return "APP_GRAPHICS_DRAW_TEXT_SCALED"
+	extension_names = {
+		APP_GRAPHICS_FILL_CIRCLE: "APP_GRAPHICS_FILL_CIRCLE",
+		APP_GRAPHICS_DRAW_TEXT_SCALED: "APP_GRAPHICS_DRAW_TEXT_SCALED",
+		APP_OS_GET_MOTION_BLUR: "APP_OS_GET_MOTION_BLUR",
+		APP_OS_SET_MOTION_BLUR: "APP_OS_SET_MOTION_BLUR",
+		APP_OS_GET_ANTI_ALIASING: "APP_OS_GET_ANTI_ALIASING",
+		APP_OS_SET_ANTI_ALIASING: "APP_OS_SET_ANTI_ALIASING",
+		APP_OS_APPLY_PREFERENCES_V2: "APP_OS_APPLY_PREFERENCES_V2",
+	}
+	if value in extension_names:
+		return extension_names[value]
 	try:
 		return SyscallID(value).name
 	except ValueError:

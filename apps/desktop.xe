@@ -1,848 +1,663 @@
-# XenonOS desktop
-var screen: graphics::Screen
+# XenonOS unified desktop shell.
+
+# App metadata and stage geometry.
+const APP_TITLE = "XenonOS Desktop"
+const APP_DEFAULT_WIDTH = 480
+const APP_DEFAULT_HEIGHT = 360
+# A Screen owns the stage directly; `.title = APP_TITLE`,
+# `.width = APP_DEFAULT_WIDTH`, and `.height = APP_DEFAULT_HEIGHT` are
+# Window-only assignments and intentionally do not apply to this shell.
+const MILLISECONDS_PER_SECOND = 1000
+const MAX_FRAME_DELTA_MS = 100
+const SCRATCH_BASELINE_HZ = 30
+
+# Fixed Round 1 taskbar geometry.
+const TASKBAR_WIDTH = 32
+const TASKBAR_X = 448
+const TASKBAR_EDGE_WIDTH = 2
+const TASKBAR_STARTUP_MS = 1000
+const SYSTEM_BUTTON_SIZE = 14
+const POWER_BUTTON_Y = 6
+const TASKATOM_BUTTON_Y = 28
+const QUICK_SETTINGS_BUTTON_Y = 334
+
+# TaskAtom motion and interaction.
+const TASKATOM_APP_COUNT = 3
+const TASKATOM_CENTER_X = 240
+const TASKATOM_CENTER_Y = 180
+const TASKATOM_ORBIT_RADIUS = 120
+const TASKATOM_NUCLEUS_RADIUS = 60
+const TASKATOM_INTERACTION_DELAY_MS = 650
+const TASKATOM_MOVE_CANCEL_PIXELS = 16
+const TASKATOM_OPEN_HIT_PADDING = 28
+const TASKATOM_OPEN_RATE = 0.9
+const TASKATOM_ORBIT_FRICTION = 0.95
+const TASKATOM_INITIAL_ORBIT_VELOCITY = 18.0
+const TASKATOM_INITIAL_TILT_SPEED = 0.8
+
+# Quick Settings flash and layout.
+const QUICK_SETTINGS_FLASH_MS = 1000
+const QUICK_SETTINGS_ANCHOR_X = 448
+const QUICK_SETTINGS_ANCHOR_Y = 328
+const QUICK_SETTINGS_VOLUME = 0
+const QUICK_SETTINGS_WALLPAPER = 1
+const QUICK_SETTINGS_PALETTE = 2
+
+enum class DesktopMode {
+	MAIN,
+	TASKATOM,
+	QUICK_SETTINGS
+}
+
+# Model and state.
+var desktop_screen: graphics::Screen
 var running: bool
-running = true
+var desktop_mode: int
+var previous_ticks: int
+var frame_delta_ms: int
+var frame_delta_30hz: float
+var startup_elapsed_ms: int
+var taskbar_x: int
 
-var SCREEN_W: int
-var SCREEN_H: int
-SCREEN_W = 480
-SCREEN_H = 360
+var taskatom_progress: float
+var taskatom_elapsed_ms: int
+var orbit_rotation: float
+var orbit_tilt: float
+var orbit_velocity: float
+var tilt_velocity: float
+var orbit_dragging: bool
+var orbit_drag_x: int
+var orbit_drag_y: int
+var hovered_app: int
+var pressed_app: int
+var pressed_app_x: int
+var pressed_app_y: int
+var pressed_app_moved: bool
+var launch_request: int
 
-var bar_width: int
-bar_width = 34
-var current_side: int
-current_side = 0
-var is_dragging: bool
-is_dragging = false
+array app_x: int[3]
+array app_y: int[3]
+array app_depth: int[3]
+array app_scale: int[3]
 
-var was_mouse_pressed: bool
-was_mouse_pressed = false
+var quick_settings_elapsed_ms: int
+var quick_settings_progress: float
+var quick_settings_option: int
+var volume_dragging: bool
 
-var is_atom_active: bool
-is_atom_active = false
-var current_size: float
-current_size = 0
-var target_size: float
-target_size = 0
-var pause_timer: int
-pause_timer = 0
+# Layout helpers.
+fn clamp_int(value: int, minimum: int, maximum: int) int {
+	if (value < minimum) { return minimum }
+	if (value > maximum) { return maximum }
+	return value
+}
 
-var rot_x: float
-rot_x = 0.0
-var rot_y: float
-rot_y = 0.0
+fn clamp_float(value: float, minimum: float, maximum: float) float {
+	if (value < minimum) { return minimum }
+	if (value > maximum) { return maximum }
+	return value
+}
 
-var vel_x: float
-vel_x = 0.0
-var vel_y: float
-vel_y = 0.0
+fn point_inside(x: int, y: int, width: int, height: int) bool {
+	var pointer_x: int
+	var pointer_y: int
+	pointer_x = graphics::mouse_x()
+	pointer_y = graphics::mouse_y()
+	return pointer_x >= x && pointer_x < x + width && pointer_y >= y && pointer_y < y + height
+}
 
-var SPHERE_RADIUS: float
-SPHERE_RADIUS = 50.0
+fn app_title(index: int) string {
+	if (index == 0) { return "File Explorer" }
+	if (index == 1) { return "Settings" }
+	if (index == 2) { return "Calculator" }
+	return ""
+}
 
-var NUM_APPS: int
-NUM_APPS = 9
-var CENTER_X: int
-CENTER_X = 240
-var CENTER_Y: int
-CENTER_Y = 180
+fn app_color(index: int) int {
+	if (index == 0) { return graphics::COLOR_ICON_6 }
+	if (index == 1) { return graphics::COLOR_ICON_A }
+	return graphics::COLOR_ICON_F
+}
 
-var prev_mouse_x: int
-prev_mouse_x = 0
-var prev_mouse_y: int
-prev_mouse_y = 0
-var is_orbit_dragging: bool
-is_orbit_dragging = false
+fn app_icon_width(index: int) int {
+	return 7
+}
 
-var hovered_app_index: int
-hovered_app_index = -1
+fn app_icon_height(index: int) int {
+	if (index == 0) { return 6 }
+	return 7
+}
 
-array open_apps: int[9]
-var open_apps_count: int
-open_apps_count = 0
+proc update_frame_delta() {
+	var current_ticks: int
+	current_ticks = os::ticks()
+	frame_delta_ms = current_ticks - previous_ticks
+	previous_ticks = current_ticks
+	if (frame_delta_ms < 0) { frame_delta_ms = 0 }
+	if (frame_delta_ms > MAX_FRAME_DELTA_MS) { frame_delta_ms = MAX_FRAME_DELTA_MS }
+	frame_delta_30hz = (float)frame_delta_ms * (float)SCRATCH_BASELINE_HZ / (float)MILLISECONDS_PER_SECOND
+}
+
+proc update_taskbar_startup() {
+	startup_elapsed_ms += frame_delta_ms
+	if (startup_elapsed_ms > TASKBAR_STARTUP_MS) { startup_elapsed_ms = TASKBAR_STARTUP_MS }
+	taskbar_x = TASKBAR_X + (TASKBAR_WIDTH * 2 * (TASKBAR_STARTUP_MS - startup_elapsed_ms) / TASKBAR_STARTUP_MS)
+}
+
+proc update_app_positions() {
+	var index: int
+	var angle: float
+	var local_x: float
+	var local_z: float
+	var depth: float
+	var depth_ratio: float
+	var projected_scale: float
+	var opening_scale: float
+	var icon_scale: int
+
+	index = 0
+	while (index < TASKATOM_APP_COUNT) {
+		angle = orbit_rotation + (float)(index * 120)
+		local_x = math::cos(angle) * (float)TASKATOM_ORBIT_RADIUS
+		local_z = math::sin(angle) * (float)TASKATOM_ORBIT_RADIUS
+		depth = local_z * math::cos(orbit_tilt)
+		app_x[index] = TASKATOM_CENTER_X + (int)local_x
+		app_y[index] = TASKATOM_CENTER_Y + (int)(local_z * math::sin(orbit_tilt))
+		app_depth[index] = (int)depth
+		depth_ratio = (depth + (float)TASKATOM_ORBIT_RADIUS) / (float)(TASKATOM_ORBIT_RADIUS * 2)
+		projected_scale = 0.5 + 2.5 * depth_ratio
+		opening_scale = projected_scale * taskatom_progress * 2.0
+		icon_scale = (int)(opening_scale + 0.5)
+		app_scale[index] = clamp_int(icon_scale, 0, 6)
+		index += 1
+	}
+}
+
+fn hovered_taskatom_app(padding: int) int {
+	var index: int
+	var width: int
+	var height: int
+	var left: int
+	var top: int
+	var pointer_x: int
+	var pointer_y: int
+	var result: int
+	var result_depth: int
+
+	pointer_x = graphics::mouse_x()
+	pointer_y = graphics::mouse_y()
+	result = -1
+	result_depth = -2147483647
+	index = 0
+	while (index < TASKATOM_APP_COUNT) {
+		if (app_depth[index] >= 0) {
+			width = app_icon_width(index) * app_scale[index]
+			height = app_icon_height(index) * app_scale[index]
+			left = app_x[index] - (width / 2) - padding
+			top = app_y[index] - (height / 2) - padding
+			if (pointer_x >= left && pointer_x < left + width + padding * 2 && pointer_y >= top && pointer_y < top + height + padding * 2) {
+				if (app_depth[index] >= result_depth) {
+					result = index
+					result_depth = app_depth[index]
+				}
+			}
+		}
+		index += 1
+	}
+	return result
+}
+
+# Input and interaction.
+proc open_taskatom() {
+	desktop_mode = DesktopMode.TASKATOM
+	taskatom_progress = 0.0
+	taskatom_elapsed_ms = 0
+	orbit_velocity = TASKATOM_INITIAL_ORBIT_VELOCITY
+	tilt_velocity = 0.0 - TASKATOM_INITIAL_TILT_SPEED
+	orbit_dragging = false
+	hovered_app = -1
+	pressed_app = -1
+	pressed_app_moved = false
+}
+
+proc close_overlay() {
+	desktop_mode = DesktopMode.MAIN
+	orbit_dragging = false
+	pressed_app = -1
+	pressed_app_moved = false
+	volume_dragging = false
+}
 
 proc toggle_taskatom() {
-    if (!is_atom_active) {
-        is_atom_active = true
-        target_size = 50.0
-        pause_timer = 0
-    } else {
-        target_size = 0.0
-    }
+	if (desktop_mode == DesktopMode.MAIN) { call open_taskatom() }
+	else { call close_overlay() }
 }
 
-proc open_app(app_index: int) {
-	var already_open: bool
-    already_open = false
-    var i: int
-    i = 0
-
-    while (i < open_apps_count) {
-        if (open_apps[i] == app_index) {
-            already_open = true
-        }
-        i = i + 1
-    }
-
-    if (!already_open) {
-        open_apps[open_apps_count] = app_index
-        open_apps_count = open_apps_count + 1
-    }
-    
-    if (app_index == 0) {
-    }
-    if (app_index == 1) {
-    }
-    if (app_index == 2) {
-    }
-    if (app_index == 3) {
-    }
-    if (app_index == 4) {
-    }
-    if (app_index == 5) {
-    }
-    if (app_index == 6) {
-    }
-    if (app_index == 7) {
-    }
-    if (app_index == 8) {
-    }
-    if (app_index == 9) {
-    }
-    call toggle_taskatom()
+proc open_quick_settings() {
+	desktop_mode = DesktopMode.QUICK_SETTINGS
+	quick_settings_elapsed_ms = 0
+	quick_settings_progress = 0.0
+	quick_settings_option = QUICK_SETTINGS_VOLUME
+	volume_dragging = false
 }
 
-fn get_app_icon_id(app_index: int) int {
-    return app_index + 4
+proc request_app_launch(index: int) {
+	# Screen programs have no child-process or Window registry ABI. The unified
+	# Scratch host consumes this request; standalone Xe closes the overlay without
+	# inventing window state that it cannot own.
+	launch_request = index + 1
+	call close_overlay()
 }
 
-fn get_icon_width(icon_id: int) int {
-    if (icon_id == 6) { return 8 }
-    if (icon_id == 8) { return 7 }
-    return 7
+proc handle_taskbar_input() {
+	var button_x: int
+	button_x = taskbar_x + 10
+	if (taskbar_x >= APP_DEFAULT_WIDTH) { return }
+	if (!graphics::mouse_pressed()) { return }
+	if (point_inside(button_x, POWER_BUTTON_Y, SYSTEM_BUTTON_SIZE, SYSTEM_BUTTON_SIZE)) {
+		running = false
+		return
+	}
+	if (point_inside(button_x, TASKATOM_BUTTON_Y, SYSTEM_BUTTON_SIZE, SYSTEM_BUTTON_SIZE)) {
+		call toggle_taskatom()
+		return
+	}
+	if (point_inside(button_x, QUICK_SETTINGS_BUTTON_Y, SYSTEM_BUTTON_SIZE, SYSTEM_BUTTON_SIZE)) {
+		if (desktop_mode == DesktopMode.QUICK_SETTINGS) { call close_overlay() }
+		else { call open_quick_settings() }
+	}
 }
 
-fn get_icon_height(icon_id: int) int {
-    if (icon_id == 5) { return 6 }
-    if (icon_id == 6) { return 10 }
-    if (icon_id == 8) { return 5 }
-    if (icon_id == 9 || icon_id == 12) { return 9 }
-    return 7
+proc update_orbit_motion() {
+	var pointer_x: int
+	var pointer_y: int
+	var difference_x: int
+	var difference_y: int
+	var orbit_decay: float
+
+	orbit_velocity = clamp_float(orbit_velocity, -30.0, 30.0)
+	tilt_velocity = clamp_float(tilt_velocity, -30.0, 30.0)
+	orbit_rotation -= orbit_velocity * frame_delta_30hz
+	orbit_tilt += tilt_velocity * frame_delta_30hz
+	orbit_tilt = clamp_float(orbit_tilt, -45.0, 45.0)
+	orbit_decay = math::pow(TASKATOM_ORBIT_FRICTION, frame_delta_30hz)
+	orbit_velocity *= orbit_decay
+	tilt_velocity *= orbit_decay
+	if (orbit_velocity > -0.05 && orbit_velocity < 0.05) { orbit_velocity = 0.0 }
+	if (tilt_velocity > -0.05 && tilt_velocity < 0.05) { tilt_velocity = 0.0 }
+
+	if (taskatom_elapsed_ms < TASKATOM_INTERACTION_DELAY_MS || pressed_app >= 0) {
+		orbit_dragging = false
+		return
+	}
+	pointer_x = graphics::mouse_x()
+	pointer_y = graphics::mouse_y()
+	if (graphics::mouse_down() && pointer_x < TASKBAR_X) {
+		if (!orbit_dragging) {
+			orbit_dragging = true
+			orbit_drag_x = pointer_x
+			orbit_drag_y = pointer_y
+		} else {
+			difference_x = pointer_x - orbit_drag_x
+			difference_y = pointer_y - orbit_drag_y
+			orbit_rotation -= (float)difference_x
+			orbit_tilt += (float)difference_y
+			orbit_tilt = clamp_float(orbit_tilt, -45.0, 45.0)
+			orbit_velocity = (float)difference_x * 0.5
+			tilt_velocity = (float)difference_y * 0.5
+			orbit_drag_x = pointer_x
+			orbit_drag_y = pointer_y
+		}
+	} else {
+		orbit_dragging = false
+	}
 }
 
-fn mouse_inside(x: int, y: int, x2: int, y2: int) bool {
-    var mouse_x: int
-    var mouse_y: int
-    mouse_x = graphics::mouse_x()
-    mouse_y = graphics::mouse_y()
-    if (mouse_x >= x && mouse_x <= x2 && mouse_y >= y && mouse_y <= y2) {
-        return true
-    }
-    return false
+proc handle_taskatom_input() {
+	var pointer_x: int
+	var pointer_y: int
+	var difference_x: int
+	var difference_y: int
+	var hit_padding: int
+
+	taskatom_elapsed_ms += frame_delta_ms
+	taskatom_progress += (1.0 - taskatom_progress) * (1.0 - math::pow(TASKATOM_OPEN_RATE, frame_delta_30hz))
+	if (taskatom_progress > 0.995) { taskatom_progress = 1.0 }
+	call update_orbit_motion()
+	call update_app_positions()
+
+	hit_padding = 0
+	if (taskatom_elapsed_ms >= TASKATOM_INTERACTION_DELAY_MS && taskatom_progress < 1.0) { hit_padding = TASKATOM_OPEN_HIT_PADDING }
+	hovered_app = -1
+	if (taskatom_elapsed_ms >= TASKATOM_INTERACTION_DELAY_MS) { hovered_app = hovered_taskatom_app(hit_padding) }
+
+	pointer_x = graphics::mouse_x()
+	pointer_y = graphics::mouse_y()
+	if (graphics::mouse_pressed() && hovered_app >= 0) {
+		pressed_app = hovered_app
+		pressed_app_x = pointer_x
+		pressed_app_y = pointer_y
+		pressed_app_moved = false
+		orbit_dragging = false
+	}
+	if (pressed_app >= 0 && graphics::mouse_down()) {
+		difference_x = pointer_x - pressed_app_x
+		difference_y = pointer_y - pressed_app_y
+		if (difference_x > TASKATOM_MOVE_CANCEL_PIXELS || difference_x < -TASKATOM_MOVE_CANCEL_PIXELS || difference_y > TASKATOM_MOVE_CANCEL_PIXELS || difference_y < -TASKATOM_MOVE_CANCEL_PIXELS) {
+			pressed_app_moved = true
+		}
+	}
+	if (pressed_app >= 0 && graphics::mouse_released()) {
+		if (!pressed_app_moved) { call request_app_launch(pressed_app) }
+		pressed_app = -1
+		pressed_app_moved = false
+	}
 }
 
-proc draw_icons(icon: int, modifier: int, x: int, y: int, scale: int) {
-    if (modifier == 1) {
-        if (icon == 1) {
-            call graphics::draw_icon_scaled(screen, x, y, 7, 7, "...F....F.F.F..F.F.F..F...F...FFF..", scale)
-        }
-        if (icon == 2) {
-            call graphics::draw_icon_scaled(screen, x, y, 7, 7, ".B.B.B.........B.B.B.........B.B.B.", scale)
-        }
-        if (icon == 3) {
-            call graphics::draw_icon_scaled(screen, x, y, 7, 7, ".BBBBB.........BBBBB.........BBBBB.", scale)
-        }
-        # Calculator App
-        if (icon == 4) {
-            call graphics::draw_icon_scaled(screen, x, y, 7, 7, "....000.0000A000AAA000AA0A0.00A0A0..0A0A0..00000.", scale)
-        }
-        # File explorer App
-        if (icon == 5) {
-            call graphics::draw_icon_scaled(screen, x, y, 7, 6, "00000..06660000666660066666006666600000000", scale)
-        }
-        # Minesweeper App
-        if (icon == 6) {
-            call graphics::draw_icon_scaled(screen, x, y, 8, 10, "...000...00040..004440..044440..004440...00040.....000......00.....0000...000000", scale)
-        }
-        # Settings App
-        if (icon == 7) {
-            call graphics::draw_icon_scaled(screen, x, y, 7, 7, "00000000D0D0D000DDD000DD0DD000DDD000D0D0D00000000", scale)
-        }
-        # Terminal App
-        if (icon == 8) {
-            call graphics::draw_icon_scaled(screen, x, y, 7, 5, "000....0F0000000F0FF00F00000000....", scale)
-        }
-        # Text Editor App
-        if (icon == 9) {
-            call graphics::draw_icon_scaled(screen, x, y, 7, 9, "000000.0BBBB000B00BB00B000B00B0.0B00B0.0B00B000B00BBBBB00000000", scale)
-        }
-        # DAW App
-        if (icon == 10) {
-            call graphics::draw_icon_scaled(screen, x, y, 7, 7, "00000000F0F0F00F0F0F00F0F0F00FFFFF00FFFFF00000000", scale)
-        }
-        # IDE App
-        if (icon == 11) {
-            call graphics::draw_icon_scaled(screen, x, y, 7, 7, ".00000.00101000111110001010001111100010100.00000.", scale)
-        }
-        # Music App
-        if (icon == 12) {
-            call graphics::draw_icon_scaled(screen, x, y, 7, 9, "..000....0E00...0EE00..0EEE0..0E000000E0..0EEE0..0EEE0..00000..", scale)
-        }
-    }
-    if (modifier == 2) {
-        if (icon == 1) {
-            call graphics::draw_icon_scaled(screen, x, y, 7, 7, "...D....D.D.D..D.D.D..D...D...DDD..", scale)
-        }
-        if (icon == 2) {
-            call graphics::draw_icon_scaled(screen, x, y, 7, 7, ".A.A.A.........A.A.A.........A.A.A.", scale)
-        }
-        if (icon == 3) {
-            call graphics::draw_icon_scaled(screen, x, y, 7, 7, ".AAAAA.........AAAAA.........AAAAA.", scale)
-        }
-    }
+proc cycle_background(direction: int) {
+	var count: int
+	var value: int
+	count = os::background_count()
+	if (count <= 0) { return }
+	value = os::background_id + direction
+	if (value < 0) { value = count - 1 }
+	if (value >= count) { value = 0 }
+	os::background_id = value
 }
 
-proc draw_drop_zones() {
-    var zone_width: int
-    zone_width = 30
-    var zone_lenght: int
-    zone_lenght = 300
-    call graphics::draw_rect(screen, SCREEN_W - zone_width, (SCREEN_H - zone_lenght) / 2, zone_width, zone_lenght, graphics::WHITE)
-    call graphics::draw_rect(screen, 0, (SCREEN_H - zone_lenght) / 2, zone_width, zone_lenght, graphics::WHITE)
-    call graphics::draw_rect(screen, (SCREEN_W - zone_lenght) / 2, 0, zone_lenght, zone_width, graphics::WHITE)
-    call graphics::draw_rect(screen, (SCREEN_W - zone_lenght) / 2, SCREEN_H - zone_width, zone_lenght, zone_width, graphics::WHITE)
+proc cycle_palette(direction: int) {
+	var count: int
+	var value: int
+	count = os::palette_count()
+	if (count <= 0) { return }
+	value = os::palette + direction
+	if (value < 0) { value = count - 1 }
+	if (value >= count) { value = 0 }
+	os::palette = value
 }
 
-proc fill_circle(x: int, y: int, radius: int, color: int) {
-    var cx: int
-    var cy: int
-    var r: int
-    cx = (x / 2) * 2
-    cy = (y / 2) * 2
-    r = (radius / 2) * 2
+proc handle_quick_settings_input() {
+	var pointer_x: int
+	quick_settings_elapsed_ms += frame_delta_ms
+	quick_settings_progress = clamp_float((float)quick_settings_elapsed_ms / (float)QUICK_SETTINGS_FLASH_MS, 0.0, 1.0)
+	if (quick_settings_elapsed_ms < QUICK_SETTINGS_FLASH_MS) { return }
 
-    var px: int
-    px = 0
-    var py: int
-    py = r
-    var d: int
-    d = 3 - (2 * r)
-
-    while (py >= px) {
-        call graphics::draw_line(screen, cx - px, cy + py, cx + px, cy + py, color)
-        call graphics::draw_line(screen, cx - px, cy + py + 1, cx + px, cy + py + 1, color)
-
-        call graphics::draw_line(screen, cx - px, cy - py, cx + px, cy - py, color)
-        call graphics::draw_line(screen, cx - px, cy - py + 1, cx + px, cy - py + 1, color)
-
-        call graphics::draw_line(screen, cx - py, cy + px, cx + py, cy + px, color)
-        call graphics::draw_line(screen, cx - py, cy + px + 1, cx + py, cy + px + 1, color)
-
-        call graphics::draw_line(screen, cx - py, cy - px, cx + py, cy - px, color)
-        call graphics::draw_line(screen, cx - py, cy - px + 1, cx + py, cy - px + 1, color)
-
-        if (d < 0) {
-            d = d + (4 * px) + 6
-        } else {
-            d = d + (4 * (px - py)) + 10
-            py = py - 2
-        }
-        px = px + 2
-    }
+	if (graphics::mouse_pressed()) {
+		if (point_inside(294, 206, 30, 30)) { quick_settings_option = QUICK_SETTINGS_VOLUME; return }
+		if (point_inside(354, 154, 30, 30)) { quick_settings_option = QUICK_SETTINGS_WALLPAPER; return }
+		if (point_inside(422, 140, 26, 30)) { quick_settings_option = QUICK_SETTINGS_PALETTE; return }
+		if (quick_settings_option == QUICK_SETTINGS_VOLUME && point_inside(32, 50, 208, 24)) { volume_dragging = true }
+		if (quick_settings_option == QUICK_SETTINGS_WALLPAPER) {
+			if (point_inside(18, 128, 18, 18)) { call cycle_background(-1); return }
+			if (point_inside(182, 128, 18, 18)) { call cycle_background(1); return }
+		}
+		if (quick_settings_option == QUICK_SETTINGS_PALETTE) {
+			if (point_inside(18, 128, 18, 18)) { call cycle_palette(-1); return }
+			if (point_inside(182, 128, 18, 18)) { call cycle_palette(1); return }
+		}
+	}
+	if (volume_dragging && graphics::mouse_down()) {
+		pointer_x = clamp_int(graphics::mouse_x(), 34, 234)
+		os::volume = (pointer_x - 34) / 2
+	}
+	if (graphics::mouse_released()) { volume_dragging = false }
 }
 
-proc handle_sidebar() {
-    if (is_dragging) {
-        call draw_drop_zones()
-    }
-    var mouse_x: int
-    mouse_x = graphics::mouse_x()
-    var mouse_y: int
-    mouse_y = graphics::mouse_y()
-    var is_mouse_down: bool
-    is_mouse_down = graphics::mouse_down()
-    var just_clicked: bool
-    just_clicked = graphics::mouse_pressed()
-    var bar_x: int
-    var bar_y: int
-    var bar_w: int
-    var bar_h: int
-    var line_x: int
-    line_x = 0
-    var line_y: int
-    line_y = 0
-    var line_w: int
-    line_w = 0
-    var line_h: int
-    line_h = 0
-
-    var ic1_x: int
-    ic1_x = -100
-    var ic1_y: int
-    ic1_y = -100
-    var ic2_x: int
-    ic2_x = -100
-    var ic2_y: int
-    ic2_y = -100
-    var ic3_x: int
-    ic3_x = -100
-    var ic3_y: int
-    ic3_y = -100
-
-    var center_x: int
-    var center_y: int
-
-    if (is_dragging) {
-        if (!is_mouse_down) {
-            is_dragging = false
-
-            var zone_width: int
-            zone_width = 30
-            var zone_lenght: int
-            zone_lenght = 300
-            var margin_x: int
-            margin_x = (SCREEN_W - zone_lenght) / 2
-            var margin_y: int
-            margin_y = (SCREEN_H - zone_lenght) / 2
-
-            if (mouse_x >= SCREEN_W - zone_width && mouse_y >= margin_y && mouse_y <= margin_y + zone_lenght) {
-                current_side = 0
-            } elseif (mouse_x <= zone_width && mouse_y >= margin_y && mouse_y <= margin_y + zone_lenght) {
-                current_side = 1
-            } elseif (mouse_y <= zone_width && mouse_x >= margin_x && mouse_x <= margin_x + zone_lenght) {
-                current_side = 2
-            } elseif (mouse_y >= SCREEN_H - zone_width && mouse_x >= margin_x && mouse_x <= margin_x + zone_lenght) {
-                current_side = 3
-            }
-        }
-    }
-
-    if (is_dragging) {
-        call fill_circle(mouse_x, mouse_y, 15, graphics::COLOR_1)
-        call fill_circle(mouse_x, mouse_y, 12, graphics::COLOR_8)
-        call fill_circle(mouse_x - 2, mouse_y - 2, 7, graphics::COLOR_WHITE)
-    } else {
-        if (current_side == 0) {
-            bar_x = SCREEN_W - bar_width
-            bar_y = 0
-            bar_w = bar_width
-            bar_h = SCREEN_H
-            line_x = bar_x
-            line_y = 0
-            line_w = 2
-            line_h = SCREEN_H
-        } elseif (current_side == 1) {
-            bar_x = 0
-            bar_y = 0
-            bar_w = bar_width
-            bar_h = SCREEN_H
-            line_x = bar_width - 2
-            line_y = 0
-            line_w = 2
-            line_h = SCREEN_H
-        } elseif (current_side == 2) {
-            bar_x = 0
-            bar_y = 0
-            bar_w = SCREEN_W
-            bar_h = bar_width
-            line_x = 0
-            line_y = bar_width - 2
-            line_w = SCREEN_W
-            line_h = 2
-        } elseif (current_side == 3) {
-            bar_x = 0
-            bar_y = SCREEN_H - bar_width
-            bar_w = SCREEN_W
-            bar_h = bar_width
-            line_x = 0
-            line_y = bar_y
-            line_w = SCREEN_W
-            line_h = 2
-        }
-
-        if (current_side == 0 || current_side == 1) {
-            if (current_side == 0) {
-                center_x = bar_x + (bar_width / 2) - 6
-            } else {
-                center_x = bar_x + (bar_width / 2) - 8
-            }
-            ic1_x = center_x
-            ic2_x = center_x
-            ic3_x = center_x
-            ic1_y = bar_y + 9
-            ic2_y = bar_y + 32
-            ic3_y = bar_y + bar_h - 23
-        } elseif (current_side == 2 || current_side == 3) {
-            if (current_side == 2) {
-                center_y = bar_y + (bar_width / 2) - 6
-            } else {
-                center_y = bar_y + (bar_width / 2) - 4
-            }
-            ic1_y = center_y
-            ic2_y = center_y
-            ic3_y = center_y
-            ic1_x = bar_x + 9
-            ic2_x = bar_x + 32
-            ic3_x = bar_x + bar_w - 23
-        }
-
-        var clicked_icon: bool
-        clicked_icon = false
-
-        if (mouse_inside(ic1_x, ic1_y, ic1_x + 14, ic1_y + 14)) {
-            clicked_icon = true
-            if (just_clicked) {
-                running = false
-            }
-        } elseif (mouse_inside(ic2_x, ic2_y, ic2_x + 14, ic2_y + 14)) {
-            clicked_icon = true
-            if (just_clicked) {
-                call toggle_taskatom()
-            }
-        } elseif (mouse_inside(ic3_x, ic3_y, ic3_x + 14, ic3_y + 14)) {
-            clicked_icon = true
-        }
-		
-		var check_idx: int
-        check_idx = 0
-        var check_box: int
-        check_box = 22
-
-        while (check_idx < open_apps_count) {
-            var chk_x: int
-            var chk_y: int
-
-            if (current_side == 0 || current_side == 1) {
-                chk_x = bar_x + (bar_width / 2) - (check_box / 2)
-                chk_y = bar_y + 60 + (check_idx * 26)
-            } else {
-                chk_x = bar_x + 60 + (check_idx * 26)
-                chk_y = bar_y + (bar_width / 2) - (check_box / 2)
-            }
-
-            if (mouse_inside(chk_x, chk_y, chk_x + check_box, chk_y + check_box)) {
-                clicked_icon = true
-            }
-            check_idx = check_idx + 1
-        }
-        
-        if (just_clicked && !clicked_icon) {
-            if (mouse_inside(bar_x, bar_y, bar_x + bar_w, bar_y + bar_h)) {
-                is_dragging = true
-                bar_w = bar_width
-                bar_h = 100
-                bar_x = mouse_x - (bar_w / 2)
-                bar_y = mouse_y - (bar_h / 2)
-            }
-        }
-    }
-    if (!is_dragging) {
-        call graphics::fill_rect(screen, bar_x, bar_y, bar_w, bar_h, graphics::COLOR_1)
-        call graphics::fill_rect(screen, line_x, line_y, line_w, line_h, graphics::COLOR_8)
-
-        if (mouse_inside(ic1_x, ic1_y, ic1_x + 14, ic1_y + 14)) {
-            call draw_icons(1, 2, ic1_x, ic1_y, 2)
-        } else {
-            call draw_icons(1, 1, ic1_x, ic1_y, 2)
-        }
-        if (mouse_inside(ic2_x, ic2_y, ic2_x + 14, ic2_y + 14)) {
-            call draw_icons(2, 2, ic2_x, ic2_y, 2)
-        } else {
-            call draw_icons(2, 1, ic2_x, ic2_y, 2)
-        }
-        if (mouse_inside(ic3_x, ic3_y, ic3_x + 14, ic3_y + 14)) {
-            call draw_icons(3, 2, ic3_x, ic3_y, 2)
-        } else {
-            call draw_icons(3, 1, ic3_x, ic3_y, 2)
-        }
-        
-        var idx: int
-	    idx = 0
-	    var box_size: int
-        box_size = 22
-
-        while (idx < open_apps_count) {
-            var app_ic_x: int
-            var app_ic_y: int
-            var current_app: int
-            current_app = open_apps[idx]
-            
-            if (current_side == 0 || current_side == 1) {
-                app_ic_x = bar_x + (bar_width / 2) - (box_size / 2)
-                app_ic_y = bar_y + 60 + (idx * 26)
-            } else {
-                app_ic_x = bar_x + 60 + (idx * 26)
-                app_ic_y = bar_y + (bar_width / 2) - (box_size / 2)
-            }
-
-            call graphics::fill_rect(screen, app_ic_x, app_ic_y, box_size, box_size, graphics::BLACK)
-
-            var icon_id: int
-            icon_id = get_app_icon_id(current_app)
-
-            var app_scale: int
-            app_scale = 2
-            if (icon_id == 6) {
-                app_scale = 1
-            }
-
-            var icon_w: int
-            var icon_h: int
-            icon_w = get_icon_width(icon_id) * app_scale
-            icon_h = get_icon_height(icon_id) * app_scale
-
-            var offset_x: int
-            var offset_y: int
-            offset_x = (box_size - icon_w) / 2
-            offset_y = (box_size - icon_h) / 2
-
-            call draw_icons(icon_id, 1, app_ic_x + offset_x, app_ic_y + offset_y, app_scale)
-
-            idx = idx + 1
-    		}
-    }
+proc handle_input() {
+	call handle_taskbar_input()
+	if (desktop_mode == DesktopMode.TASKATOM) { call handle_taskatom_input() }
+	elseif (desktop_mode == DesktopMode.QUICK_SETTINGS) { call handle_quick_settings_input() }
 }
 
-fn get_app_base_angle(app_index: int) float {
-    if (app_index < 2) { return 180.0 * app_index }
-	return 360.0 / 7.0 * (app_index - 2) + 22.5
+# Paint and replaceable asset hooks.
+proc draw_app_icon(index: int, x: int, y: int, scale: int) {
+	if (index == 0) {
+		call graphics::draw_icon_scaled(desktop_screen, x, y, 7, 6, "00000..06660000666660066666006666600000000", scale)
+	} elseif (index == 1) {
+		call graphics::draw_icon_scaled(desktop_screen, x, y, 7, 7, "00000000A0A0A000AAA000AA0AA000AAA000A0A0A00000000", scale)
+	} else {
+		call graphics::draw_icon_scaled(desktop_screen, x, y, 7, 7, "....000.0000F000FFF000FF0F0.00F0F0..0F0F0..00000.", scale)
+	}
 }
 
-fn get_app_radius(app_index: int) float {
-	if (app_index < 2) { return 60.0 }
-	return 110.0
+proc draw_power_icon(x: int, y: int, color: int) {
+	call graphics::draw_line(desktop_screen, x + 6, y, x + 6, y + 6, color)
+	call graphics::draw_line(desktop_screen, x + 4, y + 3, x + 2, y + 5, color)
+	call graphics::draw_line(desktop_screen, x + 2, y + 5, x + 2, y + 9, color)
+	call graphics::draw_line(desktop_screen, x + 2, y + 9, x + 5, y + 12, color)
+	call graphics::draw_line(desktop_screen, x + 5, y + 12, x + 9, y + 12, color)
+	call graphics::draw_line(desktop_screen, x + 9, y + 12, x + 12, y + 9, color)
+	call graphics::draw_line(desktop_screen, x + 12, y + 9, x + 12, y + 5, color)
+	call graphics::draw_line(desktop_screen, x + 12, y + 5, x + 10, y + 3, color)
 }
 
-fn get_app_z_3d(app_index: int) float {
-    var base_angle: float
-    base_angle = get_app_base_angle(app_index) + rot_y
-    var r: float
-    r = get_app_radius(app_index)
-    var z: float
-    z = r * math::sin(base_angle) * math::cos(rot_x)
-    return z
+proc draw_taskatom_button_icon(x: int, y: int, color: int) {
+	var row: int
+	var column: int
+	row = 0
+	while (row < 3) {
+		column = 0
+		while (column < 3) {
+			call graphics::fill_rect(desktop_screen, x + column * 5, y + row * 5, 3, 3, color)
+			column += 1
+		}
+		row += 1
+	}
 }
 
-fn get_app_x_3d(app_index: int) int {
-    var base_angle: float
-    base_angle = get_app_base_angle(app_index) + rot_y
-    var r: float
-    r = get_app_radius(app_index)
-    var x_3d: float
-    x_3d = r * math::cos(base_angle)
-    return CENTER_X + (int) x_3d
+proc draw_quick_settings_button_icon(x: int, y: int, color: int) {
+	call graphics::fill_rect(desktop_screen, x, y, 14, 2, color)
+	call graphics::fill_rect(desktop_screen, x, y + 5, 14, 2, color)
+	call graphics::fill_rect(desktop_screen, x, y + 10, 14, 2, color)
 }
 
-fn get_app_y_3d(app_index: int) int {
-    var base_angle: float
-    base_angle = get_app_base_angle(app_index) + rot_y
-    var r: float
-    r = get_app_radius(app_index)
-    var y_3d: float
-    y_3d = r * math::sin(base_angle) * math::sin(rot_x)
-    return CENTER_Y + (int) y_3d
+proc draw_close_icon(x: int, y: int, color: int) {
+	call graphics::draw_line(desktop_screen, x, y, x + 11, y + 11, color)
+	call graphics::draw_line(desktop_screen, x + 11, y, x, y + 11, color)
 }
 
-fn get_app_scale(app_index: int, z: float) int {
-    var r: float
-    r = get_app_radius(app_index)
-    var scale: int
-    scale = (int) ((2.0 + (z / r) * 4.0))
-    if (scale < 1) {
-        scale = 1
-    }
-    return scale
+proc draw_taskbar() {
+	var power_color: int
+	var taskatom_color: int
+	var quick_color: int
+	var visible_width: int
+	if (taskbar_x >= APP_DEFAULT_WIDTH) { return }
+	visible_width = APP_DEFAULT_WIDTH - taskbar_x
+	call graphics::fill_rect(desktop_screen, taskbar_x, 0, visible_width, APP_DEFAULT_HEIGHT, graphics::COLOR_2)
+	if (visible_width > TASKBAR_EDGE_WIDTH) {
+		call graphics::fill_rect(desktop_screen, taskbar_x + TASKBAR_EDGE_WIDTH, 0, visible_width - TASKBAR_EDGE_WIDTH, APP_DEFAULT_HEIGHT, graphics::COLOR_1)
+	}
+
+	power_color = graphics::COLOR_11
+	taskatom_color = graphics::COLOR_8
+	quick_color = graphics::COLOR_7
+	if (point_inside(taskbar_x + 10, POWER_BUTTON_Y, SYSTEM_BUTTON_SIZE, SYSTEM_BUTTON_SIZE)) { power_color = graphics::COLOR_9 }
+	if (point_inside(taskbar_x + 10, TASKATOM_BUTTON_Y, SYSTEM_BUTTON_SIZE, SYSTEM_BUTTON_SIZE)) { taskatom_color = graphics::COLOR_7 }
+	if (point_inside(taskbar_x + 10, QUICK_SETTINGS_BUTTON_Y, SYSTEM_BUTTON_SIZE, SYSTEM_BUTTON_SIZE)) { quick_color = graphics::COLOR_6 }
+
+	call draw_power_icon(taskbar_x + 10, POWER_BUTTON_Y, power_color)
+	call draw_taskatom_button_icon(taskbar_x + 9, TASKATOM_BUTTON_Y, taskatom_color)
+	if (desktop_mode == DesktopMode.QUICK_SETTINGS) { call draw_close_icon(taskbar_x + 10, QUICK_SETTINGS_BUTTON_Y + 1, quick_color) }
+	else { call draw_quick_settings_button_icon(taskbar_x + 9, QUICK_SETTINGS_BUTTON_Y + 1, quick_color) }
 }
 
-proc update_hover() {
-    hovered_app_index = -1
-
-    if (!is_atom_active) {
-        return
-    }
-
-    var mouse_x: int
-    mouse_x = graphics::mouse_x()
-    var mouse_y: int
-    mouse_y = graphics::mouse_y()
-
-    var i: int
-    var z: float
-    var x: int
-    var y: int
-    var scale: int
-    var icon_id: int
-    var w: int
-    var h: int
-
-    i = 0
-    while (i < NUM_APPS) {
-        z = get_app_z_3d(i)
-        x = get_app_x_3d(i)
-        y = get_app_y_3d(i)
-        scale = get_app_scale(i, z)
-
-        icon_id = get_app_icon_id(i)
-        w = get_icon_width(icon_id) * scale
-        h = get_icon_height(icon_id) * scale
-
-        var x_min: int
-        x_min = x - (w / 2)
-        var y_min: int
-        y_min = y - (h / 2)
-
-        if (mouse_x >= x_min && mouse_x <= x_min + w && mouse_y >= y_min && mouse_y <= y_min + h) {
-            hovered_app_index = i
-        }
-        i = i + 1
-    }
-
-    if (hovered_app_index != -1) {
-        var just_clicked: bool
-        just_clicked = graphics::mouse_pressed()
-        
-        if (hovered_app_index == 0) {
-            call graphics::draw_text_scaled(screen, 30, 320, "Calculator", graphics::COLOR_ICON_A, 2)
-        } elseif (hovered_app_index == 1) {
-            call graphics::draw_text_scaled(screen, 30, 320, "File Explorer", graphics::COLOR_ICON_6, 2)
-        } elseif (hovered_app_index == 2) {
-            call graphics::draw_text_scaled(screen, 30, 320, "Minesweeper", graphics::COLOR_ICON_4, 2)
-        } elseif (hovered_app_index == 3) {
-            call graphics::draw_text_scaled(screen, 30, 320, "Settings", graphics::COLOR_ICON_D, 2)
-        } elseif (hovered_app_index == 4) {
-            call graphics::draw_text_scaled(screen, 30, 320, "Terminal", graphics::COLOR_ICON_F, 2)
-        } elseif (hovered_app_index == 5) {
-            call graphics::draw_text_scaled(screen, 30, 320, "Text Editor", graphics::COLOR_ICON_B, 2)
-        } elseif (hovered_app_index == 6) {
-            call graphics::draw_text_scaled(screen, 30, 320, "DAW", graphics::COLOR_ICON_F, 2)
-        } elseif (hovered_app_index == 7) {
-            call graphics::draw_text_scaled(screen, 30, 320, "IDE", graphics::COLOR_ICON_1, 2)
-        } elseif (hovered_app_index == 8) {
-            call graphics::draw_text_scaled(screen, 30, 320, "Music", graphics::COLOR_ICON_E, 2)
-        }
-        if (just_clicked) { call open_app(hovered_app_index) }
-    }
+proc draw_modal_veil() {
+	# The Screen ABI has no retained child surfaces to blend. COLOR_1 is the
+	# palette-backed near-black veil and keeps text pixels untouched by AA.
+	call graphics::fill_rect(desktop_screen, 0, 0, TASKBAR_X, APP_DEFAULT_HEIGHT, graphics::COLOR_1)
 }
 
-proc draw_apps_behind() {
-    if (!is_atom_active) {
-        return
-    }
-    var i: int
-    var z: float
-    var x: int
-    var y: int
-    var scale: int
-    var final_scale: int
-    var icon_id: int
-    var w: int
-    var h: int
-
-    i = 0
-    while (i < NUM_APPS) {
-        z = get_app_z_3d(i)
-        if (z < 0.0) {
-            x = get_app_x_3d(i)
-            y = get_app_y_3d(i)
-            scale = get_app_scale(i, z)
-            final_scale = scale
-            if (i == hovered_app_index) {
-                final_scale = scale + 2
-            }
-
-            icon_id = get_app_icon_id(i)
-            w = get_icon_width(icon_id) * final_scale
-            h = get_icon_height(icon_id) * final_scale
-
-            x = x - (w / 2)
-            y = y - (h / 2)
-            call draw_icons(icon_id, 1, x, y, final_scale)
-        }
-        i = i + 1
-    }
+proc draw_taskatom_nucleus() {
+	var radius: int
+	var pulse: int
+	radius = (int)((float)TASKATOM_NUCLEUS_RADIUS * taskatom_progress)
+	if (radius < 1) { return }
+	pulse = (int)(math::sin((float)os::ticks() * 0.03) * 3.0)
+	call graphics::fill_circle(desktop_screen, TASKATOM_CENTER_X, TASKATOM_CENTER_Y, radius + pulse, graphics::COLOR_2)
+	call graphics::fill_circle(desktop_screen, TASKATOM_CENTER_X, TASKATOM_CENTER_Y, radius - 4 + pulse, graphics::COLOR_3)
+	call graphics::fill_circle(desktop_screen, TASKATOM_CENTER_X - 9, TASKATOM_CENTER_Y - 15, (radius * 59) / 100, graphics::COLOR_11)
 }
 
-proc draw_apps_front() {
-    if (!is_atom_active) {
-        return
-    }
-    var i: int
-    var z: float
-    var x: int
-    var y: int
-    var scale: int
-    var final_scale: int
-    var icon_id: int
-    var w: int
-    var h: int
-
-    i = 0
-    while (i < NUM_APPS) {
-        z = get_app_z_3d(i)
-        if (z >= 0.0) {
-            x = get_app_x_3d(i)
-            y = get_app_y_3d(i)
-            scale = get_app_scale(i, z)
-            final_scale = scale
-            if (i == hovered_app_index) {
-                final_scale = scale + 2
-            }
-
-            icon_id = get_app_icon_id(i)
-            w = get_icon_width(icon_id) * final_scale
-            h = get_icon_height(icon_id) * final_scale
-
-            x = x - (w / 2)
-            y = y - (h / 2)
-            call draw_icons(icon_id, 1, x, y, final_scale)
-        }
-        i = i + 1
-    }
+proc draw_taskatom_app(index: int) {
+	var scale: int
+	var width: int
+	var height: int
+	var radius: int
+	var left: int
+	var top: int
+	scale = app_scale[index]
+	if (scale <= 0) { return }
+	if (index == hovered_app) { scale += 1 }
+	width = app_icon_width(index) * scale
+	height = app_icon_height(index) * scale
+	radius = clamp_int(scale * 9, 5, 54)
+	call graphics::fill_circle(desktop_screen, app_x[index], app_y[index], radius, app_color(index))
+	left = app_x[index] - width / 2
+	top = app_y[index] - height / 2
+	call draw_app_icon(index, left, top, scale)
 }
 
-proc update_orbit() {
-    var mouse_x: int
-    mouse_x = graphics::mouse_x()
-    var mouse_y: int
-    mouse_y = graphics::mouse_y()
-    var is_down: bool
-    is_down = graphics::mouse_down()
-
-    if (is_down && !is_dragging) {
-        if (is_orbit_dragging) {
-            var dx: int
-            dx = mouse_x - prev_mouse_x
-            var dy: int
-            dy = mouse_y - prev_mouse_y
-
-            vel_y = (float) (-dx * 0.5)
-            vel_x = (float) (dy * 0.5)
-        } else {
-            is_orbit_dragging = true
-            vel_x = 0.0
-            vel_y = 0.0
-        }
-        prev_mouse_x = mouse_x
-        prev_mouse_y = mouse_y
-    } else {
-        is_orbit_dragging = false
-        vel_x = vel_x * 0.92
-        vel_y = vel_y * 0.92
-    }
-    rot_y = rot_y + vel_y
-    rot_x = rot_x + vel_x
-
-    if (rot_x > 25.0) {
-        rot_x = 25.0
-        vel_x = 0.0
-    }
-    if (rot_x < -25.0) {
-        rot_x = -25.0
-        vel_x = 0.0
-    }
+proc draw_taskatom() {
+	var index: int
+	call draw_modal_veil()
+	index = 0
+	while (index < TASKATOM_APP_COUNT) {
+		if (app_depth[index] < 0) { call draw_taskatom_app(index) }
+		index += 1
+	}
+	call draw_taskatom_nucleus()
+	index = 0
+	while (index < TASKATOM_APP_COUNT) {
+		if (app_depth[index] >= 0) { call draw_taskatom_app(index) }
+		index += 1
+	}
+	if (hovered_app >= 0) { call graphics::draw_text_scaled(desktop_screen, 20, 330, app_title(hovered_app), graphics::WHITE, 2) }
 }
 
-proc draw_taskatom(size: int) {
-    var x: int
-    x = 240
-    var y: int
-    y = 180
-
-    var s: int
-    s = (size / 2) * 2
-    var r2: int
-    r2 = (s * 92) / 100
-    r2 = (r2 / 2) * 2
-    var r3: int
-    r3 = (s * 59) / 100
-    r3 = (r3 / 2) * 2
-
-    var offset_x: int
-    var offset_y: int
-    offset_x = (s * 15) / 100
-    offset_y = (s * 25) / 100
-    offset_x = (offset_x / 2) * 2
-    offset_y = (offset_y / 2) * 2
-    call fill_circle(x, y, s, graphics::COLOR_2)
-    call fill_circle(x, y, r2, graphics::COLOR_3)
-    call fill_circle(x - offset_x, y - offset_y, r3, graphics::COLOR_11)
+proc draw_two_digit(value: int, x: int, y: int, color: int) {
+	if (value < 10) {
+		call graphics::draw_char(desktop_screen, x, y, '0', color)
+		call graphics::draw_int(desktop_screen, x + 6, y, value, color)
+	} else { call graphics::draw_int(desktop_screen, x, y, value, color) }
 }
 
-proc update_taskatom() {
-    if (!is_atom_active && current_size <= 0.0) {
-        return
-    }
-
-    if (target_size == 0.0) {
-        pause_timer = 0
-    }
-
-    if (pause_timer > 0) {
-        pause_timer = pause_timer - 1
-        return
-    }
-
-    var diff: float
-    diff = target_size - current_size
-    var speed: float
-
-    if (target_size == 0.0) {
-        speed = 4.0
-    } else {
-        if (current_size < 40.0 && target_size == 50.0) {
-            speed = 4.0
-        } else {
-            speed = 0.4
-        }
-    }
-
-    if (diff > -speed && diff < speed) {
-        current_size = target_size
-
-        if (target_size == 0.0) {
-            is_atom_active = false
-            return
-        }
-
-        if (is_atom_active) {
-            pause_timer = 30
-            if (target_size == 50.0) {
-                target_size = 40.0
-            } else {
-                target_size = 50.0
-            }
-        }
-        return
-    }
-
-    if (diff > 0.0) {
-        current_size = current_size + speed
-    } else {
-        current_size = current_size - speed
-    }
+proc draw_quick_settings_clock() {
+	var hour: int
+	var minute: int
+	var suffix: string
+	hour = os::hour()
+	minute = os::minute()
+	suffix = ""
+	if (os::clock_format == os::CLOCK_12_HOUR) {
+		if (hour >= 12) { suffix = " PM" } else { suffix = " AM" }
+		hour = hour % 12
+		if (hour == 0) { hour = 12 }
+	}
+	call draw_two_digit(hour, 366, 256, graphics::COLOR_5)
+	call graphics::draw_char(desktop_screen, 378, 256, ':', graphics::COLOR_5)
+	call draw_two_digit(minute, 384, 256, graphics::COLOR_5)
+	call graphics::draw_text(desktop_screen, 396, 256, suffix, graphics::COLOR_5)
+	call graphics::draw_int(desktop_screen, 350, 292, os::day(), graphics::COLOR_2)
+	call graphics::draw_char(desktop_screen, 362, 292, '/', graphics::COLOR_2)
+	call graphics::draw_int(desktop_screen, 368, 292, os::month(), graphics::COLOR_2)
+	call graphics::draw_char(desktop_screen, 380, 292, '/', graphics::COLOR_2)
+	call graphics::draw_int(desktop_screen, 386, 292, os::year(), graphics::COLOR_2)
 }
 
-proc render_taskatom() {
-    var int_size: int
-    int_size = (int) current_size
-    if (int_size > 0) {
-        call draw_taskatom(int_size)
-    }
+proc draw_chevron(x: int, y: int, direction: int, color: int) {
+	if (direction < 0) {
+		call graphics::draw_line(desktop_screen, x + 5, y, x, y + 5, color)
+		call graphics::draw_line(desktop_screen, x, y + 5, x + 5, y + 10, color)
+	} else {
+		call graphics::draw_line(desktop_screen, x, y, x + 5, y + 5, color)
+		call graphics::draw_line(desktop_screen, x + 5, y + 5, x, y + 10, color)
+	}
 }
+
+proc draw_quick_settings_panel() {
+	var volume_x: int
+	call graphics::draw_text(desktop_screen, 20, 312, "Quick Settings", graphics::WHITE)
+	call draw_quick_settings_clock()
+	call graphics::fill_circle(desktop_screen, 309, 221, 15, graphics::COLOR_6)
+	call graphics::fill_circle(desktop_screen, 369, 169, 15, graphics::COLOR_7)
+	call graphics::fill_circle(desktop_screen, 437, 155, 13, graphics::COLOR_8)
+	call graphics::draw_text(desktop_screen, 302, 218, "Vol", graphics::WHITE)
+	call graphics::draw_text(desktop_screen, 362, 166, "BG", graphics::WHITE)
+	call graphics::draw_text(desktop_screen, 428, 152, "Pal", graphics::WHITE)
+
+	if (quick_settings_option == QUICK_SETTINGS_VOLUME) {
+		call graphics::draw_text(desktop_screen, 24, 28, "Volume", graphics::WHITE)
+		call graphics::draw_line(desktop_screen, 34, 62, 234, 62, graphics::COLOR_5)
+		volume_x = 34 + os::volume * 2
+		call graphics::fill_circle(desktop_screen, volume_x, 62, 7, graphics::COLOR_8)
+	} elseif (quick_settings_option == QUICK_SETTINGS_WALLPAPER) {
+		call graphics::draw_text(desktop_screen, 24, 28, "Wallpaper", graphics::WHITE)
+		call draw_chevron(20, 132, -1, graphics::WHITE)
+		call draw_chevron(188, 132, 1, graphics::WHITE)
+		call graphics::draw_text(desktop_screen, 88, 132, "Background", graphics::COLOR_5)
+		call graphics::draw_int(desktop_screen, 154, 132, os::background_id, graphics::COLOR_5)
+	} else {
+		call graphics::draw_text(desktop_screen, 24, 28, "Palette", graphics::WHITE)
+		call draw_chevron(20, 132, -1, graphics::WHITE)
+		call draw_chevron(188, 132, 1, graphics::WHITE)
+		call graphics::draw_text(desktop_screen, 96, 132, "Palette", graphics::COLOR_5)
+		call graphics::draw_int(desktop_screen, 145, 132, os::palette, graphics::COLOR_5)
+	}
+}
+
+proc draw_quick_settings() {
+	var outer_radius: int
+	var middle_radius: int
+	var inner_radius: int
+	call draw_modal_veil()
+	outer_radius = (int)(160.0 * quick_settings_progress)
+	middle_radius = (int)(124.0 * quick_settings_progress)
+	inner_radius = (int)(120.0 * quick_settings_progress)
+	if (outer_radius > 0) { call graphics::fill_circle(desktop_screen, QUICK_SETTINGS_ANCHOR_X, QUICK_SETTINGS_ANCHOR_Y, outer_radius, graphics::COLOR_6) }
+	if (middle_radius > 0) { call graphics::fill_circle(desktop_screen, QUICK_SETTINGS_ANCHOR_X, QUICK_SETTINGS_ANCHOR_Y, middle_radius, graphics::COLOR_7) }
+	if (inner_radius > 0) { call graphics::fill_circle(desktop_screen, QUICK_SETTINGS_ANCHOR_X, QUICK_SETTINGS_ANCHOR_Y, inner_radius, graphics::BLACK) }
+	if (quick_settings_elapsed_ms >= QUICK_SETTINGS_FLASH_MS) { call draw_quick_settings_panel() }
+}
+
+proc draw_desktop() {
+	if (desktop_mode == DesktopMode.TASKATOM) { call draw_taskatom() }
+	elseif (desktop_mode == DesktopMode.QUICK_SETTINGS) { call draw_quick_settings() }
+	call draw_taskbar()
+	call graphics::update(desktop_screen)
+}
+
+# Application driver.
+running = true
+desktop_mode = DesktopMode.MAIN
+previous_ticks = os::ticks()
+frame_delta_ms = 0
+frame_delta_30hz = 0.0
+startup_elapsed_ms = 0
+taskbar_x = APP_DEFAULT_WIDTH
+taskatom_progress = 0.0
+taskatom_elapsed_ms = 0
+orbit_rotation = 52.5
+orbit_tilt = 35.0
+orbit_velocity = 0.0
+tilt_velocity = 0.0
+orbit_dragging = false
+hovered_app = -1
+pressed_app = -1
+pressed_app_moved = false
+launch_request = 0
+quick_settings_elapsed_ms = 0
+quick_settings_progress = 0.0
+quick_settings_option = QUICK_SETTINGS_VOLUME
+volume_dragging = false
 
 while (running) {
-    call graphics::clear(screen, graphics::COLOR_7)
-    call update_orbit()
-    call update_taskatom()
-    call update_hover()
-    call handle_sidebar()
-    call draw_apps_behind()
-    call render_taskatom()
-    call draw_apps_front()
-    
-    call graphics::update(screen)
-    call os::sleep(16)
+	call update_frame_delta()
+	call update_taskbar_startup()
+	call graphics::begin_draw(desktop_screen)
+	call handle_input()
+	call draw_desktop()
 }
 
-call graphics::clear(screen, graphics::BLACK)
-call graphics::update(screen)
+call graphics::begin_draw(desktop_screen)
+call graphics::clear(desktop_screen, graphics::BLACK)
+call graphics::update(desktop_screen)

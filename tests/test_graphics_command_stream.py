@@ -204,7 +204,7 @@ def test_negative_tilt_keeps_front_back_depth_and_projection_stable() -> None:
 	assert negative_values == positive_values
 
 
-def test_positive_orbit_sine_is_the_near_half_of_the_camera() -> None:
+def test_positive_orbit_sine_is_near_half_beneath_the_final_nucleus() -> None:
 	context, words = _scene(tilt=70, roll=0, rotation=0)
 	memory = context.vm.data_memory
 	shell_table = STREAM + gc.HEADER_WORDS + gc.ORBIT_WORDS
@@ -221,7 +221,8 @@ def test_positive_orbit_sine_is_the_near_half_of_the_camera() -> None:
 	near_highlight = (memory[OUT_X] - 2, memory[OUT_Y] - 2)
 	assert (near_highlight[0] - 120) ** 2 + (near_highlight[1] - 90) ** 2 < 18 ** 2
 	pixels = _back_pixels(context)
-	assert pixels[near_highlight[1] * context.vm.devices.graphics.width + near_highlight[0]] == 15
+	# The nucleus is the final focal layer, including over near-side entries.
+	assert pixels[near_highlight[1] * context.vm.devices.graphics.width + near_highlight[0]] == 8
 
 
 def test_drag_tilt_sequence_never_reverses_occlusion_and_highlight_is_pixel_fixed() -> None:

@@ -4,14 +4,52 @@
 const APP_TITLE = "Xenon File Explorer"
 const APP_DEFAULT_WIDTH = 300
 const APP_DEFAULT_HEIGHT = 220
+const FIXED_UPDATE_HZ = 60
+const MILLISECONDS_PER_SECOND = 1000
+const MAX_FRAME_DELTA_MS = 100
+const ORIENTATION_UPDATE_MS = 10
 const ATOM_INNER_SHELL_RADIUS = 30
 const ATOM_IDEAL_SHELL_GAP = 22
 const ATOM_MINIMUM_SHELL_GAP = 4
+const DOUBLE_CLICK_WINDOW_MS = 450
+const POINTER_MOVE_THRESHOLD_SQUARED = 9
+const BREADCRUMB_CACHE_LIMIT = 40
+const MAX_FILE_VIEWERS = 3
+const VIEWER_CACHE_ROWS = 64
+const EXPLORER_TOOLBAR_Y = 2
+const EXPLORER_TOOLBAR_HEIGHT = 9
+const EXPLORER_TOOLBAR_SIDE_PADDING = 3
+const EXPLORER_TOOLBAR_GAP = 2
+const EXPLORER_TOOLBAR_CONTROL_WIDTH = 10
+const EXPLORER_TOOLBAR_CONTROL_HEIGHT = 8
+const EXPLORER_TOOLBAR_STATUS_MAX_WIDTH = 96
 
 # Model and state.
 var explorer_window: graphics::Window
+var viewer_window: graphics::Window
+var viewer_window_2: graphics::Window
+var viewer_window_3: graphics::Window
 var current_path: string
+var current_path_is_root: bool
 var status_text: string
+var clipped_text_buffer: string
+var status_visible_text: string
+var status_revision: int
+var status_layout_revision: int
+var status_layout_area_width: int
+var status_layout_visible_chars: int
+var status_layout_text_width: int
+var back_label_width: int
+var path_separator_width: int
+var current_path_revision: int
+var breadcrumb_layout_revision: int
+var breadcrumb_layout_width: int
+var breadcrumb_count: int
+array breadcrumb_label: string[40]
+array breadcrumb_destination: string[40]
+array breadcrumb_segment_width: int[40]
+array breadcrumb_label_width: int[40]
+array breadcrumb_is_parent: int[40]
 var sidebar_open: bool
 var sidebar_progress: int
 var sidebar_width: int
@@ -60,7 +98,7 @@ array deletion_ghost_phase: int[64]
 array deletion_ghost_accumulator: int[64]
 array deletion_ghost_speed: int[64]
 array deletion_ghost_age: int[64]
-array deletion_shell_anchor: int[8]
+array removal_shell_anchor: int[8]
 var cached_entry_count: int
 var cached_revision: int
 var cached_parent_path: string
@@ -75,7 +113,11 @@ var tilt_target: int
 var orientation_difference: int
 var orientation_step: int
 var orientation_ease: int
+var orientation_time_accumulator: int
 var rotating: bool
+var canvas_press_pending: bool
+var canvas_press_x: int
+var canvas_press_y: int
 var last_pointer_x: int
 var last_pointer_y: int
 var hovered_entry: int
@@ -86,6 +128,7 @@ var drag_template: int
 var drag_start_x: int
 var drag_start_y: int
 var drag_moved: bool
+var drag_open_on_release: bool
 var full_hint: int
 var transition_progress: int
 var transition_entry: int
@@ -101,12 +144,14 @@ var shell_capacity: int
 var previous_ticks: int
 var current_ticks: int
 var delta_ms: int
+var fixed_update_accumulator: int
+var frame_steps: int
 var animation_step: int
 var width: int
 var height: int
 var operation_ok: bool
 var last_click_entry: int
-var last_click_ticks: int
+var last_click_age_ms: int
 var context_open: bool
 var context_entry: int
 var context_x: int
@@ -131,15 +176,28 @@ var rename_anchor_x: int
 var rename_anchor_y: int
 var delete_confirm: bool
 var viewer_open: bool
-var viewer_name: string
-var viewer_content: string
-var viewer_scroll: int
-var viewer_layout_width: int
-var viewer_layout_font: int
-var viewer_layout_lines: int
-var viewer_seek_index: int
-var viewer_seek_line: int
+var viewer_close_requested: bool
+var viewer_active_slot: int
+var viewer_current_state: int
+array viewer_is_open: bool[3]
+array viewer_name: string[3]
+array viewer_content: string[3]
+array viewer_scroll: int[3]
+array viewer_layout_width: int[3]
+array viewer_layout_font: int[3]
+array viewer_layout_lines: int[3]
+array viewer_seek_index: int[3]
+array viewer_seek_line: int[3]
+array viewer_row_cache: string[192]
+array viewer_row_cache_lines: int[3]
+array viewer_text_cache_valid: bool[3]
+array viewer_text_cache_fallback: bool[3]
+array viewer_text_cache_building: bool[3]
+array viewer_text_cache_scroll: int[3]
+array viewer_text_cache_maximum_lines: int[3]
 var viewer_file: os::File
+array viewer_width: int[3]
+array viewer_height: int[3]
 var key: int
 var atom_center_x: int
 var atom_center_y: int
@@ -149,7 +207,6 @@ var drop_path_target: string
 var shell_button_hovered: bool
 var zoom_controls_hovered: bool
 var marquee_active: bool
-var marquee_mode: int
 var marquee_start_x: int
 var marquee_start_y: int
 var marquee_current_x: int
@@ -166,6 +223,13 @@ var orbit_speed_difference: int
 var orbit_speed_step: int
 var orbit_ease: int
 var hover_pause_allowed: bool
+var shell_speed_easing_active: bool
+var last_paused_shell: int
+var pause_has_entry: bool
+var last_pause_has_entry: bool
+var last_orbit_speed_setting: int
+var interaction_pauses_orbits: bool
+var last_interaction_pauses_orbits: bool
 var visual_fade: int
 var visual_force_opaque: bool
 var view_roll: int
@@ -177,8 +241,31 @@ var orbit_stream_dirty: bool
 var orbit_stream_words: int
 var orbit_stream_result: int
 var orbit_native_drawn: bool
+var orbit_scene_static_dirty: bool
+var orbit_phase_stream_dirty: bool
 var slot_animation_active: bool
 var shell_layout_animating: bool
+var orbit_all_shells_full: bool
+var projection_cache_tilt: int
+var projection_cache_roll: int
+var projection_cache_rotation: int
+var visual_theme_mode: int
+var next_width: int
+var next_height: int
+var next_sidebar_width: int
+var frame_pointer_x: int
+var frame_pointer_y: int
+var frame_mouse_pressed: bool
+var frame_mouse_down: bool
+var frame_mouse_released: bool
+var frame_right_mouse_pressed: bool
+var atom_center_radius: int
+var toolbar_breadcrumb_x: int
+var toolbar_breadcrumb_width: int
+var toolbar_status_x: int
+var toolbar_status_width: int
+var toolbar_zoom_minus_x: int
+var toolbar_zoom_plus_x: int
 
 # Paint and replaceable asset hooks.
 # Placeholder visual tokens. Future asset work only needs to replace the five
@@ -193,7 +280,6 @@ var projected_x: int
 var projected_y: int
 var projected_depth: int
 var projection_tilt_cos: float
-var projection_tilt_sin: float
 var projection_roll_cos: float
 var projection_roll_sin: float
 var projection_rotation_cos: float
@@ -263,7 +349,6 @@ proc draw_placeholder_circle(x: int, y: int, radius: int, color: int) {
 
 proc prepare_orbit_projection(shell_tilt: int, roll: int, orientation: int) {
 	projection_tilt_cos = math::cos((float)shell_tilt)
-	projection_tilt_sin = math::sin((float)shell_tilt)
 	projection_roll_cos = math::cos((float)roll)
 	projection_roll_sin = math::sin((float)roll)
 	projection_rotation_cos = math::cos((float)orientation)
@@ -299,15 +384,21 @@ proc orbit_project_rotation_offset(radius: int, offset_cosine: float, offset_sin
 }
 
 proc refresh_explorer_style() {
-	visual_surface = graphics::COLOR_8
-	visual_outline = graphics::COLOR_7
-	visual_accent = graphics::COLOR_10
-	visual_shell = graphics::COLOR_8
-	visual_highlight = graphics::WHITE
-	if (os::theme_mode == os::THEME_LIGHT) {
-		visual_surface = graphics::COLOR_1
-		visual_outline = graphics::COLOR_8
-		visual_shell = graphics::COLOR_7
+	var theme_mode: int
+	theme_mode = os::theme_mode
+	if (theme_mode != visual_theme_mode) {
+		visual_theme_mode = theme_mode
+		visual_surface = graphics::COLOR_8
+		visual_outline = graphics::COLOR_7
+		visual_accent = graphics::COLOR_10
+		visual_shell = graphics::COLOR_8
+		visual_highlight = graphics::WHITE
+		if (theme_mode == os::THEME_LIGHT) {
+			visual_surface = graphics::COLOR_1
+			visual_outline = graphics::COLOR_8
+			visual_shell = graphics::COLOR_7
+		}
+		orbit_scene_static_dirty = true
 	}
 }
 
@@ -316,25 +407,15 @@ proc draw_placeholder_orb(x: int, y: int, radius: int) {
 	inner_half = radius * 7 / 10
 	if (inner_half < 1) { inner_half = 1 }
 	if (placeholder_pixel_visible(x, y)) {
-		call graphics::fill_rect(explorer_window, x - inner_half, y - inner_half, inner_half * 2 + 1, inner_half * 2 + 1, placeholder_faded_color(visual_surface))
+		call graphics::fill_circle(explorer_window, x, y, inner_half, placeholder_faded_color(visual_surface))
 	}
 	call draw_placeholder_circle(x, y, radius, visual_outline)
 	call draw_placeholder_pixel(x - radius / 2, y - radius / 2, visual_highlight)
 }
 
 proc draw_placeholder_filled_circle(x: int, y: int, radius: int, color: int) {
-	var row: int
-	var half_width: int
-	var radicand: int
-	row = -radius
-	while (row <= radius) {
-		radicand = radius * radius - row * row
-		if (radicand < 0) { radicand = 0 }
-		half_width = (int)math::sqrt((float)radicand)
-		if (placeholder_pixel_visible(x, y + row)) {
-			call graphics::draw_line(explorer_window, x - half_width, y + row, x + half_width, y + row, placeholder_faded_color(color))
-		}
-		row += 1
+	if (placeholder_pixel_visible(x, y)) {
+		call graphics::fill_circle(explorer_window, x, y, radius, placeholder_faded_color(color))
 	}
 }
 
@@ -350,7 +431,7 @@ proc draw_placeholder_nucleus(x: int, y: int, radius: int) {
 	call draw_placeholder_pixel(nucleus_highlight_x, nucleus_highlight_y, visual_highlight)
 }
 
-proc update_view_orientation(elapsed_ms: int) {
+proc advance_view_orientation_step(elapsed_ms: int) {
 	var maximum_step: int
 	orientation_ease = elapsed_ms * 100 / 90
 	if (orientation_ease < 1) { orientation_ease = 1 }
@@ -380,6 +461,16 @@ proc update_view_orientation(elapsed_ms: int) {
 		if (tilt > 70) { tilt = 70 }
 		if (tilt < -70) { tilt = -70 }
 	}
+}
+
+proc update_view_orientation(elapsed_ms: int) {
+	if (elapsed_ms <= 0) { return }
+	orientation_time_accumulator += elapsed_ms
+	while (orientation_time_accumulator >= ORIENTATION_UPDATE_MS) {
+		call advance_view_orientation_step(ORIENTATION_UPDATE_MS)
+		orientation_time_accumulator -= ORIENTATION_UPDATE_MS
+	}
+	if (rotation == rotation_target && tilt == tilt_target) { orientation_time_accumulator = 0 }
 }
 
 proc draw_placeholder_folder(x: int, y: int, radius: int, child_count: int, orbit_phase: int) {
@@ -496,6 +587,25 @@ proc draw_explorer_chevron(x: int, y: int, opened: bool, color: int) {
 	}
 }
 
+proc draw_explorer_control_glyph(x: int, y: int, plus: bool, color: int) {
+	call graphics::fill_rect(explorer_window, x + 3, y + 4, 5, 1, color)
+	if (plus) { call graphics::fill_rect(explorer_window, x + 5, y + 2, 1, 5, color) }
+}
+
+fn explorer_sidebar_panel_height(max_height: int) int {
+	var panel_height: int
+	panel_height = 62 * sidebar_progress / 100
+	if (panel_height < 9) { panel_height = 9 }
+	if (panel_height > max_height) { panel_height = max_height }
+	return panel_height
+}
+
+fn explorer_pointer_in_sidebar_panel(x: int, y: int, max_height: int) bool {
+	var panel_height: int
+	panel_height = explorer_sidebar_panel_height(max_height)
+	return frame_pointer_x >= x && frame_pointer_x < x + sidebar_width && frame_pointer_y >= y && frame_pointer_y < y + panel_height
+}
+
 proc explorer_clear(target: string) {
 	if (xestring::strlen(target) > 0) {
 		target[0] = '\0'
@@ -519,13 +629,80 @@ proc explorer_set(target: string, value: string) {
 	call xestring::append(target, value)
 }
 
-proc explorer_backspace(target: string) {
-	var length: int
-	length = xestring::strlen(target)
-	if (length > 0) {
-		target[length - 1] = '\0'
-		call xestring::update_length(target)
+proc set_explorer_status(value: string) {
+	call explorer_set(status_text, value)
+	status_revision += 1
+}
+
+proc initialize_entry_name_cache() {
+	var index: int
+	index = 0
+	while (index < 64) {
+		entry_name_cache[index] = xestring::concat("", "")
+		entry_label_short_cache[index] = xestring::concat("", "")
+		index += 1
 	}
+}
+
+proc initialize_breadcrumb_cache() {
+	var index: int
+	index = 0
+	while (index < BREADCRUMB_CACHE_LIMIT) {
+		breadcrumb_label[index] = xestring::concat("", "")
+		breadcrumb_destination[index] = xestring::concat("", "")
+		index += 1
+	}
+}
+
+proc initialize_viewer_row_cache() {
+	var index: int
+	index = 0
+	while (index < MAX_FILE_VIEWERS * VIEWER_CACHE_ROWS) {
+		viewer_row_cache[index] = xestring::concat("", "")
+		index += 1
+	}
+}
+
+fn viewer_cache_index(row: int) int {
+	return viewer_active_slot * VIEWER_CACHE_ROWS + row
+}
+
+proc clear_viewer_row_cache() {
+	var index: int
+	index = 0
+	while (index < viewer_row_cache_lines[viewer_active_slot]) {
+		call explorer_clear(viewer_row_cache[viewer_cache_index(index)])
+		index += 1
+	}
+	viewer_row_cache_lines[viewer_active_slot] = 0
+	viewer_text_cache_valid[viewer_active_slot] = false
+	viewer_text_cache_fallback[viewer_active_slot] = false
+}
+
+proc clear_cached_entry_record(index: int) {
+	if (index < 0 || index >= 64) { return }
+	call explorer_clear(entry_name_cache[index])
+	call explorer_clear(entry_label_short_cache[index])
+	entry_shell[index] = 0
+	entry_depth_order[index] = index
+	entry_label_short_width[index] = 0
+	entry_label_full_width[index] = 0
+	entry_name_length[index] = 0
+	entry_directory_cache[index] = 0
+	entry_child_count_cache[index] = 0
+	entry_position_cache[index] = 0
+	entry_selected[index] = 0
+	entry_delete_mark[index] = 0
+	entry_preserved_angle[index] = 0
+}
+
+proc invalidate_published_orbit_scene() {
+	orbit_command_stream[graphics::COMMAND_HEADER_MAGIC_OFFSET] = 0
+	orbit_stream_words = 0
+	orbit_stream_result = 0
+	orbit_stream_dirty = true
+	orbit_scene_static_dirty = true
+	depth_order_count = -1
 }
 
 fn explorer_rename_selection_begin() int {
@@ -630,7 +807,7 @@ proc cancel_rename() {
 	rename_open = false
 	rename_select_all = false
 	call explorer_clear_rename_selection()
-	call explorer_set(status_text, "Rename cancelled")
+	call set_explorer_status("Rename cancelled")
 }
 
 # Input and interaction.
@@ -708,11 +885,137 @@ fn explorer_name_is_valid(name: string) bool {
 	return true
 }
 
+proc capture_viewer_window_state() {
+	if (viewer_active_slot == 0) { viewer_current_state = viewer_window.state }
+	elseif (viewer_active_slot == 1) { viewer_current_state = viewer_window_2.state }
+	else { viewer_current_state = viewer_window_3.state }
+}
+
+fn viewer_window_is_minimized() bool {
+	if (viewer_active_slot == 0) { return viewer_window.is_minimized() }
+	if (viewer_active_slot == 1) { return viewer_window_2.is_minimized() }
+	return viewer_window_3.is_minimized()
+}
+
+proc begin_viewer_window_draw() {
+	if (viewer_active_slot == 0) { call graphics::begin_draw(viewer_window) }
+	elseif (viewer_active_slot == 1) { call graphics::begin_draw(viewer_window_2) }
+	else { call graphics::begin_draw(viewer_window_3) }
+}
+
+proc update_viewer_window() {
+	if (viewer_active_slot == 0) { call graphics::update(viewer_window) }
+	elseif (viewer_active_slot == 1) { call graphics::update(viewer_window_2) }
+	else { call graphics::update(viewer_window_3) }
+}
+
+proc close_viewer_window() {
+	if (viewer_active_slot == 0) {
+		if (viewer_window._handle != 0 && viewer_window.state != graphics::WINDOW_CLOSED) { viewer_window.close() }
+	}
+	elseif (viewer_active_slot == 1) {
+		if (viewer_window_2._handle != 0 && viewer_window_2.state != graphics::WINDOW_CLOSED) { viewer_window_2.close() }
+	}
+	else {
+		if (viewer_window_3._handle != 0 && viewer_window_3.state != graphics::WINDOW_CLOSED) { viewer_window_3.close() }
+	}
+}
+
+proc reset_viewer_window_descriptor() {
+	if (viewer_active_slot == 0) {
+		viewer_window._handle = 0
+		viewer_window.state = graphics::WINDOW_CLOSED
+	}
+	elseif (viewer_active_slot == 1) {
+		viewer_window_2._handle = 0
+		viewer_window_2.state = graphics::WINDOW_CLOSED
+	}
+	else {
+		viewer_window_3._handle = 0
+		viewer_window_3.state = graphics::WINDOW_CLOSED
+	}
+}
+
+proc configure_viewer_window() {
+	var viewer_x: int
+	var viewer_y: int
+	viewer_x = explorer_window.x + 24 + viewer_active_slot * 10
+	viewer_y = explorer_window.y + 18 + viewer_active_slot * 8
+	if (viewer_active_slot == 0) {
+		viewer_window._handle = 0
+		viewer_window.x = viewer_x
+		viewer_window.y = viewer_y
+		viewer_window.width = 250
+		viewer_window.height = 170
+		viewer_window.title = viewer_name[viewer_active_slot]
+		viewer_window.ui_scale = 1
+		viewer_window.state = graphics::WINDOW_NORMAL
+	}
+	elseif (viewer_active_slot == 1) {
+		viewer_window_2._handle = 0
+		viewer_window_2.x = viewer_x
+		viewer_window_2.y = viewer_y
+		viewer_window_2.width = 250
+		viewer_window_2.height = 170
+		viewer_window_2.title = viewer_name[viewer_active_slot]
+		viewer_window_2.ui_scale = 1
+		viewer_window_2.state = graphics::WINDOW_NORMAL
+	}
+	else {
+		viewer_window_3._handle = 0
+		viewer_window_3.x = viewer_x
+		viewer_window_3.y = viewer_y
+		viewer_window_3.width = 250
+		viewer_window_3.height = 170
+		viewer_window_3.title = viewer_name[viewer_active_slot]
+		viewer_window_3.ui_scale = 1
+		viewer_window_3.state = graphics::WINDOW_NORMAL
+	}
+}
+
+fn viewer_content_width() int {
+	if (viewer_active_slot == 0) { return graphics::content_width(viewer_window) }
+	if (viewer_active_slot == 1) { return graphics::content_width(viewer_window_2) }
+	return graphics::content_width(viewer_window_3)
+}
+
+fn viewer_content_height() int {
+	if (viewer_active_slot == 0) { return graphics::content_height(viewer_window) }
+	if (viewer_active_slot == 1) { return graphics::content_height(viewer_window_2) }
+	return graphics::content_height(viewer_window_3)
+}
+
+proc fill_viewer_rect(x: int, y: int, width: int, height: int, color: int) {
+	if (viewer_active_slot == 0) { call graphics::fill_rect(viewer_window, x, y, width, height, color) }
+	elseif (viewer_active_slot == 1) { call graphics::fill_rect(viewer_window_2, x, y, width, height, color) }
+	else { call graphics::fill_rect(viewer_window_3, x, y, width, height, color) }
+}
+
 fn explorer_modal_open() bool {
-	return context_open || rename_open || delete_confirm || viewer_open || transition_progress > 0
+	return context_open || rename_open || delete_confirm || transition_progress > 0
 }
 
 # Layout helpers.
+proc refresh_explorer_toolbar_geometry() {
+	var available_width: int
+	toolbar_breadcrumb_x = EXPLORER_TOOLBAR_SIDE_PADDING + 34
+	toolbar_zoom_plus_x = width - EXPLORER_TOOLBAR_SIDE_PADDING - EXPLORER_TOOLBAR_CONTROL_WIDTH
+	toolbar_zoom_minus_x = toolbar_zoom_plus_x - EXPLORER_TOOLBAR_GAP - EXPLORER_TOOLBAR_CONTROL_WIDTH
+	available_width = toolbar_zoom_minus_x - EXPLORER_TOOLBAR_GAP - toolbar_breadcrumb_x
+	toolbar_status_width = available_width / 2
+	if (toolbar_status_width > EXPLORER_TOOLBAR_STATUS_MAX_WIDTH) { toolbar_status_width = EXPLORER_TOOLBAR_STATUS_MAX_WIDTH }
+	if (toolbar_status_width < 1) { toolbar_status_width = 1 }
+	toolbar_status_x = toolbar_zoom_minus_x - EXPLORER_TOOLBAR_GAP - toolbar_status_width
+	toolbar_breadcrumb_width = toolbar_status_x - EXPLORER_TOOLBAR_GAP - toolbar_breadcrumb_x
+	if (toolbar_breadcrumb_width < 1) { toolbar_breadcrumb_width = 1 }
+	zoom_controls_hovered = false
+	if (transition_progress == 0 && frame_pointer_x >= toolbar_zoom_minus_x && frame_pointer_x < toolbar_zoom_plus_x + EXPLORER_TOOLBAR_CONTROL_WIDTH) {
+		if (frame_pointer_y >= EXPLORER_TOOLBAR_Y && frame_pointer_y < EXPLORER_TOOLBAR_Y + EXPLORER_TOOLBAR_CONTROL_HEIGHT) {
+			zoom_controls_hovered = true
+		}
+	}
+}
+
 fn explorer_char_advance(value: char, font_size: int) int {
 	var advance: int
 	advance = graphics::char_advance(value, font_size)
@@ -733,53 +1036,187 @@ fn explorer_text_width_clipped(text: string, maximum_chars: int, font_size: int)
 	return result
 }
 
-proc draw_explorer_text_clipped(x: int, y: int, text: string, maximum_chars: int, color: int) {
-	var index: int
-	var cursor_x: int
-	index = 0
-	cursor_x = x
-	while (index < xestring::strlen(text) && index < maximum_chars) {
-		call graphics::draw_char_small(explorer_window, cursor_x, y, text[index], color)
-		cursor_x += explorer_char_advance(text[index], graphics::FONT_SMALL)
-		index += 1
+proc draw_explorer_text_standard(x: int, y: int, text: string, font_size: int, color: int) {
+	if (font_size == graphics::FONT_SMALL) {
+		call graphics::draw_text_small(explorer_window, x, y, text, color)
+	}
+	else { call graphics::draw_text(explorer_window, x, y, text, color) }
+}
+
+proc draw_explorer_char_standard(x: int, y: int, value: char, font_size: int, color: int) {
+	call graphics::draw_char_styled(explorer_window, x, y, value, color, font_size, 0)
+}
+
+proc draw_viewer_text_standard(x: int, y: int, text: string, font_size: int, color: int) {
+	if (font_size == graphics::FONT_SMALL) {
+		if (viewer_active_slot == 0) { call graphics::draw_text_small(viewer_window, x, y, text, color) }
+		elseif (viewer_active_slot == 1) { call graphics::draw_text_small(viewer_window_2, x, y, text, color) }
+		else { call graphics::draw_text_small(viewer_window_3, x, y, text, color) }
+	}
+	else {
+		if (viewer_active_slot == 0) { call graphics::draw_text(viewer_window, x, y, text, color) }
+		elseif (viewer_active_slot == 1) { call graphics::draw_text(viewer_window_2, x, y, text, color) }
+		else { call graphics::draw_text(viewer_window_3, x, y, text, color) }
 	}
 }
 
-proc draw_explorer_text_centered(x: int, y: int, area_width: int, text: string, font_size: int, color: int) {
+proc draw_viewer_char_standard(x: int, y: int, value: char, font_size: int, color: int) {
+	if (viewer_active_slot == 0) { call graphics::draw_char_styled(viewer_window, x, y, value, color, font_size, 0) }
+	elseif (viewer_active_slot == 1) { call graphics::draw_char_styled(viewer_window_2, x, y, value, color, font_size, 0) }
+	else { call graphics::draw_char_styled(viewer_window_3, x, y, value, color, font_size, 0) }
+}
+
+fn viewer_flat_button_aligned(x: int, y: int, width: int, height: int, label: string, surface: int, foreground: int) bool {
+	var clicked: bool
+	var text_width: int
+	var text_x: int
+	if (viewer_active_slot == 0) { clicked = graphics::button_flat(viewer_window, x, y, width, height, " ", surface) }
+	elseif (viewer_active_slot == 1) { clicked = graphics::button_flat(viewer_window_2, x, y, width, height, " ", surface) }
+	else { clicked = graphics::button_flat(viewer_window_3, x, y, width, height, " ", surface) }
+	text_width = explorer_text_width_clipped(label, xestring::strlen(label), graphics::FONT_NORMAL)
+	text_x = x + (width - text_width) / 2
+	if (text_x < x + 1) { text_x = x + 1 }
+	call draw_viewer_text_standard(text_x, y + (height - 7) / 2, label, graphics::FONT_NORMAL, foreground)
+	return clicked
+}
+
+proc draw_explorer_text_prefix(x: int, y: int, text: string, visible_chars: int, font_size: int, color: int) {
 	var index: int
+	call explorer_clear(clipped_text_buffer)
+	index = 0
+	while (index < xestring::strlen(text) && index < visible_chars) {
+		call xestring::append_char(clipped_text_buffer, text[index])
+		index += 1
+	}
+	call draw_explorer_text_standard(x, y, clipped_text_buffer, font_size, color)
+}
+
+proc draw_explorer_text_clipped(x: int, y: int, text: string, area_width: int, color: int) {
+	var visible_chars: int
+	var text_width: int
+	visible_chars = xestring::strlen(text)
+	text_width = explorer_text_width_clipped(text, visible_chars, graphics::FONT_NORMAL)
+	while (visible_chars > 0 && text_width > area_width) {
+		visible_chars -= 1
+		if (visible_chars == 0) { text_width = 0 }
+		else { text_width -= explorer_char_advance(text[visible_chars], graphics::FONT_NORMAL) }
+	}
+	if (visible_chars == xestring::strlen(text)) {
+		call draw_explorer_text_standard(x, y, text, graphics::FONT_NORMAL, color)
+		return
+	}
+	call draw_explorer_text_prefix(x, y, text, visible_chars, graphics::FONT_NORMAL, color)
+}
+
+proc refresh_explorer_status_layout(area_width: int) {
+	var index: int
+	var suffix_chars: int
+	var suffix_width: int
+	var candidate_width: int
+	if (status_layout_revision == status_revision && status_layout_area_width == area_width) { return }
+	status_layout_visible_chars = xestring::strlen(status_text)
+	status_layout_text_width = explorer_text_width_clipped(status_text, status_layout_visible_chars, graphics::FONT_NORMAL)
+	suffix_chars = 0
+	suffix_width = 0
+	if (status_layout_text_width > area_width) {
+		suffix_chars = 3
+		suffix_width = explorer_text_width_clipped("...", suffix_chars, graphics::FONT_NORMAL)
+		while (suffix_chars > 0 && suffix_width > area_width) {
+			suffix_chars -= 1
+			suffix_width = explorer_text_width_clipped("...", suffix_chars, graphics::FONT_NORMAL)
+		}
+		candidate_width = status_layout_text_width
+		if (suffix_chars > 0) { candidate_width += 1 + suffix_width }
+		while (status_layout_visible_chars > 0 && candidate_width > area_width) {
+			status_layout_visible_chars -= 1
+			if (status_layout_visible_chars == 0) { status_layout_text_width = 0 }
+			else { status_layout_text_width -= explorer_char_advance(status_text[status_layout_visible_chars], graphics::FONT_NORMAL) }
+			candidate_width = status_layout_text_width
+			if (status_layout_visible_chars > 0 && suffix_chars > 0) { candidate_width += 1 + suffix_width }
+			elseif (suffix_chars > 0) { candidate_width = suffix_width }
+		}
+	}
+	call explorer_clear(status_visible_text)
+	index = 0
+	while (index < status_layout_visible_chars) {
+		call xestring::append_char(status_visible_text, status_text[index])
+		index += 1
+	}
+	index = 0
+	while (index < suffix_chars) {
+		call xestring::append_char(status_visible_text, '.')
+		index += 1
+	}
+	status_layout_text_width = explorer_text_width_clipped(status_visible_text, xestring::strlen(status_visible_text), graphics::FONT_NORMAL)
+	status_layout_revision = status_revision
+	status_layout_area_width = area_width
+}
+
+proc draw_explorer_status_right_clipped(x: int, y: int, area_width: int, color: int) {
+	call refresh_explorer_status_layout(area_width)
+	call draw_explorer_text_standard(x + area_width - status_layout_text_width, y, status_visible_text, graphics::FONT_NORMAL, color)
+}
+
+proc draw_explorer_action_status(x: int, y: int, area_width: int) {
+	if (area_width < 1) { return }
+	call draw_explorer_status_right_clipped(x, y + (EXPLORER_TOOLBAR_HEIGHT - 7) / 2, area_width, visual_outline)
+}
+
+proc draw_explorer_text_centered(x: int, y: int, area_width: int, text: string, font_size: int, color: int) {
 	var visible_chars: int
 	var text_width: int
 	var text_x: int
-	var cursor_x: int
 	visible_chars = xestring::strlen(text)
 	text_width = explorer_text_width_clipped(text, visible_chars, font_size)
 	while (visible_chars > 0 && text_width > area_width - 2) {
 		visible_chars -= 1
-		text_width = explorer_text_width_clipped(text, visible_chars, font_size)
+		if (visible_chars == 0) { text_width = 0 }
+		else { text_width -= explorer_char_advance(text[visible_chars], font_size) }
 	}
 	text_x = x + (area_width - text_width) / 2
 	if (text_x < x + 1) { text_x = x + 1 }
-	index = 0
-	cursor_x = text_x
-	while (index < visible_chars) {
-		call graphics::draw_char_styled(explorer_window, cursor_x, y, text[index], color, font_size, 0)
-		cursor_x += explorer_char_advance(text[index], font_size)
-		index += 1
+	if (visible_chars == xestring::strlen(text)) {
+		call draw_explorer_text_standard(text_x, y, text, font_size, color)
+		return
 	}
+	call draw_explorer_text_prefix(text_x, y, text, visible_chars, font_size, color)
+}
+
+proc draw_explorer_fixed_label_centered(x: int, y: int, area_width: int, text: string, text_width: int, color: int) {
+	call draw_explorer_text_standard(x + (area_width - text_width) / 2, y, text, graphics::FONT_NORMAL, color)
+}
+
+fn explorer_control_text_color() int {
+	if (visual_theme_mode == os::THEME_LIGHT) { return graphics::COLOR_0 }
+	return graphics::WHITE
+}
+
+fn explorer_flat_button_aligned(x: int, y: int, width: int, height: int, label: string, surface: int, foreground: int) bool {
+	var clicked: bool
+	clicked = graphics::button_flat(explorer_window, x, y, width, height, " ", surface)
+	call draw_explorer_text_centered(x, y + (height - 7) / 2, width, label, graphics::FONT_NORMAL, foreground)
+	return clicked
+}
+
+fn explorer_fixed_label_button(x: int, y: int, width: int, height: int, label: string, label_width: int, surface: int, foreground: int) bool {
+	var clicked: bool
+	clicked = graphics::button_flat(explorer_window, x, y, width, height, " ", surface)
+	call draw_explorer_fixed_label_centered(x, y + (height - 7) / 2, width, label, label_width, foreground)
+	return clicked
 }
 
 proc refresh_entry_label_cache(index: int) {
 	var character: int
 	var length: int
 	var advance: int
-	entry_label_short_cache[index] = xestring::concat("", "")
+	call explorer_clear(entry_label_short_cache[index])
 	entry_label_short_width[index] = 0
 	entry_label_full_width[index] = 0
 	length = xestring::strlen(entry_name_cache[index])
 	entry_name_length[index] = length
 	character = 0
 	while (character < length) {
-		advance = explorer_char_advance(entry_name_cache[index][character], graphics::FONT_SMALL)
+		advance = explorer_char_advance(entry_name_cache[index][character], graphics::FONT_NORMAL)
 		entry_label_full_width[index] += advance
 		if (character < 4) {
 			call xestring::append_char(entry_label_short_cache[index], entry_name_cache[index][character])
@@ -1060,6 +1497,7 @@ proc update_selection_status() {
 	call explorer_append_positive_int(status_text, count)
 	if (count == 1) { call xestring::append(status_text, " item selected") }
 	else { call xestring::append(status_text, " items selected") }
+	status_revision += 1
 }
 
 proc select_only_entry(index: int) {
@@ -1075,7 +1513,7 @@ proc toggle_entry_selection(index: int) {
 	if (index < 0 || index >= cached_entry_count) { return }
 	if (entry_selected[index] != 0) {
 		entry_selected[index] = 0
-		if (selected_entry == index) { selected_entry = -1 }
+		if (selected_entry == index) { selected_entry = first_selected_entry() }
 	}
 	else {
 		entry_selected[index] = 1
@@ -1084,44 +1522,57 @@ proc toggle_entry_selection(index: int) {
 	selection_anchor = index
 }
 
-proc select_entry_range(index: int) {
-	var first: int
-	var finish: int
-	var cursor: int
-	if (index < 0 || index >= cached_entry_count) { return }
-	if (selection_anchor < 0 || selection_anchor >= cached_entry_count) {
-		call select_only_entry(index)
-		return
-	}
-	first = selection_anchor
-	finish = index
-	if (first > finish) {
-		cursor = first
-		first = finish
-		finish = cursor
-	}
-	call clear_entry_selection()
-	cursor = first
-	while (cursor <= finish) {
-		entry_selected[cursor] = 1
-		cursor += 1
-	}
-	selected_entry = index
-}
-
 proc select_clicked_entry(index: int) {
-	var modifiers: int
-	modifiers = graphics::modifiers()
-	if ((modifiers & graphics::MOD_CTRL) != 0) {
+	if ((input_modifiers & graphics::MOD_CTRL) != 0 || (input_modifiers & graphics::MOD_SHIFT) != 0) {
 		call toggle_entry_selection(index)
-	}
-	elseif ((modifiers & graphics::MOD_SHIFT) != 0) {
-		call select_entry_range(index)
 	}
 	else {
 		call select_only_entry(index)
 	}
 	call update_selection_status()
+}
+
+fn entry_pointer_capture_ready(index: int, interactive: bool) bool {
+	var dx: int
+	var dy: int
+	if (index < 0 || index >= cached_entry_count) { return false }
+	if (!interactive || drag_entry >= 0 || drag_template > 0) { return false }
+	if (rotating || marquee_active) { return false }
+	if (frame_mouse_pressed) { return true }
+	if (!frame_mouse_down) { return false }
+	if (!canvas_press_pending) { return true }
+	dx = frame_pointer_x - canvas_press_x
+	dy = frame_pointer_y - canvas_press_y
+	return dx * dx + dy * dy <= POINTER_MOVE_THRESHOLD_SQUARED
+}
+
+fn entry_pointer_capture_candidate(current: int, previous: int) int {
+	var dx: int
+	var dy: int
+	var hit_radius: int
+	if (current >= 0 && current < cached_entry_count) { return current }
+	if (previous < 0 || previous >= cached_entry_count) { return -1 }
+	dx = frame_pointer_x - entry_render_x[previous]
+	dy = frame_pointer_y - entry_render_y[previous]
+	hit_radius = entry_node_radius[previous] + 20
+	if (hit_radius < 22) { hit_radius = 22 }
+	if (dx * dx + dy * dy <= hit_radius * hit_radius) { return previous }
+	return -1
+}
+
+proc begin_entry_pointer_capture(index: int) {
+	canvas_press_pending = false
+	drag_open_on_release = last_click_entry == index && last_click_age_ms <= DOUBLE_CLICK_WINDOW_MS && input_modifiers == 0
+	drag_entry = index
+	drag_start_x = frame_pointer_x
+	drag_start_y = frame_pointer_y
+	drag_moved = false
+}
+
+proc clear_entry_drag() {
+	drag_entry = -1
+	drag_moved = false
+	drag_open_on_release = false
 }
 
 proc finish_marquee_selection() {
@@ -1141,20 +1592,17 @@ proc finish_marquee_selection() {
 	index = 0
 	while (index < cached_entry_count) {
 		if (entry_render_x[index] >= left && entry_render_x[index] <= right && entry_render_y[index] >= top && entry_render_y[index] <= bottom) {
-			if (marquee_mode == 1) {
-				if (entry_selected[index] != 0) { entry_selected[index] = 0 }
-				else { entry_selected[index] = 1; selected_entry = index }
-			}
-			else {
-				entry_selected[index] = 1
-				selected_entry = index
-			}
+			entry_selected[index] = 1
+			selected_entry = index
 			selection_anchor = index
 			hit_count += 1
 		}
 		index += 1
 	}
-	if (hit_count > 0) { call update_selection_status() }
+	if (hit_count > 0) {
+		selected_entry = first_selected_entry()
+		call update_selection_status()
+	}
 }
 
 proc draw_selection_marquee() {
@@ -1176,6 +1624,32 @@ proc adjust_explorer_zoom(delta: int) {
 	camera_zoom_target += delta
 	if (camera_zoom_target < 65) { camera_zoom_target = 65 }
 	if (camera_zoom_target > 150) { camera_zoom_target = 150 }
+}
+
+proc draw_explorer_toolbar_controls() {
+	var interaction_allowed: bool
+	interaction_allowed = !explorer_modal_open()
+	if (transition_progress == 0) {
+		if (interaction_allowed && (zoom_controls_hovered || frame_mouse_down || frame_mouse_released)) {
+			if (graphics::button_flat(explorer_window, toolbar_zoom_minus_x, EXPLORER_TOOLBAR_Y, EXPLORER_TOOLBAR_CONTROL_WIDTH, EXPLORER_TOOLBAR_CONTROL_HEIGHT, " ", visual_surface)) { call adjust_explorer_zoom(-15) }
+			if (graphics::button_flat(explorer_window, toolbar_zoom_plus_x, EXPLORER_TOOLBAR_Y, EXPLORER_TOOLBAR_CONTROL_WIDTH, EXPLORER_TOOLBAR_CONTROL_HEIGHT, " ", visual_surface)) { call adjust_explorer_zoom(15) }
+			call draw_explorer_control_glyph(toolbar_zoom_minus_x, EXPLORER_TOOLBAR_Y, false, graphics::WHITE)
+			call draw_explorer_control_glyph(toolbar_zoom_plus_x, EXPLORER_TOOLBAR_Y, true, graphics::WHITE)
+		}
+		elseif (interaction_allowed) {
+			call graphics::fill_rect(explorer_window, toolbar_zoom_minus_x, EXPLORER_TOOLBAR_Y, EXPLORER_TOOLBAR_CONTROL_WIDTH, EXPLORER_TOOLBAR_CONTROL_HEIGHT, visual_surface)
+			call graphics::fill_rect(explorer_window, toolbar_zoom_plus_x, EXPLORER_TOOLBAR_Y, EXPLORER_TOOLBAR_CONTROL_WIDTH, EXPLORER_TOOLBAR_CONTROL_HEIGHT, visual_surface)
+			call draw_explorer_control_glyph(toolbar_zoom_minus_x, EXPLORER_TOOLBAR_Y, false, graphics::WHITE)
+			call draw_explorer_control_glyph(toolbar_zoom_plus_x, EXPLORER_TOOLBAR_Y, true, graphics::WHITE)
+		}
+		else {
+			call graphics::fill_rect(explorer_window, toolbar_zoom_minus_x, EXPLORER_TOOLBAR_Y, EXPLORER_TOOLBAR_CONTROL_WIDTH, EXPLORER_TOOLBAR_CONTROL_HEIGHT, visual_surface)
+			call graphics::fill_rect(explorer_window, toolbar_zoom_plus_x, EXPLORER_TOOLBAR_Y, EXPLORER_TOOLBAR_CONTROL_WIDTH, EXPLORER_TOOLBAR_CONTROL_HEIGHT, visual_surface)
+			call draw_explorer_control_glyph(toolbar_zoom_minus_x, EXPLORER_TOOLBAR_Y, false, visual_outline)
+			call draw_explorer_control_glyph(toolbar_zoom_plus_x, EXPLORER_TOOLBAR_Y, true, visual_outline)
+		}
+	}
+	call draw_explorer_action_status(toolbar_status_x, EXPLORER_TOOLBAR_Y, toolbar_status_width)
 }
 
 fn shell_population(shell: int, entry_count: int) int {
@@ -1274,7 +1748,28 @@ proc rebuild_shell_layout() {
 		shell_population_cache[shell] += 1
 		index += 1
 	}
+	orbit_all_shells_full = true
+	shell = 0
+	while (shell < shell_count) {
+		if (shell_population_cache[shell] < shell_capacity) { orbit_all_shells_full = false }
+		shell += 1
+	}
 	orbit_stream_dirty = true
+	orbit_scene_static_dirty = true
+}
+
+fn newest_empty_shell() int {
+	var shell: int
+	shell = shell_count - 1
+	if (shell > 0 && shell_population_cache[shell] == 0) { return shell }
+	return -1
+}
+
+fn center_drop_shell(fallback_shell: int) int {
+	var shell: int
+	shell = newest_empty_shell()
+	if (shell >= 0) { return shell }
+	return fallback_shell
 }
 
 proc compact_energy_shells(entry_count: int) {
@@ -1295,6 +1790,9 @@ proc compact_energy_shells(entry_count: int) {
 				shell_accumulator[shift] = shell_accumulator[shift + 1]
 				shell_speed[shift] = shell_speed[shift + 1]
 				shell_incremental_layout[shift] = shell_incremental_layout[shift + 1]
+				shell_layout_radius_x100[shift] = shell_layout_radius_x100[shift + 1]
+				shell_base_radius[shift] = shell_base_radius[shift + 1]
+				shell_render_radius[shift] = shell_render_radius[shift + 1]
 				shift += 1
 			}
 			shell_count -= 1
@@ -1302,6 +1800,9 @@ proc compact_energy_shells(entry_count: int) {
 			shell_accumulator[shell_count] = 0
 			shell_speed[shell_count] = orbit_speed_setting
 			shell_incremental_layout[shell_count] = 0
+			shell_layout_radius_x100[shell_count] = 0
+			shell_base_radius[shell_count] = 0
+			shell_render_radius[shell_count] = 0
 		}
 		else { shell += 1 }
 	}
@@ -1332,8 +1833,10 @@ proc align_shell_entry_to_angle(target_shell: int, target_entry: int, target_ang
 	while (phase < 0) { phase += 360 }
 	while (phase >= 360) { phase -= 360 }
 	shell_phase[target_shell] = phase
+	orbit_phase_stream_dirty = true
 	shell_accumulator[target_shell] = 0
 	shell_speed[target_shell] = 0
+	shell_speed_easing_active = true
 }
 
 proc begin_slot_animation_for_shell(target_shell: int, duration: int) {
@@ -1358,9 +1861,15 @@ proc reset_energy_shells() {
 	var index: int
 	var shell: int
 	var entry_path: string
+	var previous_count: int
+	last_click_entry = -1
+	last_click_age_ms = DOUBLE_CLICK_WINDOW_MS + 1
+	drag_open_on_release = false
+	shell_speed_easing_active = true
+	previous_count = cached_entry_count
+	call invalidate_published_orbit_scene()
 	count = os::entry_count(current_path)
 	if (count > 64) { count = 64 }
-	cached_entry_count = count
 	shell = 0
 	while (shell < 8) {
 		shell_incremental_layout[shell] = 0
@@ -1371,7 +1880,8 @@ proc reset_energy_shells() {
 		shell_capacity = (count + 8) / 8
 		if (shell_capacity > 8) { shell_capacity = 8 }
 	}
-	if (explorer_strings_equal(current_path, ".")) {
+	current_path_is_root = explorer_strings_equal(current_path, ".")
+	if (current_path_is_root) {
 		call explorer_set(cached_parent_path, ".")
 	}
 	else {
@@ -1379,7 +1889,7 @@ proc reset_energy_shells() {
 	}
 	index = 0
 	while (index < count) {
-		entry_name_cache[index] = os::entry_name(current_path, index)
+		call explorer_set(entry_name_cache[index], os::entry_name(current_path, index))
 		call refresh_entry_label_cache(index)
 		if (os::entry_is_directory(current_path, index)) {
 			entry_directory_cache[index] = 1
@@ -1399,6 +1909,11 @@ proc reset_energy_shells() {
 		entry_delete_mark[index] = 0
 		index += 1
 	}
+	while (index < previous_count) {
+		call clear_cached_entry_record(index)
+		index += 1
+	}
+	cached_entry_count = count
 	shell_count = (count + shell_capacity - 1) / shell_capacity
 	if (shell_count < 1) { shell_count = 1 }
 	if (shell_count > 8) { shell_count = 8 }
@@ -1414,8 +1929,9 @@ fn cache_created_entry(name: string, is_directory: bool, target_shell: int, star
 	var created: int
 	var canonical: int
 	if (cached_entry_count >= 64) { return -1 }
+	call invalidate_published_orbit_scene()
 	created = cached_entry_count
-	entry_name_cache[created] = name
+	call explorer_set(entry_name_cache[created], name)
 	call refresh_entry_label_cache(created)
 	if (is_directory) { entry_directory_cache[created] = 1 }
 	else { entry_directory_cache[created] = 0 }
@@ -1447,61 +1963,6 @@ fn cache_created_entry(name: string, is_directory: bool, target_shell: int, star
 	cached_revision = os::revision()
 	call rebuild_shell_layout()
 	return created
-}
-
-proc move_entry_into_folder(source_index: int, folder_index: int) {
-	var source_name: string
-	var folder_name: string
-	var source_path: string
-	var folder_path: string
-	var destination_name: string
-	if (source_index < 0 || folder_index < 0 || source_index == folder_index) {
-		return
-	}
-	if (source_index >= cached_entry_count || folder_index >= cached_entry_count) {
-		return
-	}
-	if (entry_directory_cache[folder_index] == 0) {
-		return
-	}
-	source_name = entry_name_cache[source_index]
-	folder_name = entry_name_cache[folder_index]
-	source_path = explorer_join_path(current_path, source_name)
-	folder_path = explorer_join_path(current_path, folder_name)
-	destination_name = explorer_unique_child_name(folder_path, source_name, entry_directory_cache[source_index] != 0)
-	operation_ok = os::rename(source_path, explorer_join_path(folder_path, destination_name))
-	if (operation_ok) {
-		call explorer_set(status_text, xestring::concat("Moved into ", folder_name))
-		call reset_energy_shells()
-		selected_entry = -1
-	}
-	else {
-		call explorer_set(status_text, "Move failed")
-	}
-}
-
-proc move_entry_to_path(source_index: int, destination_path: string) {
-	var source_name: string
-	var source_path: string
-	var destination_name: string
-	if (source_index < 0 || source_index >= cached_entry_count) {
-		return
-	}
-	if (explorer_strings_equal(current_path, destination_path)) {
-		return
-	}
-	source_name = entry_name_cache[source_index]
-	source_path = explorer_join_path(current_path, source_name)
-	destination_name = explorer_unique_child_name(destination_path, source_name, entry_directory_cache[source_index] != 0)
-	operation_ok = os::rename(source_path, explorer_join_path(destination_path, destination_name))
-	if (operation_ok) {
-		call explorer_set(status_text, xestring::concat("Moved to ", destination_path))
-		call reset_energy_shells()
-		selected_entry = -1
-	}
-	else {
-		call explorer_set(status_text, "Move failed")
-	}
 }
 
 proc begin_folder_transition(index: int, direction: int) {
@@ -1548,18 +2009,23 @@ proc begin_path_transition(destination: string) {
 proc commit_folder_transition() {
 	if (transition_direction > 0) {
 		call explorer_set(current_path, transition_destination)
-		call explorer_set(status_text, "Opened folder")
 	}
 	else {
 		call explorer_set(current_path, transition_destination)
+	}
+	current_path_revision += 1
+	call reset_energy_shells()
+	if (transition_direction > 0) {
+		call set_explorer_status("Opened folder")
+	}
+	else {
 		if (explorer_strings_equal(current_path, ".")) {
-			call explorer_set(status_text, "root")
+			call set_explorer_status("root")
 		}
 		else {
-			call explorer_set(status_text, "Parent directory")
+			call set_explorer_status("Parent directory")
 		}
 	}
-	call reset_energy_shells()
 	selected_entry = -1
 	last_click_entry = -1
 	if (transition_direction < 0) { transition_entry = find_entry_named(transition_target_name) }
@@ -1567,26 +2033,76 @@ proc commit_folder_transition() {
 	transition_committed = true
 }
 
+proc refresh_file_viewer_open_state() {
+	viewer_open = viewer_is_open[0] || viewer_is_open[1] || viewer_is_open[2]
+}
+
+fn available_file_viewer_slot() int {
+	var slot: int
+	slot = 0
+	while (slot < MAX_FILE_VIEWERS) {
+		if (!viewer_is_open[slot]) { return slot }
+		slot += 1
+	}
+	return -1
+}
+
+proc release_file_viewer() {
+	viewer_is_open[viewer_active_slot] = false
+	viewer_close_requested = false
+	call reset_viewer_window_descriptor()
+	call explorer_clear(viewer_name[viewer_active_slot])
+	call explorer_clear(viewer_content[viewer_active_slot])
+	viewer_scroll[viewer_active_slot] = 0
+	viewer_layout_width[viewer_active_slot] = -1
+	viewer_layout_font[viewer_active_slot] = graphics::FONT_NORMAL
+	viewer_layout_lines[viewer_active_slot] = 1
+	viewer_seek_index[viewer_active_slot] = 0
+	viewer_seek_line[viewer_active_slot] = 0
+	call clear_viewer_row_cache()
+	call refresh_file_viewer_open_state()
+}
+
+proc close_file_viewer() {
+	call close_viewer_window()
+	call release_file_viewer()
+}
+
+proc request_file_viewer_close() {
+	viewer_close_requested = true
+}
+
 proc open_file_viewer(index: int) {
 	var path: string
+	var slot: int
 	if (index < 0 || index >= cached_entry_count) {
 		return
 	}
 	if (entry_directory_cache[index] != 0) {
 		return
 	}
+	slot = available_file_viewer_slot()
+	if (slot < 0) {
+		call set_explorer_status("3 file windows open")
+		return
+	}
+	viewer_active_slot = slot
 	path = explorer_join_path(current_path, entry_name_cache[index])
-	call explorer_set(viewer_name, entry_name_cache[index])
+	call explorer_set(viewer_name[viewer_active_slot], entry_name_cache[index])
 	viewer_file = os::open_read(path)
-	call explorer_set(viewer_content, os::read(viewer_file))
+	call explorer_set(viewer_content[viewer_active_slot], os::read(viewer_file))
 	call os::close(path)
-	viewer_scroll = 0
-	viewer_layout_width = -1
-	viewer_seek_index = 0
-	viewer_seek_line = 0
-	viewer_open = true
+	viewer_scroll[viewer_active_slot] = 0
+	viewer_layout_width[viewer_active_slot] = -1
+	viewer_seek_index[viewer_active_slot] = 0
+	viewer_seek_line[viewer_active_slot] = 0
+	viewer_text_cache_valid[viewer_active_slot] = false
+	call configure_viewer_window()
+	viewer_is_open[viewer_active_slot] = true
+	call refresh_file_viewer_open_state()
+	viewer_close_requested = false
 	context_open = false
-	call explorer_set(status_text, "Viewing file")
+	call set_explorer_status("Viewing file")
 }
 
 proc begin_rename(index: int) {
@@ -1620,7 +2136,7 @@ proc commit_rename() {
 	old_name = entry_name_cache[context_entry]
 	old_path = explorer_join_path(current_path, old_name)
 	if (!explorer_name_is_valid(rename_text)) {
-		call explorer_set(status_text, "Enter a valid name")
+		call set_explorer_status("Enter a valid name")
 		return
 	}
 	if (explorer_strings_equal(rename_text, old_name)) {
@@ -1632,10 +2148,10 @@ proc commit_rename() {
 	new_path = explorer_join_path(current_path, final_name)
 	if (explorer_strings_equal(final_name, old_name) || os::rename(old_path, new_path)) {
 		if (explorer_strings_equal(final_name, rename_text)) {
-			call explorer_set(status_text, "Renamed")
+			call set_explorer_status("Renamed")
 		}
 		else {
-			call explorer_set(status_text, xestring::concat("Renamed to ", final_name))
+			call set_explorer_status(xestring::concat("Renamed to ", final_name))
 		}
 		call reset_energy_shells()
 		selected_entry = -1
@@ -1644,74 +2160,8 @@ proc commit_rename() {
 		call explorer_clear_rename_selection()
 	}
 	else {
-		call explorer_set(status_text, "Rename failed")
+		call set_explorer_status("Rename failed")
 	}
-}
-
-proc move_dragged_entries_into_folder(folder_index: int) {
-	var index: int
-	var moved_count: int
-	var failed_count: int
-	var folder_name: string
-	var folder_path: string
-	var source_name: string
-	var source_path: string
-	var destination_name: string
-	if (drag_entry < 0 || drag_entry >= cached_entry_count || folder_index < 0 || folder_index >= cached_entry_count) { return }
-	if (entry_directory_cache[folder_index] == 0 || dragged_entry_in_group(folder_index)) { return }
-	folder_name = entry_name_cache[folder_index]
-	folder_path = explorer_join_path(current_path, folder_name)
-	index = 0
-	moved_count = 0
-	failed_count = 0
-	while (index < cached_entry_count) {
-		if (dragged_entry_in_group(index)) {
-			source_name = entry_name_cache[index]
-			source_path = explorer_join_path(current_path, source_name)
-			destination_name = explorer_unique_child_name(folder_path, source_name, entry_directory_cache[index] != 0)
-			operation_ok = os::rename(source_path, explorer_join_path(folder_path, destination_name))
-			if (operation_ok) { moved_count += 1 }
-			else { failed_count += 1 }
-		}
-		index += 1
-	}
-	if (moved_count > 0) {
-		call reset_energy_shells()
-		if (failed_count > 0) { call explorer_set(status_text, "Some selected items could not be moved") }
-		else { call explorer_set(status_text, xestring::concat("Moved into ", folder_name)) }
-	}
-	else { call explorer_set(status_text, "Move failed") }
-}
-
-proc move_dragged_entries_to_path(destination_path: string) {
-	var index: int
-	var moved_count: int
-	var failed_count: int
-	var source_name: string
-	var source_path: string
-	var destination_name: string
-	if (drag_entry < 0 || drag_entry >= cached_entry_count) { return }
-	if (explorer_strings_equal(current_path, destination_path)) { return }
-	index = 0
-	moved_count = 0
-	failed_count = 0
-	while (index < cached_entry_count) {
-		if (dragged_entry_in_group(index)) {
-			source_name = entry_name_cache[index]
-			source_path = explorer_join_path(current_path, source_name)
-			destination_name = explorer_unique_child_name(destination_path, source_name, entry_directory_cache[index] != 0)
-			operation_ok = os::rename(source_path, explorer_join_path(destination_path, destination_name))
-			if (operation_ok) { moved_count += 1 }
-			else { failed_count += 1 }
-		}
-		index += 1
-	}
-	if (moved_count > 0) {
-		call reset_energy_shells()
-		if (failed_count > 0) { call explorer_set(status_text, "Some selected items could not be moved") }
-		else { call explorer_set(status_text, xestring::concat("Moved to ", destination_path)) }
-	}
-	else { call explorer_set(status_text, "Move failed") }
 }
 
 proc refresh_compacted_entry_metadata() {
@@ -1720,6 +2170,7 @@ proc refresh_compacted_entry_metadata() {
 	var source: int
 	var expected_name: string
 	var entry_path: string
+	call invalidate_published_orbit_scene()
 	actual_count = os::entry_count(current_path)
 	if (actual_count > 64) { actual_count = 64 }
 	if (actual_count != cached_entry_count) {
@@ -1808,9 +2259,11 @@ proc rebuild_orbit_command_stream() {
 		index += 1
 	}
 	orbit_stream_dirty = false
+	orbit_scene_static_dirty = true
+	orbit_phase_stream_dirty = false
 }
 
-proc prepare_context_delete() {
+proc prepare_entry_removal() {
 	var index: int
 	var shell: int
 	var population: int
@@ -1846,18 +2299,23 @@ proc capture_deletion_ghost(index: int) {
 	deletion_ghost_count += 1
 }
 
-proc compact_deleted_entries() {
+proc compact_removed_entries(preserve_shells: bool) {
 	var read_index: int
 	var write_index: int
+	var previous_count: int
 	var shell: int
 	var anchor: int
 	var population: int
 	var phase: int
+	previous_count = cached_entry_count
+	call invalidate_published_orbit_scene()
 	read_index = 0
 	write_index = 0
 	while (read_index < cached_entry_count) {
 		if (entry_delete_mark[read_index] == 0) {
-			entry_name_cache[write_index] = entry_name_cache[read_index]
+			if (write_index != read_index) {
+				call explorer_set(entry_name_cache[write_index], entry_name_cache[read_index])
+			}
 			entry_directory_cache[write_index] = entry_directory_cache[read_index]
 			entry_child_count_cache[write_index] = entry_child_count_cache[read_index]
 			entry_shell[write_index] = entry_shell[read_index]
@@ -1878,23 +2336,29 @@ proc compact_deleted_entries() {
 		}
 		read_index += 1
 	}
+	read_index = write_index
+	while (read_index < previous_count) {
+		call clear_cached_entry_record(read_index)
+		read_index += 1
+	}
 	cached_entry_count = write_index
 	slot_animation_active = cached_entry_count > 0
-	call compact_energy_shells(cached_entry_count)
+	if (preserve_shells) { call rebuild_shell_layout() }
+	else { call compact_energy_shells(cached_entry_count) }
 	shell = 0
 	while (shell < 8) {
-		deletion_shell_anchor[shell] = -1
+		removal_shell_anchor[shell] = -1
 		shell += 1
 	}
 	read_index = 0
 	while (read_index < cached_entry_count) {
 		shell = entry_shell[read_index]
-		if (deletion_shell_anchor[shell] < 0) { deletion_shell_anchor[shell] = read_index }
+		if (removal_shell_anchor[shell] < 0) { removal_shell_anchor[shell] = read_index }
 		read_index += 1
 	}
 	shell = 0
 	while (shell < shell_count) {
-		anchor = deletion_shell_anchor[shell]
+		anchor = removal_shell_anchor[shell]
 		population = shell_population_cache[shell]
 		if (anchor >= 0 && population > 0) {
 			phase = entry_preserved_angle[anchor] - entry_position_cache[anchor] * 360 / population - shell * 17
@@ -1917,7 +2381,89 @@ proc compact_deleted_entries() {
 	last_click_entry = -1
 	hovered_entry = -1
 	drop_folder_entry = -1
-	drag_entry = -1
+	call clear_entry_drag()
+}
+
+proc compact_deleted_entries() {
+	call compact_removed_entries(false)
+}
+
+proc compact_moved_entries() {
+	call compact_removed_entries(true)
+}
+
+proc move_dragged_entries_into_folder(folder_index: int) {
+	var index: int
+	var moved_count: int
+	var failed_count: int
+	var folder_name: string
+	var folder_path: string
+	var source_name: string
+	var source_path: string
+	var destination_name: string
+	if (drag_entry < 0 || drag_entry >= cached_entry_count || folder_index < 0 || folder_index >= cached_entry_count) { return }
+	if (entry_directory_cache[folder_index] == 0 || dragged_entry_in_group(folder_index)) { return }
+	folder_name = xestring::concat("", entry_name_cache[folder_index])
+	folder_path = explorer_join_path(current_path, folder_name)
+	call prepare_entry_removal()
+	index = 0
+	moved_count = 0
+	failed_count = 0
+	while (index < cached_entry_count) {
+		if (dragged_entry_in_group(index)) {
+			source_name = entry_name_cache[index]
+			source_path = explorer_join_path(current_path, source_name)
+			destination_name = explorer_unique_child_name(folder_path, source_name, entry_directory_cache[index] != 0)
+			operation_ok = os::rename(source_path, explorer_join_path(folder_path, destination_name))
+			if (operation_ok) {
+				entry_delete_mark[index] = 1
+				moved_count += 1
+			}
+			else { failed_count += 1 }
+		}
+		index += 1
+	}
+	if (moved_count > 0) {
+		call compact_moved_entries()
+		if (failed_count > 0) { call set_explorer_status("Some items were not moved") }
+		else { call set_explorer_status(xestring::concat("Moved into ", folder_name)) }
+	}
+	else { call set_explorer_status("Move failed") }
+}
+
+proc move_dragged_entries_to_path(destination_path: string) {
+	var index: int
+	var moved_count: int
+	var failed_count: int
+	var source_name: string
+	var source_path: string
+	var destination_name: string
+	if (drag_entry < 0 || drag_entry >= cached_entry_count) { return }
+	if (explorer_strings_equal(current_path, destination_path)) { return }
+	call prepare_entry_removal()
+	index = 0
+	moved_count = 0
+	failed_count = 0
+	while (index < cached_entry_count) {
+		if (dragged_entry_in_group(index)) {
+			source_name = entry_name_cache[index]
+			source_path = explorer_join_path(current_path, source_name)
+			destination_name = explorer_unique_child_name(destination_path, source_name, entry_directory_cache[index] != 0)
+			operation_ok = os::rename(source_path, explorer_join_path(destination_path, destination_name))
+			if (operation_ok) {
+				entry_delete_mark[index] = 1
+				moved_count += 1
+			}
+			else { failed_count += 1 }
+		}
+		index += 1
+	}
+	if (moved_count > 0) {
+		call compact_moved_entries()
+		if (failed_count > 0) { call set_explorer_status("Some items were not moved") }
+		else { call set_explorer_status(xestring::concat("Moved to ", destination_path)) }
+	}
+	else { call set_explorer_status("Move failed") }
 }
 
 proc confirm_context_delete() {
@@ -1932,7 +2478,7 @@ proc confirm_context_delete() {
 		return
 	}
 	use_selection = entry_selected[context_entry] != 0 && selected_entry_count() > 0
-	call prepare_context_delete()
+	call prepare_entry_removal()
 	index = 0
 	deleted_count = 0
 	failed_count = 0
@@ -1951,12 +2497,12 @@ proc confirm_context_delete() {
 	}
 	if (deleted_count > 0) {
 		call compact_deleted_entries()
-		if (failed_count > 0) { call explorer_set(status_text, "Some selected items could not be deleted") }
-		elseif (deleted_count == 1) { call explorer_set(status_text, "Moved to Trash") }
-		else { call explorer_set(status_text, "Moved selected items to Trash") }
+		if (failed_count > 0) { call set_explorer_status("Some items were not deleted") }
+		elseif (deleted_count == 1) { call set_explorer_status("Moved to Trash") }
+		else { call set_explorer_status("Moved items to Trash") }
 	}
 	else {
-		call explorer_set(status_text, "Delete failed")
+		call set_explorer_status("Delete failed")
 	}
 	delete_confirm = false
 	context_open = false
@@ -1968,101 +2514,154 @@ proc delete_dragged_entries() {
 	call confirm_context_delete()
 }
 
-proc draw_breadcrumbs(x: int, y: int, area_width: int) {
+proc refresh_breadcrumb_layout(area_width: int) {
 	var index: int
 	var start: int
-	var segment: string
-	var destination: string
-	var cursor_x: int
+	var copy_index: int
 	var path_length: int
+	var cursor_offset: int
+	var remaining_width: int
+	var visible_chars: int
+	if (breadcrumb_layout_revision == current_path_revision && breadcrumb_layout_width == area_width) { return }
+	breadcrumb_count = 0
+	cursor_offset = 16
+	path_length = xestring::strlen(current_path)
+	index = 0
+	start = 0
+	while (!current_path_is_root && index <= path_length && cursor_offset < area_width - 20 && breadcrumb_count < BREADCRUMB_CACHE_LIMIT) {
+		if (index == path_length || (int)(current_path[index]) == 47) {
+			breadcrumb_label_width[breadcrumb_count] = 0
+			copy_index = start
+			while (copy_index < index) {
+				breadcrumb_label_width[breadcrumb_count] += explorer_char_advance(current_path[copy_index], graphics::FONT_NORMAL)
+				copy_index += 1
+			}
+			if (breadcrumb_label_width[breadcrumb_count] > 0) { breadcrumb_label_width[breadcrumb_count] -= 1 }
+			breadcrumb_segment_width[breadcrumb_count] = breadcrumb_label_width[breadcrumb_count] + 8
+			remaining_width = area_width - cursor_offset
+			if (breadcrumb_segment_width[breadcrumb_count] > remaining_width) { breadcrumb_segment_width[breadcrumb_count] = remaining_width }
+			visible_chars = index - start
+			while (visible_chars > 0 && breadcrumb_label_width[breadcrumb_count] > breadcrumb_segment_width[breadcrumb_count] - 2) {
+				visible_chars -= 1
+				if (visible_chars == 0) { breadcrumb_label_width[breadcrumb_count] = 0 }
+				else { breadcrumb_label_width[breadcrumb_count] -= explorer_char_advance(current_path[start + visible_chars], graphics::FONT_NORMAL) }
+			}
+			call explorer_clear(breadcrumb_label[breadcrumb_count])
+			copy_index = 0
+			while (copy_index < visible_chars) {
+				call xestring::append_char(breadcrumb_label[breadcrumb_count], current_path[start + copy_index])
+				copy_index += 1
+			}
+			call explorer_clear(breadcrumb_destination[breadcrumb_count])
+			if (index < path_length) {
+				breadcrumb_is_parent[breadcrumb_count] = 1
+				copy_index = 0
+				while (copy_index < index) {
+					call xestring::append_char(breadcrumb_destination[breadcrumb_count], current_path[copy_index])
+					copy_index += 1
+				}
+			}
+			else { breadcrumb_is_parent[breadcrumb_count] = 0 }
+			cursor_offset += breadcrumb_segment_width[breadcrumb_count] + 2
+			breadcrumb_count += 1
+			start = index + 1
+		}
+		index += 1
+	}
+	breadcrumb_layout_revision = current_path_revision
+	breadcrumb_layout_width = area_width
+}
+
+proc draw_breadcrumbs(x: int, y: int, area_width: int) {
+	var index: int
+	var cursor_x: int
 	var segment_width: int
 	var pointer_x: int
 	var pointer_y: int
 	var drop_color: int
+	var text_color: int
 	var dragging_path: bool
-	var remaining_width: int
-	segment = ""
+	var modal_open: bool
+	var pointer_hot: bool
+	var button_hot: bool
+	var button_clicked: bool
+	call refresh_breadcrumb_layout(area_width)
 	cursor_x = x
-	pointer_x = graphics::pointer_x(explorer_window)
-	pointer_y = graphics::pointer_y(explorer_window)
+	pointer_x = frame_pointer_x
+	pointer_y = frame_pointer_y
+	modal_open = explorer_modal_open()
+	text_color = explorer_control_text_color()
+	button_hot = frame_mouse_down || frame_mouse_released || (pointer_x >= cursor_x && pointer_x < cursor_x + 14 && pointer_y >= y && pointer_y < y + 9)
 	dragging_path = drag_entry >= 0 && drag_moved
 	if (dragging_path) {
 		drop_color = visual_surface
-		if (!explorer_strings_equal(current_path, ".") && pointer_x >= cursor_x && pointer_x < cursor_x + 14 && pointer_y >= y && pointer_y < y + 9) {
+		if (!current_path_is_root && pointer_x >= cursor_x && pointer_x < cursor_x + 14 && pointer_y >= y && pointer_y < y + 9) {
 			drop_color = visual_accent
 			drop_path_active = true
 			call explorer_set(drop_path_target, ".")
 		}
 		call graphics::fill_rect(explorer_window, cursor_x, y, 14, 9, drop_color)
-		call draw_explorer_text_centered(cursor_x, y + 1, 14, "/", graphics::FONT_NORMAL, visual_outline)
+		call draw_explorer_fixed_label_centered(cursor_x, y + 1, 14, "/", path_separator_width, visual_outline)
 	}
-	elseif (!explorer_modal_open()) {
-		if (graphics::button_flat(explorer_window, cursor_x, y, 14, 9, "/", graphics::COLOR_8)) {
-			if (!explorer_strings_equal(current_path, ".")) {
-				call begin_path_transition(".")
+	elseif (!modal_open) {
+		if (button_hot) {
+			button_clicked = explorer_fixed_label_button(cursor_x, y, 14, 9, "/", path_separator_width, graphics::COLOR_8, text_color)
+			if (button_clicked) {
+				if (!current_path_is_root) { call begin_path_transition(".") }
+				return
 			}
-			return
+		}
+		else {
+			call graphics::fill_rect(explorer_window, cursor_x, y, 14, 9, graphics::COLOR_8)
+			call draw_explorer_fixed_label_centered(cursor_x, y + 1, 14, "/", path_separator_width, text_color)
 		}
 	}
 	else {
 		call graphics::fill_rect(explorer_window, cursor_x, y, 14, 9, visual_surface)
-		call draw_explorer_text_centered(cursor_x, y + 1, 14, "/", graphics::FONT_NORMAL, visual_outline)
+		call draw_explorer_fixed_label_centered(cursor_x, y + 1, 14, "/", path_separator_width, visual_outline)
 	}
 	cursor_x += 16
-	if (!explorer_strings_equal(current_path, ".")) {
-		path_length = xestring::strlen(current_path)
-		index = 0
-		start = 0
-		while (index <= path_length && cursor_x < x + area_width - 20) {
-			if (index == path_length || (int)(current_path[index]) == 47) {
-				call explorer_clear(segment)
-				while (start < index) {
-					call xestring::append_char(segment, current_path[start])
-					start += 1
-				}
-				segment_width = explorer_text_width_clipped(segment, xestring::strlen(segment), graphics::FONT_NORMAL) + 8
-				remaining_width = x + area_width - cursor_x
-				if (segment_width > remaining_width) { segment_width = remaining_width }
-				if (dragging_path) {
-					drop_color = visual_surface
-					if (index < path_length && pointer_x >= cursor_x && pointer_x < cursor_x + segment_width && pointer_y >= y && pointer_y < y + 9) {
-						destination = explorer_path_prefix(current_path, index)
-						drop_color = visual_accent
-						drop_path_active = true
-						call explorer_set(drop_path_target, destination)
-					}
-					call graphics::fill_rect(explorer_window, cursor_x, y, segment_width, 9, drop_color)
-					call draw_explorer_text_centered(cursor_x, y + 1, segment_width, segment, graphics::FONT_NORMAL, visual_outline)
-				}
-				elseif (!explorer_modal_open()) {
-					if (graphics::button_flat(explorer_window, cursor_x, y, segment_width, 9, segment, graphics::COLOR_8)) {
-						if (index < path_length) {
-							destination = explorer_path_prefix(current_path, index)
-							call begin_path_transition(destination)
-						}
-						return
-					}
-				}
-				else {
-					call graphics::fill_rect(explorer_window, cursor_x, y, segment_width, 9, visual_surface)
-					call draw_explorer_text_centered(cursor_x, y + 1, segment_width, segment, graphics::FONT_NORMAL, visual_outline)
-				}
-				cursor_x += segment_width + 2
-				start = index + 1
+	index = 0
+	while (index < breadcrumb_count) {
+		segment_width = breadcrumb_segment_width[index]
+		pointer_hot = pointer_x >= cursor_x && pointer_x < cursor_x + segment_width && pointer_y >= y && pointer_y < y + 9
+		button_hot = frame_mouse_down || frame_mouse_released || pointer_hot
+		if (dragging_path) {
+			drop_color = visual_surface
+			if (breadcrumb_is_parent[index] != 0 && pointer_hot) {
+				drop_color = visual_accent
+				drop_path_active = true
+				call explorer_set(drop_path_target, breadcrumb_destination[index])
 			}
-			index += 1
+			call graphics::fill_rect(explorer_window, cursor_x, y, segment_width, 9, drop_color)
+			call draw_explorer_fixed_label_centered(cursor_x, y + 1, segment_width, breadcrumb_label[index], breadcrumb_label_width[index], visual_outline)
 		}
+		elseif (!modal_open && button_hot) {
+			button_clicked = explorer_fixed_label_button(cursor_x, y, segment_width, 9, breadcrumb_label[index], breadcrumb_label_width[index], graphics::COLOR_8, text_color)
+			if (button_clicked) {
+				if (breadcrumb_is_parent[index] != 0) { call begin_path_transition(breadcrumb_destination[index]) }
+				return
+			}
+		}
+		elseif (!modal_open) {
+			call graphics::fill_rect(explorer_window, cursor_x, y, segment_width, 9, graphics::COLOR_8)
+			call draw_explorer_fixed_label_centered(cursor_x, y + 1, segment_width, breadcrumb_label[index], breadcrumb_label_width[index], text_color)
+		}
+		else {
+			call graphics::fill_rect(explorer_window, cursor_x, y, segment_width, 9, visual_surface)
+			call draw_explorer_fixed_label_centered(cursor_x, y + 1, segment_width, breadcrumb_label[index], breadcrumb_label_width[index], visual_outline)
+		}
+		cursor_x += segment_width + 2
+		index += 1
 	}
 }
 
 fn viewer_row_height(font_size: int) int {
-	if (font_size <= graphics::FONT_SMALL) { return 6 }
 	if (font_size >= graphics::FONT_LARGE) { return 16 }
 	return 8
 }
 
 fn viewer_font_size(content_width: int, content_height: int) int {
-	if (content_width < 88 || content_height < 32) { return graphics::FONT_SMALL }
 	return graphics::FONT_NORMAL
 }
 
@@ -2077,8 +2676,8 @@ fn viewer_word_end(start: int) int {
 	var index: int
 	var code: int
 	index = start
-	while (index < xestring::strlen(viewer_content)) {
-		code = (int)(viewer_content[index])
+	while (index < xestring::strlen(viewer_content[viewer_active_slot])) {
+		code = (int)(viewer_content[viewer_active_slot][index])
 		if (code == 9 || code == 10 || code == 13 || code == 32) { return index }
 		index += 1
 	}
@@ -2092,9 +2691,9 @@ fn viewer_word_width(start: int, finish: int, font_size: int) int {
 	index = start
 	result = 0
 	while (index < finish) {
-		code = (int)(viewer_content[index])
+		code = (int)(viewer_content[viewer_active_slot][index])
 		if (code >= 32 && code <= 126) {
-			result += graphics::char_advance(viewer_content[index], font_size)
+			result += graphics::char_advance(viewer_content[viewer_active_slot][index], font_size)
 		}
 		index += 1
 	}
@@ -2113,8 +2712,8 @@ fn viewer_line_count(content_width: int, font_size: int) int {
 	index = 0
 	column = 0
 	lines = 1
-	while (index < xestring::strlen(viewer_content)) {
-		code = (int)(viewer_content[index])
+	while (index < xestring::strlen(viewer_content[viewer_active_slot])) {
+		code = (int)(viewer_content[viewer_active_slot][index])
 		if (code == 10) {
 			lines += 1
 			column = 0
@@ -2139,7 +2738,7 @@ fn viewer_line_count(content_width: int, font_size: int) int {
 					column = 0
 				}
 				while (index < finish) {
-					advance = graphics::char_advance(viewer_content[index], font_size)
+					advance = graphics::char_advance(viewer_content[viewer_active_slot][index], font_size)
 					if (column > 0 && column + advance > content_width) {
 						lines += 1
 						column = 0
@@ -2171,15 +2770,15 @@ proc viewer_seek_to_line(target_line: int, content_width: int, font_size: int) {
 	var advance: int
 	if (target_line < 0) { target_line = 0 }
 	if (content_width < 1) { content_width = 1 }
-	if (target_line < viewer_seek_line) {
-		viewer_seek_index = 0
-		viewer_seek_line = 0
+	if (target_line < viewer_seek_line[viewer_active_slot]) {
+		viewer_seek_index[viewer_active_slot] = 0
+		viewer_seek_line[viewer_active_slot] = 0
 	}
-	index = viewer_seek_index
-	line = viewer_seek_line
+	index = viewer_seek_index[viewer_active_slot]
+	line = viewer_seek_line[viewer_active_slot]
 	column = 0
-	while (index < xestring::strlen(viewer_content) && line < target_line) {
-		code = (int)(viewer_content[index])
+	while (index < xestring::strlen(viewer_content[viewer_active_slot]) && line < target_line) {
+		code = (int)(viewer_content[viewer_active_slot][index])
 		if (code == 10) {
 			line += 1
 			column = 0
@@ -2201,7 +2800,7 @@ proc viewer_seek_to_line(target_line: int, content_width: int, font_size: int) {
 					column = 0
 				}
 				while (index < finish && line < target_line) {
-					advance = graphics::char_advance(viewer_content[index], font_size)
+					advance = graphics::char_advance(viewer_content[viewer_active_slot][index], font_size)
 					if (column > 0 && column + advance > content_width) {
 						line += 1
 						column = 0
@@ -2224,8 +2823,8 @@ proc viewer_seek_to_line(target_line: int, content_width: int, font_size: int) {
 			}
 		}
 	}
-	viewer_seek_index = index
-	viewer_seek_line = line
+	viewer_seek_index[viewer_active_slot] = index
+	viewer_seek_line[viewer_active_slot] = line
 }
 
 proc draw_viewer_content(x: int, y: int, content_width: int, content_height: int, font_size: int) {
@@ -2239,25 +2838,46 @@ proc draw_viewer_content(x: int, y: int, content_width: int, content_height: int
 	var word_width: int
 	var advance: int
 	var row_height: int
+	var space_advance: int
+	var gap_spaces: int
 	row_height = viewer_row_height(font_size)
 	maximum_lines = content_height / row_height
 	if (maximum_lines < 1) { maximum_lines = 1 }
-	if (xestring::strlen(viewer_content) == 0) {
+	if (maximum_lines > 64) { maximum_lines = 64 }
+	viewer_text_cache_building[viewer_active_slot] = !viewer_text_cache_valid[viewer_active_slot] || viewer_text_cache_scroll[viewer_active_slot] != viewer_scroll[viewer_active_slot] || viewer_text_cache_maximum_lines[viewer_active_slot] != maximum_lines
+	if (!viewer_text_cache_building[viewer_active_slot] && !viewer_text_cache_fallback[viewer_active_slot]) {
 		index = 0
-		column = 0
-		while (index < xestring::strlen("(Empty file.)")) {
-			call graphics::draw_char_styled(explorer_window, x + column, y, "(Empty file.)"[index], graphics::WHITE, font_size, 0)
-			column += graphics::char_advance("(Empty file.)"[index], font_size)
+		while (index < viewer_row_cache_lines[viewer_active_slot]) {
+			if (xestring::strlen(viewer_row_cache[viewer_cache_index(index)]) > 0) {
+				call draw_viewer_text_standard(x, y + index * row_height, viewer_row_cache[viewer_cache_index(index)], font_size, graphics::WHITE)
+			}
 			index += 1
 		}
 		return
 	}
-	call viewer_seek_to_line(viewer_scroll, content_width, font_size)
-	index = viewer_seek_index
+	if (viewer_text_cache_building[viewer_active_slot]) {
+		index = 0
+		while (index < viewer_row_cache_lines[viewer_active_slot] || index < maximum_lines) {
+			call explorer_clear(viewer_row_cache[viewer_cache_index(index)])
+			index += 1
+		}
+		viewer_row_cache_lines[viewer_active_slot] = maximum_lines
+		viewer_text_cache_fallback[viewer_active_slot] = false
+		viewer_text_cache_scroll[viewer_active_slot] = viewer_scroll[viewer_active_slot]
+		viewer_text_cache_maximum_lines[viewer_active_slot] = maximum_lines
+	}
+	if (xestring::strlen(viewer_content[viewer_active_slot]) == 0) {
+		if (viewer_text_cache_building[viewer_active_slot]) { call explorer_set(viewer_row_cache[viewer_cache_index(0)], "(Empty file.)") }
+		viewer_text_cache_valid[viewer_active_slot] = true
+		call draw_viewer_text_standard(x, y, viewer_row_cache[viewer_cache_index(0)], font_size, graphics::WHITE)
+		return
+	}
+	call viewer_seek_to_line(viewer_scroll[viewer_active_slot], content_width, font_size)
+	index = viewer_seek_index[viewer_active_slot]
 	column = 0
-	line = viewer_seek_line
-	while (index < xestring::strlen(viewer_content) && line < viewer_scroll + maximum_lines) {
-		code = (int)(viewer_content[index])
+	line = viewer_seek_line[viewer_active_slot]
+	while (index < xestring::strlen(viewer_content[viewer_active_slot]) && line < viewer_scroll[viewer_active_slot] + maximum_lines) {
+		code = (int)(viewer_content[viewer_active_slot][index])
 		if (code == 10) {
 			line += 1
 			column = 0
@@ -2267,6 +2887,22 @@ proc draw_viewer_content(x: int, y: int, content_width: int, content_height: int
 		elseif (code == 9 || code == ' ') {
 			if (code == 9) { advance = viewer_tab_advance(column, font_size) }
 			else { advance = graphics::char_advance(' ', font_size) }
+			if (viewer_text_cache_building[viewer_active_slot] && !viewer_text_cache_fallback[viewer_active_slot] && column + advance <= content_width) {
+				if (code == 32) { call xestring::append_char(viewer_row_cache[viewer_cache_index(line - viewer_scroll[viewer_active_slot])], ' ') }
+				else {
+					space_advance = graphics::char_advance(' ', font_size)
+					if (space_advance < 1 || advance % space_advance != 0) {
+						viewer_text_cache_fallback[viewer_active_slot] = true
+					}
+					else {
+						gap_spaces = advance / space_advance
+						while (gap_spaces > 0) {
+							call xestring::append_char(viewer_row_cache[viewer_cache_index(line - viewer_scroll[viewer_active_slot])], ' ')
+							gap_spaces -= 1
+						}
+					}
+				}
+			}
 			column += advance
 			index += 1
 		}
@@ -2279,14 +2915,15 @@ proc draw_viewer_content(x: int, y: int, content_width: int, content_height: int
 					column = 0
 				}
 				while (index < finish) {
-					advance = graphics::char_advance(viewer_content[index], font_size)
+					advance = graphics::char_advance(viewer_content[viewer_active_slot][index], font_size)
 					if (column > 0 && column + advance > content_width) {
 						line += 1
 						column = 0
 					}
-					if (line >= viewer_scroll && line < viewer_scroll + maximum_lines && column + advance <= content_width) {
-						visible_line = line - viewer_scroll
-						call graphics::draw_char_styled(explorer_window, x + column, y + visible_line * row_height, viewer_content[index], graphics::WHITE, font_size, 0)
+					if (line >= viewer_scroll[viewer_active_slot] && line < viewer_scroll[viewer_active_slot] + maximum_lines && column + advance <= content_width) {
+						visible_line = line - viewer_scroll[viewer_active_slot]
+						call draw_viewer_char_standard(x + column, y + visible_line * row_height, viewer_content[viewer_active_slot][index], font_size, graphics::WHITE)
+						if (viewer_text_cache_building[viewer_active_slot] && !viewer_text_cache_fallback[viewer_active_slot]) { call xestring::append_char(viewer_row_cache[viewer_cache_index(visible_line)], viewer_content[viewer_active_slot][index]) }
 					}
 					column += advance
 					index += 1
@@ -2298,12 +2935,13 @@ proc draw_viewer_content(x: int, y: int, content_width: int, content_height: int
 					column = 0
 				}
 				while (index < finish) {
-					code = (int)(viewer_content[index])
+					code = (int)(viewer_content[viewer_active_slot][index])
 					if (code >= 32 && code <= 126) {
-						advance = graphics::char_advance(viewer_content[index], font_size)
-						if (line >= viewer_scroll && line < viewer_scroll + maximum_lines && column + advance <= content_width) {
-							visible_line = line - viewer_scroll
-							call graphics::draw_char_styled(explorer_window, x + column, y + visible_line * row_height, viewer_content[index], graphics::WHITE, font_size, 0)
+						advance = graphics::char_advance(viewer_content[viewer_active_slot][index], font_size)
+						if (line >= viewer_scroll[viewer_active_slot] && line < viewer_scroll[viewer_active_slot] + maximum_lines && column + advance <= content_width) {
+							visible_line = line - viewer_scroll[viewer_active_slot]
+							call draw_viewer_char_standard(x + column, y + visible_line * row_height, viewer_content[viewer_active_slot][index], font_size, graphics::WHITE)
+							if (viewer_text_cache_building[viewer_active_slot] && !viewer_text_cache_fallback[viewer_active_slot]) { call xestring::append_char(viewer_row_cache[viewer_cache_index(visible_line)], viewer_content[viewer_active_slot][index]) }
 						}
 						column += advance
 					}
@@ -2312,72 +2950,75 @@ proc draw_viewer_content(x: int, y: int, content_width: int, content_height: int
 			}
 		}
 	}
+	if (viewer_text_cache_building[viewer_active_slot]) { viewer_text_cache_valid[viewer_active_slot] = true }
 }
 
 proc draw_file_viewer() {
-	var panel_x: int
-	var panel_y: int
 	var panel_width: int
 	var panel_height: int
+	var content_y: int
 	var body_height: int
 	var content_width: int
 	var font_size: int
 	var maximum_lines: int
 	var maximum_scroll: int
-	panel_x = 4
-	panel_y = 4
-	panel_width = width - 8
-	panel_height = height - 8
-	if (panel_width < 8) { panel_x = 0; panel_width = width }
-	if (panel_height < 12) { panel_y = 0; panel_height = height }
+	panel_width = viewer_width[viewer_active_slot]
+	panel_height = viewer_height[viewer_active_slot]
 	if (panel_width < 1) { panel_width = 1 }
 	if (panel_height < 1) { panel_height = 1 }
-	call graphics::fill_rect(explorer_window, panel_x, panel_y, panel_width, panel_height, visual_surface)
-	call graphics::draw_rect(explorer_window, panel_x, panel_y, panel_width, panel_height, visual_accent)
-	if (panel_width >= 48) {
-		call draw_explorer_text_clipped(panel_x + 4, panel_y + 2, viewer_name, (panel_width - 44) / 4, visual_highlight)
+	call fill_viewer_rect(0, 0, panel_width, panel_height, visual_surface)
+	content_y = 3
+	if (panel_width >= 72 && panel_height >= 12) {
+		if (viewer_flat_button_aligned(panel_width - 70, 1, 26, 8, "Up", visual_surface, explorer_control_text_color()) && viewer_scroll[viewer_active_slot] > 0) {
+			viewer_scroll[viewer_active_slot] -= 1
+		}
+		if (viewer_flat_button_aligned(panel_width - 42, 1, 40, 8, "Down", visual_surface, explorer_control_text_color())) {
+			viewer_scroll[viewer_active_slot] += 1
+		}
+		content_y = 12
 	}
-	if (panel_width >= 40 && graphics::button_flat(explorer_window, panel_x + panel_width - 36, panel_y + 1, 34, 8, "Close", visual_surface)) {
-		viewer_open = false
-		return
-	}
-	elseif (panel_width >= 10 && panel_width < 40 && graphics::button_flat(explorer_window, panel_x + panel_width - 9, panel_y + 1, 7, 8, "X", visual_surface)) {
-		viewer_open = false
-		return
-	}
-	body_height = panel_height - 15
+	body_height = panel_height - content_y - 3
 	content_width = panel_width - 8
 	if (body_height < 1) { body_height = 1 }
 	if (content_width < 1) { content_width = 1 }
 	font_size = viewer_font_size(content_width, body_height)
 	maximum_lines = body_height / viewer_row_height(font_size)
 	if (maximum_lines < 1) { maximum_lines = 1 }
-	if (viewer_layout_width != content_width || viewer_layout_font != font_size) {
-		viewer_layout_width = content_width
-		viewer_layout_font = font_size
-		viewer_layout_lines = viewer_line_count(content_width, font_size)
-		viewer_seek_index = 0
-		viewer_seek_line = 0
+	if (viewer_layout_width[viewer_active_slot] != content_width || viewer_layout_font[viewer_active_slot] != font_size) {
+		viewer_layout_width[viewer_active_slot] = content_width
+		viewer_layout_font[viewer_active_slot] = font_size
+		viewer_layout_lines[viewer_active_slot] = viewer_line_count(content_width, font_size)
+		viewer_seek_index[viewer_active_slot] = 0
+		viewer_seek_line[viewer_active_slot] = 0
+		viewer_text_cache_valid[viewer_active_slot] = false
 	}
-	maximum_scroll = viewer_layout_lines - maximum_lines
+	maximum_scroll = viewer_layout_lines[viewer_active_slot] - maximum_lines
 	if (maximum_scroll < 0) { maximum_scroll = 0 }
-	if (viewer_scroll > maximum_scroll) { viewer_scroll = maximum_scroll }
-	if (panel_width >= 108 && panel_height >= 12) {
-		if (graphics::button_flat(explorer_window, panel_x + panel_width - 100, panel_y + 1, 26, 8, "Up", visual_surface) && viewer_scroll > 0) {
-			viewer_scroll -= 1
-		}
-		if (graphics::button_flat(explorer_window, panel_x + panel_width - 72, panel_y + 1, 34, 8, "Down", visual_surface) && viewer_scroll < maximum_scroll) {
-			viewer_scroll += 1
-		}
+	if (viewer_scroll[viewer_active_slot] > maximum_scroll) { viewer_scroll[viewer_active_slot] = maximum_scroll }
+	call draw_viewer_content(4, content_y, content_width, body_height, font_size)
+}
+
+proc dismiss_context_menu_outside_press() {
+	var menu_width: int
+	var menu_height: int
+	if (!context_open || !frame_mouse_pressed) { return }
+	menu_width = 68
+	menu_height = 20
+	if (selected_entry_count() == 1) { menu_height += 9 }
+	if (menu_width > width - 4) { menu_width = width - 4 }
+	if (context_x + menu_width > width - 2) { context_x = width - menu_width - 2 }
+	if (context_y + menu_height > height - 2) { context_y = height - menu_height - 2 }
+	if (context_x < 2) { context_x = 2 }
+	if (context_y < 2) { context_y = 2 }
+	if (frame_pointer_x < context_x || frame_pointer_x >= context_x + menu_width || frame_pointer_y < context_y || frame_pointer_y >= context_y + menu_height) {
+		context_open = false
 	}
-	call draw_viewer_content(panel_x + 4, panel_y + 12, content_width, body_height, font_size)
 }
 
 proc draw_context_menu() {
 	var menu_width: int
 	var menu_height: int
 	var inside: bool
-	var delete_y: int
 	var single_file: bool
 	
 	single_file = selected_entry_count() == 1
@@ -2388,28 +3029,28 @@ proc draw_context_menu() {
 	if (context_y + menu_height > height - 2) { context_y = height - menu_height - 2 }
 	if (context_x < 2) { context_x = 2 }
 	if (context_y < 2) { context_y = 2 }
-	inside = graphics::pointer_x(explorer_window) >= context_x && graphics::pointer_x(explorer_window) < context_x + menu_width && graphics::pointer_y(explorer_window) >= context_y && graphics::pointer_y(explorer_window) < context_y + menu_height
-	if (graphics::mouse_pressed() && !inside) {
+	inside = frame_pointer_x >= context_x && frame_pointer_x < context_x + menu_width && frame_pointer_y >= context_y && frame_pointer_y < context_y + menu_height
+	if (frame_mouse_pressed && !inside) {
 		context_open = false
 		return
 	}
 	call graphics::fill_rect(explorer_window, context_x, context_y, menu_width, menu_height, visual_surface)
-	call graphics::draw_text_small(explorer_window, context_x + 3, context_y + 2, "Actions", visual_outline)
-	if (graphics::button_flat(explorer_window, context_x + menu_width - 10, context_y + 1, 8, 7, "x", visual_surface)) {
+	call draw_explorer_text_standard(context_x + 3, context_y + 2, "Actions", graphics::FONT_NORMAL, visual_outline)
+	if (explorer_flat_button_aligned(context_x + menu_width - 10, context_y + 1, 8, 7, "x", visual_surface, explorer_control_text_color())) {
 		context_open = false
 		return
 	}
 	if (single_file) {
-		if (graphics::button_flat(explorer_window, context_x + 2, context_y + 10, menu_width - 4, 8, "Rename", visual_surface)) {
+		if (explorer_flat_button_aligned(context_x + 2, context_y + 10, menu_width - 4, 8, "Rename", visual_surface, explorer_control_text_color())) {
 			call begin_rename(context_entry)
 			return
 		}
 	}
 	else {
 		call graphics::fill_rect(explorer_window, context_x + 2, context_y + 10, menu_width - 4, 8, visual_surface)
-		call draw_explorer_text_centered(context_x + 2, context_y + 11, menu_width - 4, "Rename", graphics::FONT_NORMAL, visual_shell)
+		call draw_explorer_text_centered(context_x + 2, context_y + 10, menu_width - 4, "Rename", graphics::FONT_NORMAL, visual_shell)
 	}
-	if (graphics::button_flat(explorer_window, context_x + 2, context_y + 10 + (int)single_file * 9, menu_width - 4, 8, "Delete", graphics::COLOR_4)) {
+	if (explorer_flat_button_aligned(context_x + 2, context_y + 10 + (int)single_file * 9, menu_width - 4, 8, "Delete", graphics::COLOR_4, graphics::WHITE)) {
 		if ((graphics::modifiers() & graphics::MOD_SHIFT) != 0) {
 			call confirm_context_delete()
 		}
@@ -2425,14 +3066,17 @@ proc draw_inline_rename() {
 	var field_x: int
 	var field_y: int
 	var button_width: int
-	var visible_chars: int
 	var first_char: int
 	var index: int
-	var draw_index: int
 	var selection_begin: int
 	var selection_finish: int
-	var caret_column: int
 	var caret_x: int
+	var draw_x: int
+	var character_width: int
+	var text_area_width: int
+	var text_width_to_cursor: int
+	var pointer_cursor_found: bool
+	var drawing_text: bool
 	var pointer_x: int
 	var pointer_y: int
 	var pointer_in_field: bool
@@ -2446,23 +3090,39 @@ proc draw_inline_rename() {
 	if (field_x + field_width > width - 3) { field_x = width - field_width - 3 }
 	if (field_y + 22 > height - 3) { field_y = rename_anchor_y - 27 }
 	if (field_y < 3) { field_y = 3 }
-	pointer_x = graphics::pointer_x(explorer_window)
-	pointer_y = graphics::pointer_y(explorer_window)
-	visible_chars = (field_width - 6) / 4
-	if (visible_chars < 1) { visible_chars = 1 }
+	pointer_x = frame_pointer_x
+	pointer_y = frame_pointer_y
+	text_area_width = field_width - 4
 	first_char = 0
-	if (rename_cursor >= visible_chars) { first_char = rename_cursor - visible_chars + 1 }
+	text_width_to_cursor = 0
+	index = 0
+	while (index < rename_cursor && index < xestring::strlen(rename_text)) {
+		text_width_to_cursor += explorer_char_advance(rename_text[index], graphics::FONT_NORMAL)
+		index += 1
+	}
+	while (first_char < rename_cursor && text_width_to_cursor > text_area_width) {
+		text_width_to_cursor -= explorer_char_advance(rename_text[first_char], graphics::FONT_NORMAL)
+		first_char += 1
+	}
 	selection_begin = explorer_rename_selection_begin()
 	selection_finish = explorer_rename_selection_finish()
 	if (selection_begin == 0 && selection_finish == xestring::strlen(rename_text)) { first_char = 0 }
 	rename_first_char = first_char
 	pointer_in_field = pointer_x >= field_x && pointer_x < field_x + field_width && pointer_y >= field_y && pointer_y < field_y + 10
 	pointer_in_popup = pointer_x >= field_x && pointer_x < field_x + field_width && pointer_y >= field_y && pointer_y < field_y + 20
-	if (rename_pointer_guard == 0 && graphics::mouse_pressed()) {
+	if (rename_pointer_guard == 0 && frame_mouse_pressed) {
 		if (pointer_in_field) {
-			rename_cursor = rename_first_char + (pointer_x - field_x) / 4
-			if (rename_cursor < 0) { rename_cursor = 0 }
-			if (rename_cursor > xestring::strlen(rename_text)) { rename_cursor = xestring::strlen(rename_text) }
+			rename_cursor = rename_first_char
+			draw_x = field_x + 2
+			pointer_cursor_found = false
+			while (rename_cursor < xestring::strlen(rename_text) && draw_x < field_x + field_width - 2 && !pointer_cursor_found) {
+				character_width = explorer_char_advance(rename_text[rename_cursor], graphics::FONT_NORMAL)
+				if (pointer_x < draw_x + character_width / 2) { pointer_cursor_found = true }
+				else {
+					draw_x += character_width
+					rename_cursor += 1
+				}
+			}
 			call explorer_clear_rename_selection()
 		}
 		elseif (!pointer_in_popup) {
@@ -2473,28 +3133,35 @@ proc draw_inline_rename() {
 	call graphics::fill_rect(explorer_window, field_x, field_y, field_width, 10, visual_surface)
 	call graphics::draw_rect(explorer_window, field_x, field_y, field_width, 10, visual_accent)
 	index = first_char
-	draw_index = 0
-	while (index < xestring::strlen(rename_text) && draw_index < visible_chars) {
-		if (index >= selection_begin && index < selection_finish) {
-			call graphics::fill_rect(explorer_window, field_x + 2 + draw_index * 4, field_y + 2, 4, 6, graphics::COLOR_5)
+	draw_x = field_x + 2
+	drawing_text = true
+	while (index < xestring::strlen(rename_text) && draw_x < field_x + field_width - 2 && drawing_text) {
+		character_width = explorer_char_advance(rename_text[index], graphics::FONT_NORMAL)
+		if (draw_x + character_width > field_x + field_width - 1) { drawing_text = false }
+		else {
+			if (index >= selection_begin && index < selection_finish) {
+				call graphics::fill_rect(explorer_window, draw_x, field_y + 2, character_width, 7, graphics::COLOR_5)
+			}
+			call draw_explorer_char_standard(draw_x, field_y + 2, rename_text[index], graphics::FONT_NORMAL, graphics::WHITE)
+			draw_x += character_width
+			index += 1
 		}
-		call graphics::draw_char_small(explorer_window, field_x + 2 + draw_index * 4, field_y + 2, rename_text[index], graphics::WHITE)
-		index += 1
-		draw_index += 1
 	}
 	if ((current_ticks / 450) % 2 == 0) {
-		caret_column = rename_cursor - first_char
-		if (caret_column < 0) { caret_column = 0 }
-		if (caret_column > visible_chars) { caret_column = visible_chars }
-		caret_x = field_x + 2 + caret_column * 4
+		caret_x = field_x + 2
+		index = first_char
+		while (index < rename_cursor && index < xestring::strlen(rename_text) && caret_x < field_x + field_width - 3) {
+			caret_x += explorer_char_advance(rename_text[index], graphics::FONT_NORMAL)
+			index += 1
+		}
 		if (caret_x > field_x + field_width - 3) { caret_x = field_x + field_width - 3 }
 		call graphics::draw_line(explorer_window, caret_x, field_y + 2, caret_x, field_y + 7, visual_highlight)
 	}
 	button_width = (field_width - 2) / 2
-	if (graphics::button_flat(explorer_window, field_x, field_y + 11, button_width, 9, "Rename", visual_accent)) {
+	if (explorer_flat_button_aligned(field_x, field_y + 11, button_width, 9, "Rename", visual_accent, explorer_control_text_color())) {
 		call commit_rename()
 	}
-	if (graphics::button_flat(explorer_window, field_x + button_width + 2, field_y + 11, button_width, 9, "Cancel", visual_surface)) {
+	if (explorer_flat_button_aligned(field_x + button_width + 2, field_y + 11, button_width, 9, "Cancel", visual_surface, explorer_control_text_color())) {
 		call cancel_rename()
 	}
 }
@@ -2511,15 +3178,15 @@ proc draw_delete_dialog() {
 	call graphics::fill_rect(explorer_window, panel_x, panel_y, panel_width, 38, visual_surface)
 	call graphics::draw_rect(explorer_window, panel_x, panel_y, panel_width, 38, visual_accent)
 	if (selected_entry_count() > 1) {
-		call graphics::draw_text_small(explorer_window, panel_x + 4, panel_y + 5, "Move selected items to Trash?", visual_highlight)
+		call draw_explorer_text_centered(panel_x + 4, panel_y + 5, panel_width - 8, "Move selected items to Trash?", graphics::FONT_NORMAL, visual_highlight)
 	}
 	else {
-		call graphics::draw_text_small(explorer_window, panel_x + 4, panel_y + 5, "Move this item to Trash?", visual_highlight)
+		call draw_explorer_text_centered(panel_x + 4, panel_y + 5, panel_width - 8, "Move this item to Trash?", graphics::FONT_NORMAL, visual_highlight)
 	}
-	if (graphics::button_flat(explorer_window, panel_x + 4, panel_y + 23, (panel_width - 12) / 2, 10, "Delete", graphics::COLOR_4)) {
+	if (explorer_flat_button_aligned(panel_x + 4, panel_y + 23, (panel_width - 12) / 2, 10, "Delete", graphics::COLOR_4, graphics::WHITE)) {
 		call confirm_context_delete()
 	}
-	if (graphics::button_flat(explorer_window, panel_x + 8 + (panel_width - 12) / 2, panel_y + 23, (panel_width - 12) / 2, 10, "Cancel", visual_surface)) {
+	if (explorer_flat_button_aligned(panel_x + 8 + (panel_width - 12) / 2, panel_y + 23, (panel_width - 12) / 2, 10, "Cancel", visual_surface, explorer_control_text_color())) {
 		delete_confirm = false
 	}
 }
@@ -2534,25 +3201,36 @@ proc draw_explorer_sidebar(x: int, y: int, max_height: int) {
 	var pointer_y: int
 	var interactive: bool
 	var valid_drag: bool
+	var button_hot: bool
 	surface = graphics::COLOR_8
-	if (os::theme_mode == os::THEME_LIGHT) { surface = graphics::COLOR_1 }
-	panel_height = 62 * sidebar_progress / 100
-	if (panel_height < 9) { panel_height = 9 }
-	if (panel_height > max_height) { panel_height = max_height }
+	if (visual_theme_mode == os::THEME_LIGHT) { surface = graphics::COLOR_1 }
+	panel_height = explorer_sidebar_panel_height(max_height)
 	call graphics::fill_rect(explorer_window, x, y, sidebar_width, panel_height, surface)
 	interactive = !explorer_modal_open()
+	pointer_x = frame_pointer_x
+	pointer_y = frame_pointer_y
+	button_hot = frame_mouse_down || frame_mouse_released
+	if (pointer_x >= x) {
+		if (pointer_x < x + 14) {
+			if (pointer_y >= y) {
+				if (pointer_y < y + 9) { button_hot = true }
+			}
+		}
+	}
 	if (sidebar_open) {
-		if (interactive && graphics::button_flat(explorer_window, x, y, 14, 9, " ", surface)) { sidebar_open = false }
+		if (interactive && button_hot) {
+			if (graphics::button_flat(explorer_window, x, y, 14, 9, " ", surface)) { sidebar_open = false }
+		}
 		call draw_explorer_chevron(x + 5, y + 3, true, visual_outline)
 	}
 	else {
-		if (interactive && graphics::button_flat(explorer_window, x, y, 14, 9, " ", surface)) { sidebar_open = true }
+		if (interactive && button_hot) {
+			if (graphics::button_flat(explorer_window, x, y, 14, 9, " ", surface)) { sidebar_open = true }
+		}
 		call draw_explorer_chevron(x + 5, y + 2, false, visual_outline)
 	}
 	if (sidebar_progress >= 70 && max_height >= 48) {
-		call draw_explorer_text_clipped(x + 18, y + 2, "Create (Drag)", (sidebar_width - 20) / 4, visual_outline)
-		pointer_x = graphics::pointer_x(explorer_window)
-		pointer_y = graphics::pointer_y(explorer_window)
+		call draw_explorer_text_clipped(x + 18, y + 2, "Create (Drag)", sidebar_width - 20, visual_outline)
 		button_color = surface
 		if (interactive && drag_entry < 0 && drag_template == 0 && pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 12 && pointer_y < y + 22) { button_color = visual_shell }
 		call graphics::fill_rect(explorer_window, x + 3, y + 12, sidebar_width - 6, 10, button_color)
@@ -2561,13 +3239,16 @@ proc draw_explorer_sidebar(x: int, y: int, max_height: int) {
 		if (interactive && drag_entry < 0 && drag_template == 0 && pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 23 && pointer_y < y + 33) { button_color = visual_shell }
 		call graphics::fill_rect(explorer_window, x + 3, y + 23, sidebar_width - 6, 10, button_color)
 		call draw_explorer_text_centered(x + 3, y + 24, sidebar_width - 6, "New folder", graphics::FONT_NORMAL, visual_outline)
-		if (interactive && graphics::mouse_pressed() && pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 12 && pointer_y < y + 22) {
+		if (interactive && frame_mouse_pressed && pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 12 && pointer_y < y + 22) {
 			drag_template = 1
 		}
-		if (interactive && graphics::mouse_pressed() && pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 23 && pointer_y < y + 33) {
+		if (interactive && frame_mouse_pressed && pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 23 && pointer_y < y + 33) {
 			drag_template = 2
 		}
-		valid_drag = drag_entry >= 0 && drag_moved && graphics::mouse_down()
+		valid_drag = false
+		if (drag_entry >= 0) {
+			if (drag_moved) { valid_drag = frame_mouse_down }
+		}
 		danger_color = surface
 		danger_text_color = visual_outline
 		if (valid_drag && pointer_x >= x + 3 && pointer_x < x + sidebar_width - 3 && pointer_y >= y + 38 && pointer_y < y + 48) {
@@ -2577,7 +3258,7 @@ proc draw_explorer_sidebar(x: int, y: int, max_height: int) {
 		call graphics::fill_rect(explorer_window, x + 3, y + 38, sidebar_width - 6, 10, danger_color)
 		call draw_explorer_text_centered(x + 3, y + 39, sidebar_width - 6, "Trash (Drag)", graphics::FONT_NORMAL, danger_text_color)
 		if (sidebar_progress >= 90 && max_height >= 61) {
-			call graphics::draw_text_small(explorer_window, x + 3, y + 53, "Orbit", visual_outline)
+			call draw_explorer_text_standard(x + 3, y + 53, "Orbit", graphics::FONT_NORMAL, visual_outline)
 			if (interactive) {
 				orbit_speed_setting = graphics::slider(explorer_window, x + 26, y + 51, sidebar_width - 29, orbit_speed_setting, 8, 56)
 			}
@@ -2588,21 +3269,25 @@ proc draw_explorer_sidebar(x: int, y: int, max_height: int) {
 proc draw_explorer_drag_overlay() {
 	var pointer_x: int
 	var pointer_y: int
-	pointer_x = graphics::pointer_x(explorer_window)
-	pointer_y = graphics::pointer_y(explorer_window)
+	pointer_x = frame_pointer_x
+	pointer_y = frame_pointer_y
 	visual_force_opaque = true
-	if (drag_entry >= 0 && graphics::mouse_down()) {
-		if (entry_directory_cache[drag_entry] != 0) {
-			call draw_placeholder_folder(pointer_x, pointer_y, 5, entry_child_count_cache[drag_entry], rotation + shell_phase[entry_shell[drag_entry]] + drag_entry * 31)
-		}
-		else { call draw_placeholder_file(pointer_x, pointer_y, 3) }
-		if (entry_selected[drag_entry] != 0 && selected_entry_count() > 1) {
-			call graphics::draw_int_small(explorer_window, pointer_x + 7, pointer_y - 8, selected_entry_count(), visual_highlight)
+	if (drag_entry >= 0) {
+		if (frame_mouse_down) {
+			if (entry_directory_cache[drag_entry] != 0) {
+				call draw_placeholder_folder(pointer_x, pointer_y, 5, entry_child_count_cache[drag_entry], rotation + shell_phase[entry_shell[drag_entry]] + drag_entry * 31)
+			}
+			else { call draw_placeholder_file(pointer_x, pointer_y, 3) }
+			if (entry_selected[drag_entry] != 0 && selected_entry_count() > 1) {
+				call graphics::draw_int_small(explorer_window, pointer_x + 7, pointer_y - 8, selected_entry_count(), visual_highlight)
+			}
 		}
 	}
-	elseif (drag_template > 0 && graphics::mouse_down()) {
-		if (drag_template == 1) { call draw_placeholder_file(pointer_x, pointer_y, 3) }
-		else { call draw_placeholder_folder(pointer_x, pointer_y, 5, 0, nucleus_phase * 360 / 1200) }
+	elseif (drag_template > 0) {
+		if (frame_mouse_down) {
+			if (drag_template == 1) { call draw_placeholder_file(pointer_x, pointer_y, 3) }
+			else { call draw_placeholder_folder(pointer_x, pointer_y, 5, 0, nucleus_phase * 360 / 1200) }
+		}
 	}
 	visual_force_opaque = false
 }
@@ -2661,22 +3346,22 @@ proc draw_cached_orbit_entry(index: int, center_x: int, center_y: int, area_widt
 			name_color = visual_outline
 			label_text = entry_name_cache[index]
 			name_width = entry_label_full_width[index]
-			name_chars = (area_width - sidebar_width - 8) / 4
+			name_chars = (area_width - 8) / 6
 			if (name_chars < 1) { name_chars = 1 }
 			if (label_full_chars > name_chars) {
 				clip_label = true
-				name_width = explorer_text_width_clipped(label_text, name_chars, graphics::FONT_SMALL)
+				name_width = explorer_text_width_clipped(label_text, name_chars, graphics::FONT_NORMAL)
 			}
 		}
 		if (hovered_entry == index || entry_selected[index] != 0) {
 			name_color = visual_highlight
 			label_text = entry_name_cache[index]
 			name_width = entry_label_full_width[index]
-			name_chars = (area_width - sidebar_width - 8) / 4
+			name_chars = (area_width - 8) / 6
 			if (name_chars < 1) { name_chars = 1 }
 			if (label_full_chars > name_chars) {
 				clip_label = true
-				name_width = explorer_text_width_clipped(label_text, name_chars, graphics::FONT_SMALL)
+				name_width = explorer_text_width_clipped(label_text, name_chars, graphics::FONT_NORMAL)
 			}
 		}
 		if (name_width < 1) { name_width = 1 }
@@ -2697,11 +3382,11 @@ proc draw_cached_orbit_entry(index: int, center_x: int, center_y: int, area_widt
 		label_center_x = atom_x + label_dx * label_offset / label_norm
 		label_center_y = atom_y + label_dy * label_offset / label_norm
 		name_x = label_center_x - name_width / 2
-		name_y = label_center_y - 2
+		name_y = label_center_y - 3
 		if (clip_label) {
-			call draw_explorer_text_clipped(name_x, name_y, label_text, name_chars, name_color)
+			call draw_explorer_text_prefix(name_x, name_y, label_text, name_chars, graphics::FONT_NORMAL, name_color)
 		}
-		else { call graphics::draw_text_small(explorer_window, name_x, name_y, label_text, name_color) }
+		else { call draw_explorer_text_standard(name_x, name_y, label_text, graphics::FONT_NORMAL, name_color) }
 	}
 }
 
@@ -2812,13 +3497,10 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	var projected_distance: int
 	var drop_target_shell: int
 	var created_entry: int
-	var add_radius: int
-	var add_size: int
 	var render_scale: int
 	var all_shells_full: bool
-	var zoom_minus_x: int
-	var zoom_plus_x: int
-	var zoom_y: int
+	var add_radius: int
+	var add_size: int
 	var modifiers: int
 	var selection_index: int
 	var selection_move_count: int
@@ -2838,28 +3520,45 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	var target_radius: int
 	var radius_difference: int
 	var radius_step: int
+	var radius_tick: int
+	var pointer_in_scene: bool
+	var folder_drop_hit_radius: int
+	var nearest_entry_distance_squared: int
+	var nearest_folder_distance_squared: int
+	var shell_button_hit_radius: int
+	var outside_nucleus: bool
+	var capture_entry: int
 	count = cached_entry_count
-	call prepare_orbit_projection(tilt, view_roll, rotation)
-	usable_width = area_width - sidebar_width
-	viewport_center_x = x + (area_width + sidebar_width) / 2
+	if (count > 0 && entry_shell[0] == 0 && shell_population_cache[0] == 0) { call rebuild_shell_layout() }
+	if (projection_cache_tilt != tilt || projection_cache_roll != view_roll) {
+		call prepare_orbit_projection(tilt, view_roll, rotation)
+		projection_cache_tilt = tilt
+		projection_cache_roll = view_roll
+		projection_cache_rotation = rotation
+	}
+	usable_width = area_width
+	viewport_center_x = x + area_width / 2
 	viewport_center_y = y + area_height / 2
 	center_x = viewport_center_x
 	center_y = viewport_center_y
 	atom_center_x = center_x
 	atom_center_y = center_y
-	pointer_x = graphics::pointer_x(explorer_window)
-	pointer_y = graphics::pointer_y(explorer_window)
+	pointer_x = frame_pointer_x
+	pointer_y = frame_pointer_y
+	capture_entry = hovered_entry
 	hovered_entry = -1
 	hovered_shell = -1
 	drop_folder_entry = -1
-	zoom_controls_hovered = false
-	interaction_allowed = !context_open && !rename_open && !delete_confirm && !viewer_open && transition_progress == 0
+	nearest_entry_distance_squared = 2147483647
+	nearest_folder_distance_squared = 2147483647
+	interaction_allowed = !explorer_modal_open()
 	radius_limit = (area_height - 34) / 2
 	if (radius_limit > (usable_width - 48) / 2) { radius_limit = (usable_width - 48) / 2 }
 	if (usable_width < 108 || area_height < 94 || radius_limit < ATOM_INNER_SHELL_RADIUS + (shell_count - 1) * ATOM_MINIMUM_SHELL_GAP) {
-		drag_entry = -1
+		call clear_entry_drag()
 		drag_template = 0
 		rotating = false
+		canvas_press_pending = false
 		center_radius = area_width / 8
 		if (center_radius > area_height / 4) { center_radius = area_height / 4 }
 		if (center_radius < 3) { center_radius = 3 }
@@ -2934,6 +3633,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	if (base_center_radius < 11) { base_center_radius = 11 }
 	if (base_center_radius > 20) { base_center_radius = 20 }
 	center_radius = base_center_radius * render_scale / 100
+	atom_center_radius = center_radius
 	if (!nucleus_highlight_ready || !rotating) {
 		nucleus_highlight_x = center_x - center_radius / 2
 		nucleus_highlight_y = center_y - center_radius / 2
@@ -2946,36 +3646,40 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	shell_gap = adaptive_shell_gap(radius_limit, shell_count)
 	outer_radius = ATOM_INNER_SHELL_RADIUS + (shell_count - 1) * shell_gap
 	shell_layout_animating = false
-	shell = 0
-	while (shell < shell_count && transition_scale >= 24) {
-		target_radius = (ATOM_INNER_SHELL_RADIUS + shell * shell_gap) * 100
-		if (shell_layout_radius_x100[shell] <= 0) { shell_layout_radius_x100[shell] = target_radius }
-		radius_difference = target_radius - shell_layout_radius_x100[shell]
-		if (radius_difference != 0) {
-			radius_step = radius_difference * delta_ms / 140
-			if (radius_step == 0 && radius_difference > 0) { radius_step = 1 }
-			elseif (radius_step == 0) { radius_step = -1 }
-			shell_layout_radius_x100[shell] += radius_step
-			if (radius_difference > 0 && shell_layout_radius_x100[shell] > target_radius) { shell_layout_radius_x100[shell] = target_radius }
-			elseif (radius_difference < 0 && shell_layout_radius_x100[shell] < target_radius) { shell_layout_radius_x100[shell] = target_radius }
-			if (shell_layout_radius_x100[shell] != target_radius) { shell_layout_animating = true }
+	if (orbit_scene_static_dirty || transition_progress > 0) {
+		if (transition_progress > 0) { orbit_scene_static_dirty = true }
+		shell = 0
+		while (shell < shell_count && transition_scale >= 24) {
+			target_radius = (ATOM_INNER_SHELL_RADIUS + shell * shell_gap) * 100
+			if (shell_layout_radius_x100[shell] <= 0) { shell_layout_radius_x100[shell] = target_radius }
+			radius_difference = target_radius - shell_layout_radius_x100[shell]
+			if (radius_difference != 0) {
+				orbit_scene_static_dirty = true
+				radius_tick = 0
+				while (radius_tick < frame_steps && radius_difference != 0) {
+					radius_step = radius_difference * MILLISECONDS_PER_SECOND / (FIXED_UPDATE_HZ * 140)
+					if (radius_step == 0 && radius_difference > 0) { radius_step = 1 }
+					elseif (radius_step == 0) { radius_step = -1 }
+					shell_layout_radius_x100[shell] += radius_step
+					if (radius_difference > 0 && shell_layout_radius_x100[shell] > target_radius) { shell_layout_radius_x100[shell] = target_radius }
+					elseif (radius_difference < 0 && shell_layout_radius_x100[shell] < target_radius) { shell_layout_radius_x100[shell] = target_radius }
+					radius_difference = target_radius - shell_layout_radius_x100[shell]
+					radius_tick += 1
+				}
+				if (shell_layout_radius_x100[shell] != target_radius) { shell_layout_animating = true }
+			}
+			shell_base_radius[shell] = (shell_layout_radius_x100[shell] + 50) / 100
+			radius = shell_base_radius[shell] * render_scale / 100
+			shell_render_radius[shell] = radius
+			shell += 1
 		}
-		shell_base_radius[shell] = (shell_layout_radius_x100[shell] + 50) / 100
-		radius = shell_base_radius[shell] * render_scale / 100
-		shell_render_radius[shell] = radius
-		shell += 1
 	}
 	# All entries share a visual radius at a given viewport scale.
 	node_radius = (2 + outer_radius / 48) * render_scale / 100
 	if (node_radius < 2) { node_radius = 2 }
 	if (transition_progress == 0 && node_radius > 6) { node_radius = 6 }
 	elseif (transition_progress > 0 && node_radius > 12) { node_radius = 12 }
-	all_shells_full = true
-	shell = 0
-	while (shell < shell_count) {
-		if (shell_population_cache[shell] < shell_capacity) { all_shells_full = false }
-		shell += 1
-	}
+	all_shells_full = orbit_all_shells_full
 	shell_button_hovered = false
 	if (shell_count < 8 && transition_progress == 0) {
 		add_radius = shell_render_radius[shell_count - 1] + 13
@@ -2983,69 +3687,129 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		else { call orbit_project(add_radius, 35.0) }
 		shell_button_x = center_x + projected_x
 		shell_button_y = center_y + projected_y
+		shell_button_hit_radius = 3
+		if (all_shells_full) { shell_button_hit_radius = 6 }
+		elseif ((drag_entry >= 0 || drag_template > 0) && shell_population_cache[shell_count - 1] < shell_capacity) { shell_button_hit_radius = 5 }
 		dx = pointer_x - shell_button_x
 		dy = pointer_y - shell_button_y
-		shell_button_hovered = dx * dx + dy * dy <= 81
+		shell_button_hovered = dx * dx + dy * dy <= shell_button_hit_radius * shell_button_hit_radius
 	}
-	if (area_width >= 48 && transition_progress == 0) {
-		zoom_minus_x = x + area_width - 25
-		zoom_plus_x = x + area_width - 13
-		zoom_y = y + 2
-		zoom_controls_hovered = pointer_x >= zoom_minus_x - 1 && pointer_x < zoom_plus_x + 11 && pointer_y >= zoom_y - 1 && pointer_y < zoom_y + 10
+	pointer_in_scene = false
+	if (pointer_x > x) {
+		if (pointer_x < x + area_width) {
+			if (pointer_y >= y) {
+				if (pointer_y < y + area_height) {
+					if (!explorer_pointer_in_sidebar_panel(x, y, area_height) && !zoom_controls_hovered) { pointer_in_scene = true }
+				}
+			}
+		}
 	}
+	dx = pointer_x - center_x
+	dy = pointer_y - center_y
+	if (dx < 0) { dx = -dx }
+	if (dy < 0) { dy = -dy }
+	outside_nucleus = false
+	if (dx > center_radius || dy > center_radius) { outside_nucleus = true }
+	elseif (dx * dx + dy * dy > center_radius * center_radius) { outside_nucleus = true }
 	orbit_native_drawn = false
 	native_candidate = transition_progress == 0 && !slot_animation_active && !shell_layout_animating && deletion_ghost_count == 0 && drag_entry < 0 && drag_template == 0 && camera_zoom == camera_zoom_target && visual_fade >= 100
 	if (native_candidate) {
 		if (orbit_stream_dirty) { call rebuild_orbit_command_stream() }
 		command = graphics::COMMAND_HEADER_WORDS
 		shell_table = command + graphics::COMMAND_ORBIT_WORDS
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_ENTRY_COUNT_OFFSET] = cached_entry_count
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_COUNT_OFFSET] = shell_count
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_SCENE_X_OFFSET] = x
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_SCENE_Y_OFFSET] = y
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_CENTER_X_OFFSET] = center_x
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_CENTER_Y_OFFSET] = center_y
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_AREA_WIDTH_OFFSET] = area_width
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_AREA_HEIGHT_OFFSET] = area_height
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_SIDEBAR_WIDTH_OFFSET] = sidebar_width
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_RENDER_SCALE_OFFSET] = render_scale
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_OUTER_RADIUS_OFFSET] = outer_radius
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_GAP_OFFSET] = shell_gap
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_CENTER_RADIUS_OFFSET] = center_radius
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_NODE_RADIUS_OFFSET] = node_radius
+		if (orbit_scene_static_dirty) {
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_SCENE_X_OFFSET] = x
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_SCENE_Y_OFFSET] = y
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_CENTER_X_OFFSET] = center_x
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_CENTER_Y_OFFSET] = center_y
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_AREA_WIDTH_OFFSET] = area_width
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_AREA_HEIGHT_OFFSET] = area_height
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_SIDEBAR_WIDTH_OFFSET] = 0
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_RENDER_SCALE_OFFSET] = render_scale
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_OUTER_RADIUS_OFFSET] = outer_radius
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_GAP_OFFSET] = shell_gap
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_CENTER_RADIUS_OFFSET] = center_radius
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_NODE_RADIUS_OFFSET] = node_radius
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_ROLL_OFFSET] = view_roll
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_SURFACE_OFFSET] = visual_surface
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_OUTLINE_OFFSET] = visual_outline
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_ACCENT_OFFSET] = visual_accent
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_COLOR_OFFSET] = visual_shell
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_HIGHLIGHT_OFFSET] = visual_highlight
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_CAMERA_ZOOM_OFFSET] = camera_zoom
+			orbit_command_stream[command + graphics::COMMAND_ORBIT_LABEL_LIMIT_OFFSET] = (area_width - 8) / 6
+			orbit_scene_static_dirty = false
+		}
 		orbit_command_stream[command + graphics::COMMAND_ORBIT_TILT_OFFSET] = tilt
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_ROLL_OFFSET] = view_roll
 		orbit_command_stream[command + graphics::COMMAND_ORBIT_ROTATION_OFFSET] = rotation
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_SURFACE_OFFSET] = visual_surface
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_OUTLINE_OFFSET] = visual_outline
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_ACCENT_OFFSET] = visual_accent
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_COLOR_OFFSET] = visual_shell
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_HIGHLIGHT_OFFSET] = visual_highlight
 		orbit_command_stream[command + graphics::COMMAND_ORBIT_POINTER_X_OFFSET] = pointer_x
 		orbit_command_stream[command + graphics::COMMAND_ORBIT_POINTER_Y_OFFSET] = pointer_y
 		if (shell_button_hovered) { orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_HOVER_OFFSET] = 1 }
 		else { orbit_command_stream[command + graphics::COMMAND_ORBIT_SHELL_HOVER_OFFSET] = 0 }
 		if (zoom_controls_hovered) { orbit_command_stream[command + graphics::COMMAND_ORBIT_ZOOM_HOVER_OFFSET] = 1 }
 		else { orbit_command_stream[command + graphics::COMMAND_ORBIT_ZOOM_HOVER_OFFSET] = 0 }
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_CAMERA_ZOOM_OFFSET] = camera_zoom
-		orbit_command_stream[command + graphics::COMMAND_ORBIT_LABEL_LIMIT_OFFSET] = (area_width - sidebar_width - 8) / 4
-		shell = 0
-		while (shell < shell_count) {
-			orbit_command_stream[shell_table + shell * graphics::COMMAND_ORBIT_SHELL_WORDS + graphics::COMMAND_ORBIT_SHELL_PHASE_OFFSET] = shell_phase[shell]
-			orbit_command_stream[shell_table + shell * graphics::COMMAND_ORBIT_SHELL_WORDS + graphics::COMMAND_ORBIT_SHELL_POPULATION_OFFSET] = shell_population_cache[shell]
-			shell += 1
+		orbit_command_stream[command + graphics::COMMAND_ORBIT_FLAGS_OFFSET] = graphics::COMMAND_ORBIT_DRAW_LABELS
+		if (orbit_phase_stream_dirty) {
+			shell = 0
+			while (shell < shell_count) {
+				orbit_command_stream[shell_table + shell * graphics::COMMAND_ORBIT_SHELL_WORDS + graphics::COMMAND_ORBIT_SHELL_PHASE_OFFSET] = shell_phase[shell]
+				shell += 1
+			}
+			orbit_phase_stream_dirty = false
 		}
-		orbit_stream_result = graphics::draw_commands(explorer_window, orbit_command_stream, orbit_stream_words, entry_name_cache, entry_label_short_cache, entry_selected, entry_render_x, entry_render_y, entry_render_depth, entry_node_radius, entry_depth_order)
+		if (!pointer_in_scene && camera_zoom < 125 && selected_entry < 0) {
+			# Full names cannot be visible in this state, so avoid decoding a second
+			# descriptor table inside the native batch.
+			orbit_stream_result = graphics::draw_commands(explorer_window, orbit_command_stream, orbit_stream_words, entry_label_short_cache, entry_label_short_cache, entry_selected, entry_render_x, entry_render_y, entry_render_depth, entry_node_radius, entry_depth_order)
+		}
+		else {
+			orbit_stream_result = graphics::draw_commands(explorer_window, orbit_command_stream, orbit_stream_words, entry_name_cache, entry_label_short_cache, entry_selected, entry_render_x, entry_render_y, entry_render_depth, entry_node_radius, entry_depth_order)
+		}
 		if (orbit_stream_result >= 0) {
 			orbit_native_drawn = true
-			hovered_entry = (orbit_stream_result & 255) - 1
 			hovered_shell = (orbit_stream_result / 256) % 256 - 1
-			if (hovered_entry >= 0 && interaction_allowed && graphics::mouse_pressed()) {
-				drag_entry = hovered_entry
-				drag_start_x = pointer_x
-				drag_start_y = pointer_y
-				drag_moved = false
+			hovered_entry = orbit_stream_result % 256 - 1
+			if (hovered_entry >= count) { hovered_entry = -1 }
+			pointer_in_scene = pointer_x > x && pointer_x < x + area_width && pointer_y >= y && pointer_y < y + area_height
+			if (explorer_pointer_in_sidebar_panel(x, y, area_height) || zoom_controls_hovered) { pointer_in_scene = false }
+			dx = pointer_x - atom_center_x
+			dy = pointer_y - atom_center_y
+			if (dx < 0) { dx = -dx }
+			if (dy < 0) { dy = -dy }
+			outside_nucleus = false
+			if (dx > atom_center_radius || dy > atom_center_radius) { outside_nucleus = true }
+			elseif (dx * dx + dy * dy > atom_center_radius * atom_center_radius) { outside_nucleus = true }
+			if (!pointer_in_scene) {
+				hovered_entry = -1
+				hovered_shell = -1
 			}
+			if (!outside_nucleus && hovered_entry < 0) { hovered_shell = -1 }
+			elseif (hovered_entry < 0 && pointer_in_scene) {
+				nearest_entry_distance_squared = 2147483647
+				index = 0
+				while (index < cached_entry_count) {
+					dx = pointer_x - entry_render_x[index]
+					dy = pointer_y - entry_render_y[index]
+					distance_squared = dx * dx + dy * dy
+					hit_radius = entry_node_radius[index] + 18
+					if (hit_radius < 20) { hit_radius = 20 }
+					if (distance_squared <= hit_radius * hit_radius && distance_squared < nearest_entry_distance_squared) {
+						nearest_entry_distance_squared = distance_squared
+						hovered_entry = index
+						hovered_shell = entry_shell[index]
+					}
+					index += 1
+				}
+			}
+			if (shell_button_hovered && all_shells_full) { hovered_entry = -1; pointer_in_scene = false; hovered_shell = -1 }
+			elseif (hovered_entry >= 0) { shell_button_hovered = false }
+			elseif (shell_button_hovered) { pointer_in_scene = false; hovered_shell = -1 }
+			capture_entry = entry_pointer_capture_candidate(hovered_entry, capture_entry)
+			if (entry_pointer_capture_ready(capture_entry, interaction_allowed)) { call begin_entry_pointer_capture(capture_entry) }
+		}
+		else {
+			orbit_stream_dirty = true
+			orbit_scene_static_dirty = true
 		}
 	}
 	if (!orbit_native_drawn) {
@@ -3056,184 +3820,236 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			shell += 1
 		}
 		if (slot_animation_active) { slot_animation_active = false }
-	index = 0
-	while (index < count) {
-		shell = entry_shell[index]
-		if (shell >= shell_count) { shell = shell_count - 1; entry_shell[index] = shell }
-		position = entry_position_cache[index]
-		radius = shell_render_radius[shell]
-		call orbit_project_components(radius, shell_slot_cosine[shell * 8 + position], shell_slot_sine[shell * 8 + position])
-		target_depth = projected_depth
-		entry_render_depth[index] = target_depth
-		if (transition_progress > 0 && transition_entry == index) { entry_render_depth[index] = 1 }
-		atom_x = center_x + projected_x
-		atom_y = center_y + projected_y
-		if (transition_progress > 0 && transition_direction > 0 && !transition_committed && transition_entry == index) {
-			atom_x = viewport_center_x + transition_focus_x * transition_scale * (100 - eased_progress) / 10000
-			atom_y = viewport_center_y + transition_focus_y * transition_scale * (100 - eased_progress) / 10000
-		}
-		elseif (transition_progress > 0 && transition_direction < 0 && transition_committed && transition_entry == index) {
-			atom_x = viewport_center_x + transition_focus_x * transition_scale * eased_progress / 10000
-			atom_y = viewport_center_y + transition_focus_y * transition_scale * eased_progress / 10000
-		}
-		if (transition_progress == 0 && entry_slot_progress[index] < 100) {
-			slot_duration = entry_slot_duration[index]
-			if (slot_duration < 1) { slot_duration = 220 }
-			entry_slot_elapsed[index] += delta_ms
-			if (entry_slot_elapsed[index] >= slot_duration) {
-				entry_slot_elapsed[index] = slot_duration
-				entry_slot_progress[index] = 100
+		index = 0
+		while (index < count) {
+			shell = entry_shell[index]
+			if (shell >= shell_count) { shell = shell_count - 1; entry_shell[index] = shell }
+			position = entry_position_cache[index]
+			radius = shell_render_radius[shell]
+			call orbit_project_components(radius, shell_slot_cosine[shell * 8 + position], shell_slot_sine[shell * 8 + position])
+			target_depth = projected_depth
+			entry_render_depth[index] = target_depth
+			if (transition_progress > 0 && transition_entry == index) { entry_render_depth[index] = 1 }
+			atom_x = center_x + projected_x
+			atom_y = center_y + projected_y
+			if (transition_progress > 0 && transition_direction > 0 && !transition_committed && transition_entry == index) {
+				atom_x = viewport_center_x + transition_focus_x * transition_scale * (100 - eased_progress) / 10000
+				atom_y = viewport_center_y + transition_focus_y * transition_scale * (100 - eased_progress) / 10000
 			}
-			else { entry_slot_progress[index] = entry_slot_elapsed[index] * 100 / slot_duration }
-			slot_eased_progress = slot_ease(entry_slot_progress[index])
-			atom_x = entry_slot_start_x[index] + (atom_x - entry_slot_start_x[index]) * slot_eased_progress / 100
-			atom_y = entry_slot_start_y[index] + (atom_y - entry_slot_start_y[index]) * slot_eased_progress / 100
-			entry_render_depth[index] = entry_slot_start_depth[index] + (target_depth - entry_slot_start_depth[index]) * slot_eased_progress / 100
-			if (entry_slot_progress[index] < 100) { slot_animation_active = true }
-		}
-		entry_render_x[index] = atom_x
-		entry_render_y[index] = atom_y
-		entry_node_radius[index] = node_radius
-		dx = pointer_x - atom_x
-		dy = pointer_y - atom_y
-		distance_squared = dx * dx + dy * dy
-		hit_radius = node_radius + 10
-		if (distance_squared < hit_radius * hit_radius && pointer_x > x + sidebar_width && !shell_button_hovered && !zoom_controls_hovered && (drag_entry != index || !drag_moved) && (entry_render_depth[index] >= 0 || (pointer_x - center_x) * (pointer_x - center_x) + (pointer_y - center_y) * (pointer_y - center_y) > center_radius * center_radius)) {
-			hovered_entry = index
-			hovered_shell = shell
-			if (drag_entry >= 0 && drag_moved && !dragged_entry_in_group(index) && entry_directory_cache[index] != 0) {
-				drop_folder_entry = index
+			elseif (transition_progress > 0 && transition_direction < 0 && transition_committed && transition_entry == index) {
+				atom_x = viewport_center_x + transition_focus_x * transition_scale * eased_progress / 10000
+				atom_y = viewport_center_y + transition_focus_y * transition_scale * eased_progress / 10000
 			}
-			if (interaction_allowed && graphics::mouse_pressed() && transition_progress == 0) {
-				drag_entry = index
-				drag_start_x = pointer_x
-				drag_start_y = pointer_y
-				drag_moved = false
+			if (transition_progress == 0 && entry_slot_progress[index] < 100) {
+				slot_duration = entry_slot_duration[index]
+				if (slot_duration < 1) { slot_duration = 220 }
+				entry_slot_elapsed[index] += delta_ms
+				if (entry_slot_elapsed[index] >= slot_duration) {
+					entry_slot_elapsed[index] = slot_duration
+					entry_slot_progress[index] = 100
+				}
+				else { entry_slot_progress[index] = entry_slot_elapsed[index] * 100 / slot_duration }
+				slot_eased_progress = slot_ease(entry_slot_progress[index])
+				atom_x = entry_slot_start_x[index] + (atom_x - entry_slot_start_x[index]) * slot_eased_progress / 100
+				atom_y = entry_slot_start_y[index] + (atom_y - entry_slot_start_y[index]) * slot_eased_progress / 100
+				entry_render_depth[index] = entry_slot_start_depth[index] + (target_depth - entry_slot_start_depth[index]) * slot_eased_progress / 100
+				if (entry_slot_progress[index] < 100) { slot_animation_active = true }
 			}
+			entry_render_x[index] = atom_x
+			entry_render_y[index] = atom_y
+			entry_node_radius[index] = node_radius
+			index += 1
 		}
-		index += 1
+		# Hit-test the completed projection so drawing calls cannot leave a
+		# half-updated target set while the pointer is held.
+		pointer_in_scene = pointer_x > x && pointer_x < x + area_width && pointer_y >= y && pointer_y < y + area_height
+		if (explorer_pointer_in_sidebar_panel(x, y, area_height) || zoom_controls_hovered) { pointer_in_scene = false }
+		dx = pointer_x - atom_center_x
+		dy = pointer_y - atom_center_y
+		if (dx < 0) { dx = -dx }
+		if (dy < 0) { dy = -dy }
+		outside_nucleus = false
+		if (dx > atom_center_radius || dy > atom_center_radius) { outside_nucleus = true }
+		elseif (dx * dx + dy * dy > atom_center_radius * atom_center_radius) { outside_nucleus = true }
+		nearest_entry_distance_squared = 2147483647
+		nearest_folder_distance_squared = 2147483647
+		index = 0
+		while (index < cached_entry_count) {
+			dy = pointer_y - entry_render_y[index]
+			dx = pointer_x - entry_render_x[index]
+			distance_squared = dx * dx + dy * dy
+			hit_radius = entry_node_radius[index] + 18
+			if (hit_radius < 20) { hit_radius = 20 }
+			if (!drag_moved && distance_squared <= hit_radius * hit_radius && distance_squared < nearest_entry_distance_squared && pointer_in_scene && outside_nucleus) {
+				nearest_entry_distance_squared = distance_squared
+				hovered_entry = index
+				hovered_shell = entry_shell[index]
+			}
+			if (pointer_in_scene && outside_nucleus && drag_entry >= 0 && drag_moved) {
+				if (index != drag_entry && entry_directory_cache[index] != 0) {
+					if (entry_selected[drag_entry] == 0 || entry_selected[index] == 0) {
+						folder_drop_hit_radius = entry_node_radius[index] + 18
+						if (distance_squared <= folder_drop_hit_radius * folder_drop_hit_radius && distance_squared < nearest_folder_distance_squared) {
+							nearest_folder_distance_squared = distance_squared
+							drop_folder_entry = index
+							hovered_entry = index
+							hovered_shell = entry_shell[index]
+						}
+					}
+				}
+			}
+			index += 1
+		}
+		if (shell_button_hovered && all_shells_full) { hovered_entry = -1; pointer_in_scene = false; hovered_shell = -1 }
+		elseif (hovered_entry >= 0) { shell_button_hovered = false }
+		elseif (shell_button_hovered) { pointer_in_scene = false; hovered_shell = -1 }
+		capture_entry = entry_pointer_capture_candidate(hovered_entry, capture_entry)
+		if (entry_pointer_capture_ready(capture_entry, interaction_allowed)) { call begin_entry_pointer_capture(capture_entry) }
+		# Stable painter order is derived from the same projection used for hit
+		# testing and nucleus occlusion. This prevents entries on one side of a shell
+		# from popping across each other while the view is tilted.
+		call update_incremental_depth_order(count)
+		index = 0
+		while (index < count) {
+			order_entry = entry_depth_order[index]
+			if (entry_render_depth[order_entry] < 0) { call draw_cached_orbit_entry(order_entry, center_x, center_y, area_width, transition_scale) }
+			index += 1
+		}
+		call draw_deletion_ghosts(false, center_x, center_y)
+		index = 0
+		while (index < count) {
+			order_entry = entry_depth_order[index]
+			if (entry_render_depth[order_entry] >= 0) { call draw_cached_orbit_entry(order_entry, center_x, center_y, area_width, transition_scale) }
+			index += 1
+		}
+		call draw_deletion_ghosts(true, center_x, center_y)
 	}
-	# Stable painter order is derived from the same projection used for hit
-	# testing and nucleus occlusion. This prevents entries on one side of a shell
-	# from popping across each other while the view is tilted.
-	call update_incremental_depth_order(count)
-	index = 0
-	while (index < count) {
-		order_entry = entry_depth_order[index]
-		if (entry_render_depth[order_entry] < 0) { call draw_cached_orbit_entry(order_entry, center_x, center_y, area_width, transition_scale) }
-		index += 1
-	}
-	call draw_deletion_ghosts(false, center_x, center_y)
-	visual_force_opaque = transition_progress > 0 && ((transition_direction > 0 && transition_committed) || (transition_direction < 0 && !transition_committed))
-	call draw_placeholder_nucleus(center_x, center_y, center_radius)
-	visual_force_opaque = false
-	index = 0
-	while (index < count) {
-		order_entry = entry_depth_order[index]
-		if (entry_render_depth[order_entry] >= 0) { call draw_cached_orbit_entry(order_entry, center_x, center_y, area_width, transition_scale) }
-		index += 1
-	}
-	call draw_deletion_ghosts(true, center_x, center_y)
+	# The fallback nucleus is the scene's final focal layer. The native batch
+	# applies the same ordering internally.
+	if (!orbit_native_drawn) {
+		visual_force_opaque = transition_progress > 0 && ((transition_direction > 0 && transition_committed) || (transition_direction < 0 && !transition_committed))
+		call draw_placeholder_nucleus(center_x, center_y, center_radius)
+		visual_force_opaque = false
 	}
 	visual_fade = 100
-	dx = pointer_x - center_x
-	dy = pointer_y - center_y
-	plane_x = (float)dx * math::cos((float)view_roll) + (float)dy * math::sin((float)view_roll)
-	plane_y = (float)(-dx) * math::sin((float)view_roll) + (float)dy * math::cos((float)view_roll)
-	tilt_cosine = math::cos((float)tilt)
-	if (tilt_cosine < 0.25 && tilt_cosine > -0.25) {
-		if (tilt_cosine < 0) { tilt_cosine = -0.25 }
-		else { tilt_cosine = 0.25 }
-	}
-	plane_y /= tilt_cosine
-	drop_angle = 0.0
-	if (plane_x > 0.001 || plane_x < -0.001) {
-		drop_angle = math::atan(plane_y / plane_x)
-		if (plane_x < 0.0) { drop_angle += 180.0 }
-	}
-	elseif (plane_y > 0.0) { drop_angle = 90.0 }
-	elseif (plane_y < 0.0) { drop_angle = 270.0 }
-	if (drop_angle < 0.0) { drop_angle += 360.0 }
-	projected_distance = (int)(math::sqrt(plane_x * plane_x + plane_y * plane_y) * 100.0 / (float)render_scale)
-	closest_shell = 0
-	best_distance = projected_distance - shell_base_radius[0]
-	if (best_distance < 0) { best_distance = -best_distance }
-	shell = 1
-	while (shell < shell_count) {
-		shell_distance = projected_distance - shell_base_radius[shell]
-		if (shell_distance < 0) { shell_distance = -shell_distance }
-		if (shell_distance < best_distance) {
-			best_distance = shell_distance
-			closest_shell = shell
+	if (drag_entry >= 0 || drag_template > 0 || !orbit_native_drawn) {
+		dx = pointer_x - center_x
+		dy = pointer_y - center_y
+		plane_x = (float)dx
+		plane_y = (float)dy
+		plane_x = (float)dx * math::cos((float)view_roll) + (float)dy * math::sin((float)view_roll)
+		plane_y = (float)(-dx) * math::sin((float)view_roll) + (float)dy * math::cos((float)view_roll)
+		tilt_cosine = math::cos((float)tilt)
+		if (tilt_cosine < 0.25 && tilt_cosine > -0.25) {
+			if (tilt_cosine < 0) { tilt_cosine = -0.25 }
+			else { tilt_cosine = 0.25 }
 		}
-		shell += 1
-	}
-	drop_target_shell = closest_shell
-	if (best_distance > 11 && projected_distance > base_center_radius + 7) { drop_target_shell = -1 }
-	if (shell_button_hovered && (drag_entry >= 0 || drag_template > 0) && shell_count > 1 && shell_population_cache[shell_count - 1] < shell_capacity) {
-		drop_target_shell = shell_count - 1
-	}
-	if (hovered_shell < 0 && best_distance <= 17 && projected_distance > base_center_radius + 4 && pointer_x > x + sidebar_width) {
-		hovered_shell = closest_shell
+		plane_y /= tilt_cosine
+		drop_angle = 0.0
+		if (plane_x > 0.001 || plane_x < -0.001) {
+			drop_angle = math::atan(plane_y / plane_x)
+			if (plane_x < 0.0) { drop_angle += 180.0 }
+		}
+		elseif (plane_y > 0.0) { drop_angle = 90.0 }
+		elseif (plane_y < 0.0) { drop_angle = 270.0 }
+		if (drop_angle < 0.0) { drop_angle += 360.0 }
+		projected_distance = (int)(math::sqrt(plane_x * plane_x + plane_y * plane_y) * 100.0 / (float)render_scale)
+		closest_shell = 0
+		best_distance = projected_distance - shell_base_radius[0]
+		if (best_distance < 0) { best_distance = -best_distance }
+		shell = 1
+		while (shell < shell_count) {
+			shell_distance = projected_distance - shell_base_radius[shell]
+			if (shell_distance < 0) { shell_distance = -shell_distance }
+			if (shell_distance < best_distance) {
+				best_distance = shell_distance
+				closest_shell = shell
+			}
+			shell += 1
+		}
+		drop_target_shell = closest_shell
+		if (projected_distance <= base_center_radius + 7) { drop_target_shell = center_drop_shell(closest_shell) }
+		elseif (best_distance > 11 && (drag_template == 0 || !pointer_in_scene)) { drop_target_shell = -1 }
+		if (shell_button_hovered && (drag_entry >= 0 || drag_template > 0) && shell_count > 1 && shell_population_cache[shell_count - 1] < shell_capacity) {
+			drop_target_shell = shell_count - 1
+		}
+		if (hovered_shell < 0 && best_distance <= 17 && projected_distance > base_center_radius + 4 && pointer_in_scene) {
+			hovered_shell = closest_shell
+		}
 	}
 	# Scratch exposes wheel/key hats portably but does not expose right mouse
 	# state. A stationary half-second primary hold is therefore the canonical
 	# context gesture; desktop right-click remains as a fast equivalent.
-	if (interaction_allowed && graphics::mouse_pressed() && hovered_entry >= 0) {
-		context_hold_entry = hovered_entry
-		context_hold_started = current_ticks
-		context_hold_x = pointer_x
-		context_hold_y = pointer_y
-		context_hold_triggered = false
-	}
-	if (context_hold_entry >= 0 && graphics::mouse_down()) {
-		dx = pointer_x - context_hold_x
-		dy = pointer_y - context_hold_y
-		if (dx * dx + dy * dy > 9 || drag_moved) { context_hold_entry = -1 }
-		elseif (!context_hold_triggered && current_ticks - context_hold_started >= 500) {
-			context_entry = context_hold_entry
-			if (entry_selected[context_entry] == 0) {
-				call select_only_entry(context_entry)
-				call update_selection_status()
-			}
-			else { selected_entry = context_entry }
-			context_x = pointer_x
-			context_y = pointer_y
-			context_open = true
-			context_hold_triggered = true
-			drag_entry = -1
-			last_click_entry = -1
-		}
-	}
-	if (interaction_allowed && graphics::right_mouse_pressed() && (hovered_entry >= 0 || (selected_entry_count() > 0 && pointer_x > x + sidebar_width && pointer_x < x + area_width && pointer_y > y && pointer_y < y + area_height))) {
+	if (interaction_allowed) {
 		if (hovered_entry >= 0) {
-			context_entry = hovered_entry
-			if (entry_selected[hovered_entry] == 0) {
-				call select_only_entry(hovered_entry)
-				call update_selection_status()
+			if (frame_mouse_pressed) {
+				context_hold_entry = hovered_entry
+				context_hold_started = current_ticks
+				context_hold_x = pointer_x
+				context_hold_y = pointer_y
+				context_hold_triggered = false
 			}
-			else { selected_entry = hovered_entry }
-		}
-		else {
-			context_entry = first_selected_entry()
-			selected_entry = context_entry
-		}
-		if (context_entry >= 0) {
-			context_x = pointer_x
-			context_y = pointer_y
-			context_open = true
-			last_click_entry = -1
 		}
 	}
-	if (drag_entry >= 0 && graphics::mouse_down()) {
-		dx = pointer_x - drag_start_x
-		dy = pointer_y - drag_start_y
-		if (dx * dx + dy * dy > 9) { drag_moved = true }
+	if (context_hold_entry >= 0) {
+		if (frame_mouse_down) {
+			dx = pointer_x - context_hold_x
+			dy = pointer_y - context_hold_y
+			if (dx * dx + dy * dy > 9 || drag_moved) { context_hold_entry = -1 }
+			elseif (!context_hold_triggered && current_ticks - context_hold_started >= 500) {
+				context_entry = context_hold_entry
+				if (entry_selected[context_entry] == 0) {
+					call select_only_entry(context_entry)
+					call update_selection_status()
+				}
+				else { selected_entry = context_entry }
+				context_x = pointer_x
+				context_y = pointer_y
+				context_open = true
+				context_hold_triggered = true
+				call clear_entry_drag()
+				last_click_entry = -1
+			}
+		}
 	}
-	if (drag_entry >= 0 && graphics::mouse_released()) {
+	if (interaction_allowed) {
+		if (frame_right_mouse_pressed) {
+			if (hovered_entry >= 0 || (selected_entry_count() > 0 && pointer_in_scene)) {
+				if (hovered_entry >= 0) {
+					context_entry = hovered_entry
+					if (entry_selected[hovered_entry] == 0) {
+						call select_only_entry(hovered_entry)
+						call update_selection_status()
+					}
+					else { selected_entry = hovered_entry }
+				}
+				else {
+					context_entry = first_selected_entry()
+					selected_entry = context_entry
+				}
+				if (context_entry >= 0) {
+					context_x = pointer_x
+					context_y = pointer_y
+					context_open = true
+					last_click_entry = -1
+				}
+			}
+		}
+	}
+	if (drag_entry >= 0) {
+		if (frame_mouse_down) {
+			dx = pointer_x - drag_start_x
+			dy = pointer_y - drag_start_y
+			if (dx * dx + dy * dy > 9) {
+				drag_moved = true
+				drag_open_on_release = false
+			}
+		}
+	}
+	if (drag_entry >= 0 && frame_mouse_released) {
 		if (!drag_moved) {
-			modifiers = graphics::modifiers()
-			if (modifiers == 0 && last_click_entry == drag_entry && current_ticks - last_click_ticks <= 450) {
+			modifiers = input_modifiers
+			if (modifiers == 0 && drag_open_on_release && last_click_entry == drag_entry) {
 				if (entry_directory_cache[drag_entry] != 0) {
 					transition_focus_x = entry_render_x[drag_entry] - atom_center_x
 					transition_focus_y = entry_render_y[drag_entry] - atom_center_y
@@ -3246,7 +4062,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 				call select_clicked_entry(drag_entry)
 				if (modifiers == 0) {
 					last_click_entry = drag_entry
-					last_click_ticks = current_ticks
+					last_click_age_ms = 0
 				}
 				else { last_click_entry = -1 }
 			}
@@ -3299,15 +4115,15 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 		}
 		if (drag_moved) {
 			last_click_entry = -1
-			last_click_ticks = -1000
+			last_click_age_ms = DOUBLE_CLICK_WINDOW_MS + 1
 		}
-		drag_entry = -1
+		call clear_entry_drag()
 	}
-	if (graphics::mouse_released()) {
+	if (frame_mouse_released) {
 		context_hold_entry = -1
 		context_hold_triggered = false
 	}
-	if (drag_template > 0 && graphics::mouse_released()) {
+	if (drag_template > 0 && frame_mouse_released) {
 		target_shell = drop_target_shell
 		target_was_empty = target_shell >= 0 && shell_population_cache[target_shell] == 0
 		if (target_shell >= 0 && shell_population_cache[target_shell] < shell_capacity) {
@@ -3315,7 +4131,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			if (drag_template == 1) { operation_ok = os::make_file(explorer_join_path(current_path, candidate_name)) }
 			else { operation_ok = os::make_directory(explorer_join_path(current_path, candidate_name)) }
 			if (operation_ok) {
-				call explorer_set(status_text, xestring::concat("Added ", candidate_name))
+				call set_explorer_status(xestring::concat("Added ", candidate_name))
 				slot_duration = insertion_slot_duration(shell_population_cache[target_shell] + 1)
 				call begin_slot_animation_for_shell(target_shell, slot_duration)
 				if (target_was_empty) { shell_incremental_layout[target_shell] = 1 }
@@ -3325,7 +4141,7 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 				if (target_was_empty && created_entry >= 0) { call align_shell_entry_to_angle(target_shell, created_entry, drop_angle) }
 			}
 			else {
-				call explorer_set(status_text, "Could not create item")
+				call set_explorer_status("Could not create item")
 			}
 		}
 		elseif (target_shell >= 0) { full_hint = 100 }
@@ -3338,38 +4154,31 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 			add_size = 3
 			shell_button_color = visual_highlight
 		}
-		if ((shell_button_hovered && all_shells_full) || full_hint > 0) {
-			add_size = 4
-		}
+		if ((shell_button_hovered && all_shells_full) || full_hint > 0) { add_size = 4 }
 		if (shell_button_hovered && (drag_entry >= 0 || drag_template > 0) && shell_population_cache[shell_count - 1] < shell_capacity) {
 			add_size = 3
 			shell_button_color = visual_highlight
 		}
-		call graphics::draw_line(explorer_window, shell_button_x - add_size, shell_button_y, shell_button_x + add_size, shell_button_y, shell_button_color)
-		call graphics::draw_line(explorer_window, shell_button_x, shell_button_y - add_size, shell_button_x, shell_button_y + add_size, shell_button_color)
-		if (interaction_allowed && shell_button_hovered && graphics::mouse_pressed()) {
+		call graphics::fill_rect(explorer_window, shell_button_x - add_size, shell_button_y, add_size * 2 + 1, 1, shell_button_color)
+		call graphics::fill_rect(explorer_window, shell_button_x, shell_button_y - add_size, 1, add_size * 2 + 1, shell_button_color)
+		if (interaction_allowed && shell_button_hovered && frame_mouse_pressed) {
 			if (all_shells_full) {
 				call begin_slot_animation_all()
 				shell_incremental_layout[shell_count] = 1
 				shell_accumulator[shell_count] = 0
 				shell_speed[shell_count] = 0
+				shell_layout_radius_x100[shell_count] = 0
+				shell_base_radius[shell_count] = 0
+				shell_render_radius[shell_count] = 0
 				shell_count += 1
+				shell_speed_easing_active = true
+				orbit_stream_dirty = true
+				orbit_scene_static_dirty = true
+				orbit_all_shells_full = false
 				full_hint = 0
-				call explorer_set(status_text, "Empty shell added; drag an item onto it")
+				call set_explorer_status("Shell added - drag here")
 			}
-			else { call explorer_set(status_text, "Fill the current shells before adding one") }
-		}
-	}
-	if (area_width >= 48 && transition_progress == 0) {
-		if (interaction_allowed) {
-			if (graphics::button_flat(explorer_window, zoom_minus_x, zoom_y, 10, 8, "-", visual_surface)) { call adjust_explorer_zoom(-15) }
-			if (graphics::button_flat(explorer_window, zoom_plus_x, zoom_y, 10, 8, "+", visual_surface)) { call adjust_explorer_zoom(15) }
-		}
-		else {
-			call graphics::fill_rect(explorer_window, zoom_minus_x, zoom_y, 10, 8, visual_surface)
-			call graphics::fill_rect(explorer_window, zoom_plus_x, zoom_y, 10, 8, visual_surface)
-			call graphics::draw_text_small(explorer_window, zoom_minus_x + 3, zoom_y + 1, "-", visual_outline)
-			call graphics::draw_text_small(explorer_window, zoom_plus_x + 3, zoom_y + 1, "+", visual_outline)
+			else { call set_explorer_status("Fill shell") }
 		}
 	}
 	if (full_hint > 0) {
@@ -3378,8 +4187,432 @@ proc draw_file_atom(x: int, y: int, area_width: int, area_height: int) {
 	}
 }
 
+proc accumulate_frame_time(elapsed_ms: int) {
+	delta_ms = elapsed_ms
+	if (delta_ms < 0) { delta_ms = 0 }
+	if (delta_ms > MAX_FRAME_DELTA_MS) { delta_ms = MAX_FRAME_DELTA_MS }
+	fixed_update_accumulator += delta_ms * FIXED_UPDATE_HZ
+	frame_steps = fixed_update_accumulator / MILLISECONDS_PER_SECOND
+	fixed_update_accumulator %= MILLISECONDS_PER_SECOND
+}
+
+proc update_explorer_clock() {
+	current_ticks = os::ticks()
+	call accumulate_frame_time(current_ticks - previous_ticks)
+	previous_ticks = current_ticks
+	if (last_click_age_ms <= DOUBLE_CLICK_WINDOW_MS) { last_click_age_ms += delta_ms }
+	if (cached_revision != os::revision() && !rotating && !marquee_active && drag_entry < 0 && drag_template == 0 && transition_progress == 0 && !explorer_modal_open()) {
+		call refresh_compacted_entry_metadata()
+	}
+	if (deletion_ghost_count > 0) { call update_deletion_ghosts(delta_ms) }
+	if (rename_pointer_guard > 0) { rename_pointer_guard -= 1 }
+	animation_step = frame_steps * 7
+}
+
+proc update_explorer_view_animation() {
+	if (!rotating) {
+		if (sidebar_open) {
+			if (sidebar_progress < 100) { sidebar_progress += animation_step }
+		}
+		elseif (sidebar_progress > 0) { sidebar_progress -= animation_step }
+	}
+	if (sidebar_progress > 100) { sidebar_progress = 100 }
+	if (sidebar_progress < 0) { sidebar_progress = 0 }
+	zoom_difference = camera_zoom_target - camera_zoom
+	if (zoom_difference != 0 && !rotating) {
+		orbit_scene_static_dirty = true
+		zoom_step = zoom_difference * animation_step / 100
+		if (zoom_step == 0 && zoom_difference > 0) { zoom_step = 1 }
+		elseif (zoom_step == 0) { zoom_step = -1 }
+		camera_zoom += zoom_step
+		if (zoom_difference > 0 && camera_zoom > camera_zoom_target) { camera_zoom = camera_zoom_target }
+		elseif (zoom_difference < 0 && camera_zoom < camera_zoom_target) { camera_zoom = camera_zoom_target }
+	}
+}
+
+proc refresh_explorer_animated_layout() {
+	next_sidebar_width = 14 + 70 * sidebar_progress / 100
+	sidebar_width = next_sidebar_width
+}
+
+proc update_explorer_orbits() {
+	var pause_dx: int
+	var pause_dy: int
+	var pause_radius: int
+	interaction_pauses_orbits = rotating || marquee_active || (drag_entry >= 0 && drag_moved) || drag_template > 0
+	paused_shell = hovered_shell
+	hover_pause_allowed = !rotating && !marquee_active && drag_entry < 0 && drag_template == 0 && transition_progress == 0 && !explorer_modal_open()
+	if (!hover_pause_allowed) { paused_shell = -1 }
+	pause_has_entry = false
+	if (paused_shell >= 0 && hovered_entry >= 0 && entry_shell[hovered_entry] == paused_shell) {
+		pause_dx = frame_pointer_x - entry_render_x[hovered_entry]
+		pause_dy = frame_pointer_y - entry_render_y[hovered_entry]
+		pause_radius = entry_node_radius[hovered_entry] + 7
+		if (pause_dx * pause_dx + pause_dy * pause_dy <= pause_radius * pause_radius) { pause_has_entry = true }
+		else { paused_shell = -1 }
+	}
+	if (paused_shell != last_paused_shell || pause_has_entry != last_pause_has_entry || orbit_speed_setting != last_orbit_speed_setting || interaction_pauses_orbits != last_interaction_pauses_orbits) {
+		shell_speed_easing_active = true
+		last_paused_shell = paused_shell
+		last_pause_has_entry = pause_has_entry
+		last_orbit_speed_setting = orbit_speed_setting
+		last_interaction_pauses_orbits = interaction_pauses_orbits
+	}
+	if (transition_progress == 0) {
+		if (shell_speed_easing_active) {
+			shell_speed_easing_active = false
+			orbit_ease = animation_step * 2
+			if (orbit_ease > 40) { orbit_ease = 40 }
+			animation_shell = 0
+			while (animation_shell < 8) {
+				orbit_speed_target = orbit_speed_setting
+				if (interaction_pauses_orbits) { orbit_speed_target = 0 }
+				elseif (animation_shell == paused_shell) {
+					orbit_speed_target = orbit_speed_setting / 8
+					if (orbit_speed_target < 2) { orbit_speed_target = 2 }
+					if (pause_has_entry) {
+						orbit_speed_target = 0
+						shell_speed[animation_shell] = 0
+					}
+				}
+				if (interaction_pauses_orbits) { shell_speed[animation_shell] = 0 }
+				elseif (shell_speed[animation_shell] != orbit_speed_target) {
+					orbit_speed_difference = orbit_speed_target - shell_speed[animation_shell]
+					orbit_speed_step = orbit_speed_difference * orbit_ease / 100
+					if (orbit_speed_step == 0 && orbit_speed_difference > 0) { orbit_speed_step = 1 }
+					elseif (orbit_speed_step == 0 && orbit_speed_difference < 0) { orbit_speed_step = -1 }
+					shell_speed[animation_shell] += orbit_speed_step
+					if (orbit_speed_difference > 0 && shell_speed[animation_shell] > orbit_speed_target) { shell_speed[animation_shell] = orbit_speed_target }
+					elseif (orbit_speed_difference < 0 && shell_speed[animation_shell] < orbit_speed_target) { shell_speed[animation_shell] = orbit_speed_target }
+					if (shell_speed[animation_shell] != orbit_speed_target) { shell_speed_easing_active = true }
+				}
+				animation_shell += 1
+			}
+		}
+	}
+}
+
+proc advance_explorer_orbit_motion(elapsed_ms: int, transition_active: bool) {
+	if (!transition_active) {
+		animation_shell = 0
+		while (animation_shell < shell_count) {
+			shell_accumulator[animation_shell] += elapsed_ms * shell_speed[animation_shell]
+			if (shell_accumulator[animation_shell] >= 1000) {
+				shell_phase[animation_shell] = (shell_phase[animation_shell] + shell_accumulator[animation_shell] / 1000) % 360
+				shell_accumulator[animation_shell] %= 1000
+				orbit_phase_stream_dirty = true
+			}
+			animation_shell += 1
+		}
+		nucleus_phase = (nucleus_phase + elapsed_ms) % 1200
+	}
+	if (paused_shell >= 0) {
+		rotation_target = rotation
+		tilt_target = tilt
+	}
+	elseif (rotation != rotation_target || tilt != tilt_target) { call update_view_orientation(elapsed_ms) }
+}
+
+proc update_explorer_transition() {
+	if (transition_progress <= 0) { return }
+	transition_step = animation_step * (100 + (transition_hops - 1) * 35) / 100
+	if (transition_step < 1) { transition_step = 1 }
+	if (transition_step > animation_step * 3) { transition_step = animation_step * 3 }
+	transition_progress += transition_step
+	if (!transition_committed && transition_progress > 100) { transition_progress = 100 }
+	if (transition_committed && transition_progress >= 200) {
+		transition_progress = 0
+		transition_entry = -1
+		transition_committed = false
+		transition_focus_x = 0
+		transition_focus_y = 0
+	}
+}
+
+proc update_explorer_animation() {
+	var frame_step: int
+	var transition_active: bool
+	call update_explorer_clock()
+	transition_active = transition_progress > 0
+	frame_step = 0
+	while (frame_step < frame_steps) {
+		animation_step = 7
+		call update_explorer_view_animation()
+		call update_explorer_orbits()
+		call update_explorer_transition()
+		frame_step += 1
+	}
+	animation_step = frame_steps * 7
+	call advance_explorer_orbit_motion(delta_ms, transition_active)
+	call refresh_explorer_animated_layout()
+}
+
+proc capture_explorer_input() {
+	call refresh_explorer_style()
+	next_width = graphics::content_width(explorer_window)
+	next_height = graphics::content_height(explorer_window)
+	if (next_width != width || next_height != height) { orbit_scene_static_dirty = true }
+	width = next_width
+	height = next_height
+	frame_pointer_x = graphics::pointer_x(explorer_window)
+	frame_pointer_y = graphics::pointer_y(explorer_window)
+	frame_mouse_pressed = graphics::mouse_pressed()
+	frame_mouse_down = graphics::mouse_down()
+	frame_mouse_released = graphics::mouse_released()
+	frame_right_mouse_pressed = graphics::right_mouse_pressed()
+	scroll_steps = graphics::scroll_delta()
+	input_modifiers = graphics::modifiers()
+	if (scroll_steps == 0) { return }
+	if (!explorer_modal_open() && transition_progress == 0 && frame_pointer_x > 3 && frame_pointer_x < width - 3 && frame_pointer_y > 12 && frame_pointer_y < height - 10 && !explorer_pointer_in_sidebar_panel(3, 12, height - 24)) {
+		if ((input_modifiers & graphics::MOD_SHIFT) != 0) {
+			rotation_target = (rotation_target + scroll_steps * 8) % 360
+			if (rotation_target < 0) { rotation_target += 360 }
+		}
+		else { call adjust_explorer_zoom(scroll_steps * 10) }
+	}
+}
+
+proc draw_explorer_scene() {
+	if (width < 104 || height < 72) {
+		zoom_controls_hovered = false
+		call draw_file_atom(2, 3, width - 4, height - 6)
+		return
+	}
+	call refresh_explorer_toolbar_geometry()
+	drop_path_active = false
+	if (drag_entry >= 0 && drag_moved && !current_path_is_root) {
+		if (frame_pointer_x >= EXPLORER_TOOLBAR_SIDE_PADDING && frame_pointer_x < EXPLORER_TOOLBAR_SIDE_PADDING + 32 && frame_pointer_y >= EXPLORER_TOOLBAR_Y && frame_pointer_y < EXPLORER_TOOLBAR_Y + EXPLORER_TOOLBAR_HEIGHT) {
+			call graphics::fill_rect(explorer_window, EXPLORER_TOOLBAR_SIDE_PADDING, EXPLORER_TOOLBAR_Y, 32, EXPLORER_TOOLBAR_HEIGHT, visual_accent)
+			drop_path_active = true
+			call explorer_set(drop_path_target, cached_parent_path)
+		}
+		else { call graphics::fill_rect(explorer_window, EXPLORER_TOOLBAR_SIDE_PADDING, EXPLORER_TOOLBAR_Y, 32, EXPLORER_TOOLBAR_HEIGHT, visual_surface) }
+		call draw_explorer_fixed_label_centered(EXPLORER_TOOLBAR_SIDE_PADDING, EXPLORER_TOOLBAR_Y + 1, 32, "Back", back_label_width, visual_outline)
+	}
+	elseif (!current_path_is_root) {
+		if (!explorer_modal_open()) {
+			if (explorer_fixed_label_button(EXPLORER_TOOLBAR_SIDE_PADDING, EXPLORER_TOOLBAR_Y, 32, EXPLORER_TOOLBAR_HEIGHT, "Back", back_label_width, visual_surface, explorer_control_text_color())) { call begin_path_transition(explorer_parent_path(current_path)) }
+		}
+		else {
+			call graphics::fill_rect(explorer_window, EXPLORER_TOOLBAR_SIDE_PADDING, EXPLORER_TOOLBAR_Y, 32, EXPLORER_TOOLBAR_HEIGHT, visual_surface)
+			call draw_explorer_fixed_label_centered(EXPLORER_TOOLBAR_SIDE_PADDING, EXPLORER_TOOLBAR_Y + 1, 32, "Back", back_label_width, visual_outline)
+		}
+	}
+	else {
+		call graphics::fill_rect(explorer_window, EXPLORER_TOOLBAR_SIDE_PADDING, EXPLORER_TOOLBAR_Y, 32, EXPLORER_TOOLBAR_HEIGHT, visual_surface)
+		call draw_explorer_fixed_label_centered(EXPLORER_TOOLBAR_SIDE_PADDING, EXPLORER_TOOLBAR_Y + 1, 32, "Back", back_label_width, visual_outline)
+	}
+	call draw_breadcrumbs(toolbar_breadcrumb_x, EXPLORER_TOOLBAR_Y, toolbar_breadcrumb_width)
+	call draw_file_atom(3, 12, width - 6, height - 24)
+	call draw_explorer_sidebar(3, 12, height - 24)
+	call draw_explorer_toolbar_controls()
+	if (marquee_active) { call draw_selection_marquee() }
+	if (drag_entry >= 0 || drag_template > 0) { call draw_explorer_drag_overlay() }
+}
+
+proc handle_explorer_canvas_input() {
+	var dx: int
+	var dy: int
+	if (!frame_mouse_pressed && !frame_mouse_down && !frame_mouse_released && !canvas_press_pending && !rotating && !marquee_active) { return }
+	if (width >= 104 && height >= 72) {
+		if (frame_mouse_pressed && hovered_entry < 0 && drag_entry < 0 && drag_template == 0 && !shell_button_hovered && !zoom_controls_hovered && transition_progress == 0 && !explorer_modal_open() && frame_pointer_x > 3 && frame_pointer_x < width - 3 && frame_pointer_y > 12 && frame_pointer_y < height - 12 && !explorer_pointer_in_sidebar_panel(3, 12, height - 24)) {
+			if ((input_modifiers & graphics::MOD_CTRL) != 0 || (input_modifiers & graphics::MOD_SHIFT) != 0) {
+				marquee_active = true
+				marquee_start_x = frame_pointer_x
+				marquee_start_y = frame_pointer_y
+				marquee_current_x = marquee_start_x
+				marquee_current_y = marquee_start_y
+				rotating = false
+				canvas_press_pending = false
+				last_click_entry = -1
+			}
+			else {
+				canvas_press_pending = true
+				canvas_press_x = frame_pointer_x
+				canvas_press_y = frame_pointer_y
+				rotating = false
+			}
+			last_pointer_x = frame_pointer_x
+			last_pointer_y = frame_pointer_y
+		}
+		if (canvas_press_pending && frame_mouse_down) {
+			dx = frame_pointer_x - canvas_press_x
+			dy = frame_pointer_y - canvas_press_y
+			if (dx * dx + dy * dy > POINTER_MOVE_THRESHOLD_SQUARED) {
+				canvas_press_pending = false
+				rotating = true
+				call clear_entry_selection()
+				selection_anchor = -1
+				call update_selection_status()
+				last_click_entry = -1
+			}
+		}
+		if (rotating) {
+			if (frame_mouse_down) {
+				rotation_target += frame_pointer_x - last_pointer_x
+				rotation_target %= 360
+				if (rotation_target < 0) { rotation_target += 360 }
+				tilt_target += frame_pointer_y - last_pointer_y
+				if (tilt_target > 70) { tilt_target = 70 }
+				if (tilt_target < -70) { tilt_target = -70 }
+				last_pointer_x = frame_pointer_x
+				last_pointer_y = frame_pointer_y
+			}
+		}
+	}
+	if (marquee_active && frame_mouse_down) {
+		marquee_current_x = frame_pointer_x
+		marquee_current_y = frame_pointer_y
+	}
+	if (frame_mouse_released) {
+		if (canvas_press_pending) {
+			call clear_entry_selection()
+			selection_anchor = -1
+			call update_selection_status()
+			last_click_entry = -1
+		}
+		canvas_press_pending = false
+		if (marquee_active) {
+			marquee_current_x = frame_pointer_x
+			marquee_current_y = frame_pointer_y
+			call finish_marquee_selection()
+			marquee_active = false
+		}
+		rotating = false
+	}
+	elseif (canvas_press_pending && !frame_mouse_down) { canvas_press_pending = false }
+}
+
+proc recover_lost_pointer_capture() {
+	if (frame_mouse_pressed || frame_mouse_down || frame_mouse_released) { return }
+	if (drag_entry >= 0) { call clear_entry_drag() }
+	drag_template = 0
+	if (marquee_active) {
+		marquee_current_x = frame_pointer_x
+		marquee_current_y = frame_pointer_y
+		call finish_marquee_selection()
+		marquee_active = false
+	}
+	rotating = false
+	canvas_press_pending = false
+	context_hold_entry = -1
+	context_hold_triggered = false
+}
+
+proc draw_explorer_modal_layer() {
+	if (context_open) { call draw_context_menu() }
+	elseif (rename_open) { call draw_inline_rename() }
+	elseif (delete_confirm) { call draw_delete_dialog() }
+}
+
+proc handle_explorer_keys() {
+	key = graphics::read_key()
+	while (key != 0) {
+		if (rename_open) {
+			if (key == graphics::KEY_ENTER) { call commit_rename() }
+			else { call handle_rename_key(key) }
+		}
+		elseif (context_open && key == graphics::KEY_ESCAPE) { context_open = false }
+		elseif (delete_confirm && key == graphics::KEY_ESCAPE) { delete_confirm = false }
+		elseif (key == '+' || key == '=') { call adjust_explorer_zoom(15) }
+		elseif (key == '-') { call adjust_explorer_zoom(-15) }
+		key = graphics::read_key()
+	}
+}
+
+proc draw_explorer_content() {
+	call capture_explorer_input()
+	call dismiss_context_menu_outside_press()
+	call draw_explorer_scene()
+	call handle_explorer_canvas_input()
+	call recover_lost_pointer_capture()
+	call draw_explorer_modal_layer()
+	call handle_explorer_keys()
+}
+
+proc draw_explorer_frame() {
+	var minimized: bool
+	minimized = explorer_window.is_minimized()
+	if (!minimized) { call update_explorer_animation() }
+	else {
+		previous_ticks = os::ticks()
+		fixed_update_accumulator = 0
+	}
+	call graphics::begin_draw(explorer_window)
+	if (!minimized) { call draw_explorer_content() }
+	call graphics::update(explorer_window)
+	if (transition_progress >= 100 && !transition_committed) { call commit_folder_transition() }
+}
+
+proc capture_file_viewer_input() {
+	viewer_width[viewer_active_slot] = viewer_content_width()
+	viewer_height[viewer_active_slot] = viewer_content_height()
+	scroll_steps = graphics::scroll_delta()
+	if (scroll_steps != 0) {
+		viewer_scroll[viewer_active_slot] -= scroll_steps
+		if (viewer_scroll[viewer_active_slot] < 0) { viewer_scroll[viewer_active_slot] = 0 }
+	}
+}
+
+proc handle_file_viewer_keys() {
+	key = graphics::read_key()
+	while (key != 0) {
+		if (key == graphics::KEY_ESCAPE) { call request_file_viewer_close() }
+		elseif (key == graphics::KEY_UP && viewer_scroll[viewer_active_slot] > 0) { viewer_scroll[viewer_active_slot] -= 1 }
+		elseif (key == graphics::KEY_DOWN) { viewer_scroll[viewer_active_slot] += 1 }
+		key = graphics::read_key()
+	}
+}
+
+proc draw_file_viewer_frame() {
+	var minimized: bool
+	call refresh_explorer_style()
+	call begin_viewer_window_draw()
+	call capture_viewer_window_state()
+	if (viewer_current_state == graphics::WINDOW_CLOSED) {
+		call release_file_viewer()
+		return
+	}
+	minimized = viewer_window_is_minimized()
+	if (!minimized) {
+		call capture_file_viewer_input()
+		call draw_file_viewer()
+		call handle_file_viewer_keys()
+	}
+	call update_viewer_window()
+	call capture_viewer_window_state()
+	if (viewer_close_requested || viewer_current_state == graphics::WINDOW_CLOSED) {
+		call close_file_viewer()
+	}
+}
+
+proc draw_file_viewer_frames() {
+	var slot: int
+	slot = 0
+	while (slot < MAX_FILE_VIEWERS) {
+		if (viewer_is_open[slot]) {
+			viewer_active_slot = slot
+			call draw_file_viewer_frame()
+		}
+		slot += 1
+	}
+}
+
 current_path = "."
 status_text = "root"
+clipped_text_buffer = xestring::concat("", "")
+status_visible_text = xestring::concat("", "")
+status_revision = 1
+status_layout_revision = -1
+status_layout_area_width = -1
+status_layout_visible_chars = 0
+status_layout_text_width = 0
+back_label_width = explorer_text_width_clipped("Back", 4, graphics::FONT_NORMAL)
+path_separator_width = explorer_text_width_clipped("/", 1, graphics::FONT_NORMAL)
+current_path_revision = 1
+breadcrumb_layout_revision = -1
+breadcrumb_layout_width = -1
+breadcrumb_count = 0
 cached_entry_count = 0
 cached_parent_path = ""
 sidebar_open = false
@@ -3403,7 +4636,11 @@ rotation = 0
 tilt = 25
 rotation_target = rotation
 tilt_target = tilt
+orientation_time_accumulator = 0
 rotating = false
+canvas_press_pending = false
+canvas_press_x = 0
+canvas_press_y = 0
 nucleus_highlight_ready = false
 hovered_entry = -1
 selected_entry = -1
@@ -3411,6 +4648,7 @@ selection_anchor = -1
 drag_entry = -1
 drag_template = 0
 drag_moved = false
+drag_open_on_release = false
 transition_progress = 0
 transition_entry = -1
 transition_focus_x = 0
@@ -3422,7 +4660,7 @@ transition_hops = 1
 transition_step = 1
 shell_capacity = 8
 last_click_entry = -1
-last_click_ticks = -1000
+last_click_age_ms = DOUBLE_CLICK_WINDOW_MS + 1
 context_open = false
 context_entry = -1
 context_hold_entry = -1
@@ -3445,20 +4683,49 @@ rename_anchor_x = 0
 rename_anchor_y = 0
 delete_confirm = false
 viewer_open = false
-viewer_name = ""
-viewer_content = ""
-viewer_scroll = 0
-viewer_layout_width = -1
-viewer_layout_font = graphics::FONT_NORMAL
-viewer_layout_lines = 1
-viewer_seek_index = 0
-viewer_seek_line = 0
+viewer_close_requested = false
+viewer_active_slot = 0
+viewer_current_state = graphics::WINDOW_CLOSED
+while (viewer_active_slot < MAX_FILE_VIEWERS) {
+	viewer_is_open[viewer_active_slot] = false
+	viewer_name[viewer_active_slot] = xestring::concat("", "")
+	viewer_content[viewer_active_slot] = xestring::concat("", "")
+	viewer_scroll[viewer_active_slot] = 0
+	viewer_layout_width[viewer_active_slot] = -1
+	viewer_layout_font[viewer_active_slot] = graphics::FONT_NORMAL
+	viewer_layout_lines[viewer_active_slot] = 1
+	viewer_seek_index[viewer_active_slot] = 0
+	viewer_seek_line[viewer_active_slot] = 0
+	viewer_row_cache_lines[viewer_active_slot] = 0
+	viewer_text_cache_valid[viewer_active_slot] = false
+	viewer_text_cache_fallback[viewer_active_slot] = false
+	viewer_text_cache_building[viewer_active_slot] = false
+	viewer_text_cache_scroll[viewer_active_slot] = -1
+	viewer_text_cache_maximum_lines[viewer_active_slot] = -1
+	viewer_width[viewer_active_slot] = 250
+	viewer_height[viewer_active_slot] = 170
+	viewer_active_slot += 1
+}
+viewer_active_slot = 0
+viewer_window._handle = 0
+viewer_window.state = graphics::WINDOW_CLOSED
+viewer_window_2._handle = 0
+viewer_window_2.state = graphics::WINDOW_CLOSED
+viewer_window_3._handle = 0
+viewer_window_3.state = graphics::WINDOW_CLOSED
+visual_theme_mode = -1
+orbit_scene_static_dirty = true
+projection_cache_tilt = 999
+projection_cache_roll = 999
+projection_cache_rotation = 999
+call initialize_entry_name_cache()
+call initialize_breadcrumb_cache()
+call initialize_viewer_row_cache()
 call refresh_explorer_style()
 call reset_energy_shells()
 shell_button_hovered = false
 zoom_controls_hovered = false
 marquee_active = false
-marquee_mode = 0
 marquee_start_x = 0
 marquee_start_y = 0
 marquee_current_x = 0
@@ -3473,10 +4740,16 @@ drop_path_target = ""
 visual_fade = 100
 visual_force_opaque = false
 view_roll = -12
-# Set false to keep the shell-add + fixed while horizontal dragging rotates the atom.
 shell_add_follows_rotation = false
 deletion_ghost_count = 0
 deletion_ghost_duration = 180
+shell_speed_easing_active = false
+last_paused_shell = -1
+pause_has_entry = false
+last_pause_has_entry = false
+last_orbit_speed_setting = orbit_speed_setting
+interaction_pauses_orbits = false
+last_interaction_pauses_orbits = false
 
 # Application driver.
 explorer_window.x = 66
@@ -3487,216 +4760,10 @@ explorer_window.title = APP_TITLE
 explorer_window.ui_scale = 1
 explorer_window.state = graphics::WINDOW_NORMAL
 previous_ticks = os::ticks()
+fixed_update_accumulator = 0
+frame_steps = 0
 
 while (explorer_window.state != graphics::WINDOW_CLOSED) {
-	current_ticks = os::ticks()
-	delta_ms = current_ticks - previous_ticks
-	if (delta_ms < 1) { delta_ms = 1 }
-	if (delta_ms > 50) { delta_ms = 50 }
-	previous_ticks = current_ticks
-	if (cached_revision != os::revision() && !rotating && !marquee_active && drag_entry < 0 && drag_template == 0 && transition_progress == 0 && !context_open && !rename_open && !delete_confirm && !viewer_open) {
-		call refresh_compacted_entry_metadata()
-	}
-	call update_deletion_ghosts(delta_ms)
-	if (rename_pointer_guard > 0) { rename_pointer_guard -= 1 }
-	animation_step = delta_ms * 100 / 220
-	if (animation_step < 1) { animation_step = 1 }
-	if (animation_step > 24) { animation_step = 24 }
-	if (!rotating && sidebar_open && sidebar_progress < 100) { sidebar_progress += animation_step }
-	elseif (!rotating && !sidebar_open && sidebar_progress > 0) { sidebar_progress -= animation_step }
-	if (sidebar_progress > 100) { sidebar_progress = 100 }
-	if (sidebar_progress < 0) { sidebar_progress = 0 }
-	sidebar_width = 14 + 70 * sidebar_progress / 100
-	zoom_difference = camera_zoom_target - camera_zoom
-	if (zoom_difference != 0 && !rotating) {
-		zoom_step = zoom_difference * animation_step / 100
-		if (zoom_step == 0 && zoom_difference > 0) { zoom_step = 1 }
-		elseif (zoom_step == 0) { zoom_step = -1 }
-		camera_zoom += zoom_step
-		if (zoom_difference > 0 && camera_zoom > camera_zoom_target) { camera_zoom = camera_zoom_target }
-		elseif (zoom_difference < 0 && camera_zoom < camera_zoom_target) { camera_zoom = camera_zoom_target }
-	}
-	paused_shell = hovered_shell
-	hover_pause_allowed = !rotating && !marquee_active && drag_entry < 0 && drag_template == 0 && transition_progress == 0 && !context_open && !rename_open && !delete_confirm && !viewer_open
-	if (!hover_pause_allowed) { paused_shell = -1 }
-	if (transition_progress == 0) {
-		orbit_ease = animation_step * 2
-		if (orbit_ease > 40) { orbit_ease = 40 }
-		animation_shell = 0
-		while (animation_shell < 8) {
-			orbit_speed_target = orbit_speed_setting
-			if (animation_shell == paused_shell && hovered_entry >= 0 && entry_shell[hovered_entry] == animation_shell) {
-				orbit_speed_target = 0
-			}
-			elseif (animation_shell == paused_shell) {
-				orbit_speed_target = orbit_speed_setting / 8
-				if (orbit_speed_target < 2) { orbit_speed_target = 2 }
-			}
-			if (shell_speed[animation_shell] != orbit_speed_target) {
-				orbit_speed_difference = orbit_speed_target - shell_speed[animation_shell]
-				orbit_speed_step = orbit_speed_difference * orbit_ease / 100
-				if (orbit_speed_step == 0 && orbit_speed_difference > 0) { orbit_speed_step = 1 }
-				elseif (orbit_speed_step == 0 && orbit_speed_difference < 0) { orbit_speed_step = -1 }
-				shell_speed[animation_shell] += orbit_speed_step
-				if (orbit_speed_difference > 0 && shell_speed[animation_shell] > orbit_speed_target) { shell_speed[animation_shell] = orbit_speed_target }
-				elseif (orbit_speed_difference < 0 && shell_speed[animation_shell] < orbit_speed_target) { shell_speed[animation_shell] = orbit_speed_target }
-			}
-			shell_accumulator[animation_shell] += delta_ms * shell_speed[animation_shell]
-			shell_phase[animation_shell] = (shell_phase[animation_shell] + shell_accumulator[animation_shell] / 1000) % 360
-			shell_accumulator[animation_shell] %= 1000
-			animation_shell += 1
-		}
-		nucleus_phase = (nucleus_phase + delta_ms) % 1200
-	}
-	call update_view_orientation(delta_ms)
-	if (transition_progress > 0) {
-		transition_step = animation_step * (100 + (transition_hops - 1) * 35) / 100
-		if (transition_step < 1) { transition_step = 1 }
-		if (transition_step > animation_step * 3) { transition_step = animation_step * 3 }
-		transition_progress += transition_step
-		if (!transition_committed && transition_progress > 100) { transition_progress = 100 }
-		if (transition_committed && transition_progress >= 200) {
-			transition_progress = 0
-			transition_entry = -1
-			transition_committed = false
-			transition_focus_x = 0
-			transition_focus_y = 0
-		}
-	}
-
-	call graphics::begin_draw(explorer_window)
-	if (!explorer_window.is_minimized()) {
-		call refresh_explorer_style()
-		width = graphics::content_width(explorer_window)
-		height = graphics::content_height(explorer_window)
-		scroll_steps = graphics::scroll_delta()
-		if (scroll_steps != 0) {
-			if (viewer_open) {
-				viewer_scroll -= scroll_steps
-				if (viewer_scroll < 0) { viewer_scroll = 0 }
-			}
-			elseif (!context_open && !rename_open && !delete_confirm && transition_progress == 0 && graphics::pointer_x(explorer_window) > sidebar_width + 4 && graphics::pointer_y(explorer_window) > 12 && graphics::pointer_y(explorer_window) < height - 10) {
-				input_modifiers = graphics::modifiers()
-				if ((input_modifiers & graphics::MOD_SHIFT) != 0) {
-					rotation_target = (rotation_target + scroll_steps * 8) % 360
-					if (rotation_target < 0) { rotation_target += 360 }
-				}
-				else { call adjust_explorer_zoom(scroll_steps * 10) }
-			}
-		}
-		call graphics::fill_rect(explorer_window, 0, 0, width, height, graphics::COLOR_0)
-		if (width < 104 || height < 72) {
-			call draw_file_atom(2, 3, width - 4, height - 6)
-		}
-		else {
-			drop_path_active = false
-			if (drag_entry >= 0 && drag_moved && !explorer_strings_equal(current_path, ".")) {
-				if (graphics::pointer_x(explorer_window) >= 3 && graphics::pointer_x(explorer_window) < 35 && graphics::pointer_y(explorer_window) >= 2 && graphics::pointer_y(explorer_window) < 11) {
-					call graphics::fill_rect(explorer_window, 3, 2, 32, 9, visual_accent)
-					drop_path_active = true
-					call explorer_set(drop_path_target, cached_parent_path)
-				}
-				else {
-					call graphics::fill_rect(explorer_window, 3, 2, 32, 9, visual_surface)
-				}
-				call draw_explorer_text_centered(3, 3, 32, "Back", graphics::FONT_NORMAL, visual_outline)
-			}
-			elseif (!explorer_modal_open() && !explorer_strings_equal(current_path, ".")) {
-				if (graphics::button_flat(explorer_window, 3, 2, 32, 9, "Back", visual_surface)) {
-					call begin_path_transition(explorer_parent_path(current_path))
-				}
-			}
-			else {
-				call graphics::fill_rect(explorer_window, 3, 2, 32, 9, visual_surface)
-				call draw_explorer_text_centered(3, 3, 32, "Back", graphics::FONT_NORMAL, visual_outline)
-			}
-			call draw_breadcrumbs(37, 2, width - 40)
-			call draw_file_atom(3, 12, width - 6, height - 24)
-			call draw_explorer_sidebar(3, 12, height - 24)
-			if (marquee_active) { call draw_selection_marquee() }
-			call draw_explorer_text_clipped(3, height - 9, status_text, (width - 6) / 4, graphics::COLOR_7)
-			# Dragged items live above the collapsible drawer; modal panels below are
-			# rendered afterward and remain the topmost interaction layer.
-			call draw_explorer_drag_overlay()
-		}
-
-		if (width >= 104 && height >= 72 && graphics::mouse_pressed() && hovered_entry < 0 && drag_entry < 0 && drag_template == 0 && !shell_button_hovered && !zoom_controls_hovered && transition_progress == 0 && !context_open && !rename_open && !delete_confirm && !viewer_open && graphics::pointer_y(explorer_window) > 12 && graphics::pointer_x(explorer_window) > sidebar_width + 4) {
-			if ((graphics::modifiers() & graphics::MOD_CTRL) != 0 || (graphics::modifiers() & graphics::MOD_SHIFT) != 0) {
-				marquee_active = true
-				marquee_mode = 2
-				if ((graphics::modifiers() & graphics::MOD_CTRL) != 0) { marquee_mode = 1 }
-				marquee_start_x = graphics::pointer_x(explorer_window)
-				marquee_start_y = graphics::pointer_y(explorer_window)
-				marquee_current_x = marquee_start_x
-				marquee_current_y = marquee_start_y
-				rotating = false
-			}
-			else {
-				rotating = true
-				call clear_entry_selection()
-				selection_anchor = -1
-				call update_selection_status()
-			}
-			last_click_entry = -1
-			last_pointer_x = graphics::pointer_x(explorer_window)
-			last_pointer_y = graphics::pointer_y(explorer_window)
-		}
-		if (marquee_active && graphics::mouse_down()) {
-			marquee_current_x = graphics::pointer_x(explorer_window)
-			marquee_current_y = graphics::pointer_y(explorer_window)
-		}
-		if (rotating && graphics::mouse_down()) {
-			rotation_target += graphics::pointer_x(explorer_window) - last_pointer_x
-			rotation_target %= 360
-			if (rotation_target < 0) { rotation_target += 360 }
-			tilt_target += graphics::pointer_y(explorer_window) - last_pointer_y
-			if (tilt_target > 70) { tilt_target = 70 }
-			if (tilt_target < -70) { tilt_target = -70 }
-			last_pointer_x = graphics::pointer_x(explorer_window)
-			last_pointer_y = graphics::pointer_y(explorer_window)
-		}
-		if (graphics::mouse_released()) {
-			if (marquee_active) {
-				marquee_current_x = graphics::pointer_x(explorer_window)
-				marquee_current_y = graphics::pointer_y(explorer_window)
-				call finish_marquee_selection()
-				marquee_active = false
-			}
-			rotating = false
-		}
-		if (viewer_open) {
-			call draw_file_viewer()
-		}
-		elseif (context_open) {
-			call draw_context_menu()
-		}
-		elseif (rename_open) {
-			call draw_inline_rename()
-		}
-		elseif (delete_confirm) {
-			call draw_delete_dialog()
-		}
-
-		key = graphics::read_key()
-		while (key != 0) {
-			if (rename_open) {
-				if (key == graphics::KEY_ENTER) { call commit_rename() }
-				else { call handle_rename_key(key) }
-			}
-			elseif (viewer_open) {
-				if (key == graphics::KEY_ESCAPE) { viewer_open = false }
-				elseif (key == graphics::KEY_UP && viewer_scroll > 0) { viewer_scroll -= 1 }
-				elseif (key == graphics::KEY_DOWN) { viewer_scroll += 1 }
-			}
-			elseif (context_open && key == graphics::KEY_ESCAPE) { context_open = false }
-			elseif (delete_confirm && key == graphics::KEY_ESCAPE) { delete_confirm = false }
-			elseif (key == '+' || key == '=') { call adjust_explorer_zoom(15) }
-			elseif (key == '-') { call adjust_explorer_zoom(-15) }
-			key = graphics::read_key()
-		}
-	}
-	call graphics::update(explorer_window)
-	if (transition_progress >= 100 && !transition_committed) {
-		call commit_folder_transition()
-	}
+	call draw_explorer_frame()
+	if (viewer_open) { call draw_file_viewer_frames() }
 }

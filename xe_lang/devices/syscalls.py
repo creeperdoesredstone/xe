@@ -12,6 +12,12 @@ from xe_lang import graphics_commands as gc
 from xe_lang.helper import Position, VMError
 from xe_lang.syscall_abi import (
 	APP_GRAPHICS_DRAW_TEXT_SCALED,
+	APP_GRAPHICS_FILL_CIRCLE,
+	APP_OS_APPLY_PREFERENCES_V2,
+	APP_OS_GET_ANTI_ALIASING,
+	APP_OS_GET_MOTION_BLUR,
+	APP_OS_SET_ANTI_ALIASING,
+	APP_OS_SET_MOTION_BLUR,
 	GRAPHICS_REFERENCE_ADDRESS_MASK,
 	GRAPHICS_SCREEN_REFERENCE_TAG,
 	ImageFormat,
@@ -146,6 +152,7 @@ class DeviceRuntime:
 			SyscallID.APP_GRAPHICS_CLEAR: self._graphics_clear,
 			SyscallID.APP_GRAPHICS_SET_PIXEL: self._graphics_set_pixel,
 			SyscallID.APP_GRAPHICS_DRAW_CIRCLE: self._graphics_draw_circle,
+			APP_GRAPHICS_FILL_CIRCLE: self._graphics_fill_circle,
 			SyscallID.APP_GRAPHICS_DRAW_LINE: self._graphics_draw_line,
 			SyscallID.APP_GRAPHICS_DRAW_RECT: self._graphics_draw_rect,
 			SyscallID.APP_GRAPHICS_FILL_RECT: self._graphics_fill_rect,
@@ -226,6 +233,11 @@ class DeviceRuntime:
 			SyscallID.APP_OS_GET_SETTINGS_ENABLED: self._os_get_settings_enabled,
 			SyscallID.APP_OS_SET_SETTINGS_ENABLED: self._os_set_settings_enabled,
 			SyscallID.APP_OS_APPLY_PREFERENCES: self._os_apply_preferences,
+			APP_OS_GET_MOTION_BLUR: self._os_get_motion_blur,
+			APP_OS_SET_MOTION_BLUR: self._os_set_motion_blur,
+			APP_OS_GET_ANTI_ALIASING: self._os_get_anti_aliasing,
+			APP_OS_SET_ANTI_ALIASING: self._os_set_anti_aliasing,
+			APP_OS_APPLY_PREFERENCES_V2: self._os_apply_preferences_v2,
 			SyscallID.APP_OS_PREVIEW_PREFERENCES: self._os_preview_preferences,
 			SyscallID.APP_OS_CLEAR_PREVIEW: self._os_clear_preview,
 			SyscallID.APP_CURRENCY_COUNT: self._currency_count,
@@ -940,6 +952,17 @@ class DeviceRuntime:
 	def _graphics_draw_circle(self, vm: Any, result: Any) -> None:
 		self._translate_draw(vm, result, 5, "circle")
 
+	def _graphics_fill_circle(self, vm: Any, result: Any) -> None:
+		entry = self._window_args(vm, result, 5)
+		if not entry or not entry[1]:
+			return
+		_, handle, values = entry
+		x, y, radius, color = (_signed(value) for value in values)
+		ox, oy = self._origin(handle)
+		self.graphics.fill_circle_scaled(
+			ox, oy, x, y, radius, color, self._target_scale(handle),
+		)
+
 	def _graphics_draw_line(self, vm: Any, result: Any) -> None:
 		self._translate_draw(vm, result, 6, "line")
 
@@ -1603,6 +1626,28 @@ class DeviceRuntime:
 		if args is not None:
 			values = [_signed(value) for value in args]
 			self._push_bool(vm, self.os.apply_preferences(*values))
+
+	def _os_get_motion_blur(self, vm: Any, result: Any) -> None:
+		self._push_bool(vm, self.os.motion_blur_enabled)
+
+	def _os_set_motion_blur(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self.os.set_motion_blur_enabled(bool(args[0]))
+
+	def _os_get_anti_aliasing(self, vm: Any, result: Any) -> None:
+		vm.push(self.os.anti_aliasing_mode)
+
+	def _os_set_anti_aliasing(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 1)
+		if args is not None:
+			self.os.set_anti_aliasing_mode(_signed(args[0]))
+
+	def _os_apply_preferences_v2(self, vm: Any, result: Any) -> None:
+		args = self._args(vm, result, 13)
+		if args is not None:
+			values = [_signed(value) for value in args]
+			self._push_bool(vm, self.os.apply_preferences_v2(*values))
 
 	def _os_preview_preferences(self, vm: Any, result: Any) -> None:
 		args = self._args(vm, result, 4)
@@ -2391,7 +2436,12 @@ class DeviceRuntime:
 
 		def draw_folder(x: int, y: int, radius: int, child_count: int, phase: int) -> None:
 			inner_half = max(1, radius * 7 // 10)
-			fill_rect(x - inner_half, y - inner_half, inner_half * 2 + 1, inner_half * 2 + 1, surface)
+			if radius == 4:
+				fill_rect(x - inner_half, y - inner_half, inner_half * 2 + 1, inner_half * 2 + 1, surface)
+			else:
+				self.graphics.fill_circle_scaled(
+					origin_x, origin_y, x, y, inner_half, surface, target_scale,
+				)
 			circle(x, y, radius, outline)
 			pixel(x - radius // 2, y - radius // 2, highlight)
 			circle(x, y, radius - 2, accent)
@@ -2445,7 +2495,7 @@ class DeviceRuntime:
 			color = (highlight if selected or hovered_entry == index else outline) if show_full else shell_color
 			if show_full and len(label) > label_char_limit:
 				label = label[:label_char_limit]
-			name_width = sum(self.graphics.text_advance(char, 1, small=True) for char in label)
+			name_width = sum(self.graphics.text_advance(char, 1) for char in label)
 			if name_width > 0:
 				name_width -= 1
 			name_width = max(1, name_width)
@@ -2459,9 +2509,9 @@ class DeviceRuntime:
 			offset = node_radius + 4 + (abs_x * name_width // 2 + abs_y * 3) // norm
 			label_center_x = x + trunc_div(dx * offset, norm)
 			label_center_y = y + trunc_div(dy * offset, norm)
-			self.graphics.draw_text_small(
+			self.graphics.draw_text(
 				origin_x + (label_center_x - name_width // 2) * target_scale,
-				origin_y + (label_center_y - 2) * target_scale,
+				origin_y + (label_center_y - 3) * target_scale,
 				label,
 				color,
 				pixel_scale=target_scale,
@@ -2470,13 +2520,13 @@ class DeviceRuntime:
 		for entry in ordered:
 			if entry[0] < 0:
 				draw_entry(entry)
+		for entry in ordered:
+			if entry[0] >= 0:
+				draw_entry(entry)
 		self.graphics.fill_circle_scaled(origin_x, origin_y, center_x, center_y, center_radius, surface, target_scale)
 		circle(center_x, center_y, center_radius, outline)
 		circle(center_x, center_y, center_radius - 2, accent)
 		pixel(center_x - center_radius // 2, center_y - center_radius // 2, highlight)
-		for entry in ordered:
-			if entry[0] >= 0:
-				draw_entry(entry)
 
 		return (hovered_entry + 1) | ((hovered_shell + 1) << 8)
 

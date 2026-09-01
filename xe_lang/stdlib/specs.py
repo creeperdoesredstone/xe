@@ -3,7 +3,16 @@ from dataclasses import dataclass
 from xe_lang import graphics_commands as gc
 from xe_lang.design_tokens import WINDOW_COMPONENT_TOKENS
 from xe_lang.stdlib.ids import BuiltInID
-from xe_lang.syscall_abi import APP_GRAPHICS_DRAW_TEXT_SCALED, SyscallID
+from xe_lang.syscall_abi import (
+	APP_GRAPHICS_DRAW_TEXT_SCALED,
+	APP_GRAPHICS_FILL_CIRCLE,
+	APP_OS_APPLY_PREFERENCES_V2,
+	APP_OS_GET_ANTI_ALIASING,
+	APP_OS_GET_MOTION_BLUR,
+	APP_OS_SET_ANTI_ALIASING,
+	APP_OS_SET_MOTION_BLUR,
+	SyscallID,
+)
 
 
 @dataclass(frozen=True)
@@ -76,6 +85,7 @@ GRAPHICS_SPEC = LibrarySpec(
 		_builtin("clear", BuiltInID.GRAPHICS_CLEAR, ("Window", "int"), None, SyscallID.APP_GRAPHICS_CLEAR, WINDOW_REF),
 		_builtin("set_pixel", BuiltInID.GRAPHICS_SET_PIXEL, ("Window", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_SET_PIXEL, WINDOW_REF),
 		_builtin("draw_circle", BuiltInID.GRAPHICS_DRAW_CIRCLE, ("Window", "int", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_DRAW_CIRCLE, WINDOW_REF),
+		_builtin("fill_circle", BuiltInID.GRAPHICS_FILL_CIRCLE, ("Window", "int", "int", "int", "int"), None, APP_GRAPHICS_FILL_CIRCLE, WINDOW_REF),
 		_builtin("draw_line", BuiltInID.GRAPHICS_DRAW_LINE, ("Window", "int", "int", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_DRAW_LINE, WINDOW_REF),
 		_builtin("draw_rect", BuiltInID.GRAPHICS_DRAW_RECT, ("Window", "int", "int", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_DRAW_RECT, WINDOW_REF),
 		_builtin("fill_rect", BuiltInID.GRAPHICS_FILL_RECT, ("Window", "int", "int", "int", "int", "int"), None, SyscallID.APP_GRAPHICS_FILL_RECT, WINDOW_REF),
@@ -300,6 +310,13 @@ OS_SPEC = LibrarySpec(
 			"bool",
 			SyscallID.APP_OS_APPLY_PREFERENCES,
 		),
+		_builtin(
+			"apply_preferences_v2",
+			BuiltInID.OS_APPLY_PREFERENCES_V2,
+			("int", "int", "int", "int", "int", "int", "int", "int", "int", "int", "bool", "bool", "int"),
+			"bool",
+			APP_OS_APPLY_PREFERENCES_V2,
+		),
 	),
 	(
 		ConstantSpec("VOLUME_MIN", 0),
@@ -313,6 +330,9 @@ OS_SPEC = LibrarySpec(
 		ConstantSpec("ICON_LARGE", 2),
 		ConstantSpec("CLOCK_12_HOUR", 0),
 		ConstantSpec("CLOCK_24_HOUR", 1),
+		ConstantSpec("ANTI_ALIASING_OFF", 0),
+		ConstantSpec("ANTI_ALIASING_FAST", 1),
+		ConstantSpec("ANTI_ALIASING_QUALITY", 2),
 	),
 	(
 		PropertySpec("volume", "int", BuiltInID.OS_GET_VOLUME, BuiltInID.OS_SET_VOLUME, SyscallID.APP_OS_GET_VOLUME, SyscallID.APP_OS_SET_VOLUME),
@@ -326,6 +346,8 @@ OS_SPEC = LibrarySpec(
 		PropertySpec("icon_size", "int", BuiltInID.OS_GET_ICON_SIZE, BuiltInID.OS_SET_ICON_SIZE, SyscallID.APP_OS_GET_ICON_SIZE, SyscallID.APP_OS_SET_ICON_SIZE),
 		PropertySpec("clock_format", "int", BuiltInID.OS_GET_CLOCK_FORMAT, BuiltInID.OS_SET_CLOCK_FORMAT, SyscallID.APP_OS_GET_CLOCK_FORMAT, SyscallID.APP_OS_SET_CLOCK_FORMAT),
 		PropertySpec("settings_enabled", "bool", BuiltInID.OS_GET_SETTINGS_ENABLED, BuiltInID.OS_SET_SETTINGS_ENABLED, SyscallID.APP_OS_GET_SETTINGS_ENABLED, SyscallID.APP_OS_SET_SETTINGS_ENABLED),
+		PropertySpec("motion_blur_enabled", "bool", BuiltInID.OS_GET_MOTION_BLUR, BuiltInID.OS_SET_MOTION_BLUR, APP_OS_GET_MOTION_BLUR, APP_OS_SET_MOTION_BLUR),
+		PropertySpec("anti_aliasing_mode", "int", BuiltInID.OS_GET_ANTI_ALIASING, BuiltInID.OS_SET_ANTI_ALIASING, APP_OS_GET_ANTI_ALIASING, APP_OS_SET_ANTI_ALIASING),
 	),
 )
 
