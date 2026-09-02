@@ -956,7 +956,7 @@ proc draw_standard_system_settings() {
 		if (settings_button_aligned_width(control_x, 34, control_width, 11, "On", LABEL_WIDTH_ON_NORMAL, graphics::COLOR_2)) { staged_motion_blur = false }
 	}
 	else {
-		if (settings_button_aligned_width(control_x, 34, control_width, 11, "Off", LABEL_WIDTH_OFF_NORMAL, graphics::COLOR_4)) { staged_motion_blur = true }
+		if (settings_button_aligned_width(control_x, 34, control_width, 11, "OFF", LABEL_WIDTH_OFF_NORMAL, graphics::COLOR_5)) { staged_motion_blur = true }
 	}
 	call graphics::draw_text(settings_window, panel_x + 4, 54, "Anti-aliasing", graphics::COLOR_7)
 	if (staged_anti_aliasing == os::ANTI_ALIASING_OFF) {
