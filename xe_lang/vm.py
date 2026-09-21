@@ -1371,7 +1371,7 @@ class VM:
 							length = len(string) + 1
 
 							res.register(self.malloc(3))
-							res.register(self.malloc(length))
+							res.register(self.malloc(16 * math.ceil(length / 16)))
 							if res.error: return res
 
 							descriptor_addr = self.stack[self.sp - 2]
@@ -1381,7 +1381,7 @@ class VM:
 
 							self.data_memory[descriptor_addr] = buffer_addr
 							self.data_memory[descriptor_addr + 1] = length
-							self.data_memory[descriptor_addr + 2] = length
+							self.data_memory[descriptor_addr + 2] = 16 * math.ceil(length / 16)
 
 							for i, char in enumerate(string):
 								self.data_memory[buffer_addr + i] = ord(char)
