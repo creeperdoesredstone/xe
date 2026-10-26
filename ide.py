@@ -450,7 +450,7 @@ class CodeEditor(QPlainTextEdit):
 		doc.setDefaultFont(self.font())
 		doc.setPlainText(clean_sig_text)
 
-		highlighter = XPP26SyntaxHighlighter(doc, theme)
+		highlighter = XeSyntaxHighlighter(doc, theme)
 		highlighter.rehighlight()
 
 		raw_html = doc.toHtml()
@@ -856,7 +856,7 @@ class CodeEditor(QPlainTextEdit):
 			block_number += 1
 
 
-class XPP26SyntaxHighlighter(QSyntaxHighlighter):
+class XeSyntaxHighlighter(QSyntaxHighlighter):
 	def __init__(self, document: QTextDocument, theme: dict):
 		super().__init__(document)
 		self.theme = theme
@@ -1695,7 +1695,7 @@ class FindReplaceBar(QScrollArea):
 		return count
 
 
-class X26IDE(QMainWindow):
+class XeIDE(QMainWindow):
 	def __init__(self):
 		super().__init__()
 
@@ -1807,7 +1807,7 @@ class X26IDE(QMainWindow):
 		self.find_replace_bar.hide()
 		editor_layout.addWidget(self.find_replace_bar)
 
-		self.highlighter = XPP26SyntaxHighlighter(
+		self.highlighter = XeSyntaxHighlighter(
 			self.editor.document(), THEMES[self.current_theme]
 		)
 		main_splitter.addWidget(editor_container)
@@ -2487,7 +2487,7 @@ def main():
 	app = QApplication(sys.argv)
 	app.setFont(_host_monospace_font())
 
-	ide = X26IDE()
+	ide = XeIDE()
 	arguments = sys.argv[1:]
 	auto_run = False
 	requested_tab: str | None = None

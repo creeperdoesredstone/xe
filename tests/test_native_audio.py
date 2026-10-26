@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtCore import QPointF
 from PyQt6.QtWidgets import QApplication
 
-from ide import VMGraphicsWidget, X26IDE, _ToneStream
+from ide import VMGraphicsWidget, XeIDE, _ToneStream
 from xe_lang.devices.assets import AudioDevice, AudioState, AudioVoice
 from xe_lang.devices.filesystem import FileSystemDevice
 from xe_lang.media.music_format import NoteEvent, Track
@@ -79,7 +79,7 @@ def test_tone_stream_generates_stereo_pcm_without_audio_hardware():
 
 def test_execution_banner_does_not_join_partial_program_output():
 	app = QApplication.instance() or QApplication([])
-	window = X26IDE()
+	window = XeIDE()
 	window.append_output("partial")
 
 	window.handle_execution_finished([], None, "")

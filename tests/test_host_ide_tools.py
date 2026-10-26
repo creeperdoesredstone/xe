@@ -15,8 +15,8 @@ import ide as ide_module
 from ide import (
 	AnsiHtmlStream,
 	VMGraphicsWidget,
-	X26IDE,
-	XPP26SyntaxHighlighter,
+	XeIDE,
+	XeSyntaxHighlighter,
 	_atomic_write_text,
 	ansi_to_html,
 )
@@ -275,7 +275,7 @@ def test_canonical_converter_analysis_is_side_effect_free(app, tmp_path):
 
 
 def test_host_ide_preserves_code_workspace_and_adds_tools(app, tmp_path):
-	ide = X26IDE()
+	ide = XeIDE()
 	ide.resize(1024, 640)
 	ide.show()
 	app.processEvents()
@@ -365,7 +365,7 @@ def test_every_theme_comment_colour_remains_readable():
 
 
 def test_host_clipboard_toggle_disables_reads_and_writes(app):
-	ide = X26IDE()
+	ide = XeIDE()
 	app.clipboard().setText("before")
 	ide.system_clipboard_toggle.setChecked(False)
 	ready = threading.Event()
@@ -395,7 +395,7 @@ def test_ansi_reset_and_stream_output_are_well_formed_and_bounded(app):
 	assert "#ff3333" in stream.feed("31mred")
 	assert "#ff3333" in stream.feed(" stays red")
 	assert stream.feed("\x1b[0mplain") == "plain"
-	ide = X26IDE()
+	ide = XeIDE()
 	ide.append_output("\x1b[32mok\x1b[0m\n")
 	assert ide.output.toPlainText() == "ok\n"
 	ide.append_output("\n".join(str(index) for index in range(6_000)))
@@ -406,7 +406,7 @@ def test_ansi_reset_and_stream_output_are_well_formed_and_bounded(app):
 def test_hash_inside_string_keeps_string_highlighting(app):
 	document = QTextDocument()
 	document.setPlainText('out << "a#b"')
-	highlighter = XPP26SyntaxHighlighter(document, THEMES["Default Dark"])
+	highlighter = XeSyntaxHighlighter(document, THEMES["Default Dark"])
 	highlighter.rehighlight()
 	formats = document.firstBlock().layout().formats()
 	for position in range(7, 12):
@@ -416,7 +416,7 @@ def test_hash_inside_string_keeps_string_highlighting(app):
 
 
 def test_host_editor_long_documents_scroll_both_axes(app):
-	ide = X26IDE()
+	ide = XeIDE()
 	ide.resize(720, 520)
 	ide.show()
 	ide.editor.setPlainText("\n".join(f"line {index} " + "x" * 220 for index in range(2_000)))
@@ -427,7 +427,7 @@ def test_host_editor_long_documents_scroll_both_axes(app):
 
 
 def test_dirty_new_file_can_cancel_or_discard(app, monkeypatch):
-	ide = X26IDE()
+	ide = XeIDE()
 	ide.editor.insertPlainText("unsaved")
 	monkeypatch.setattr(QMessageBox, "warning", lambda *_args, **_kwargs: QMessageBox.StandardButton.Cancel)
 	assert not ide.new_file()

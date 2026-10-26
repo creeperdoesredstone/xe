@@ -8,7 +8,7 @@ import pytest
 from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication
 
-from ide import PREFERRED_MONOSPACE_FAMILIES, X26IDE, _host_monospace_font
+from ide import PREFERRED_MONOSPACE_FAMILIES, XeIDE, _host_monospace_font
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -39,7 +39,7 @@ def test_real_system_fixed_font_keeps_generic_fallback_in_fontless_hosts() -> No
 
 
 def test_fresh_workbench_applies_readable_fixed_font() -> None:
-	window = X26IDE()
+	window = XeIDE()
 	try:
 		font = window.font()
 		assert font.families()
